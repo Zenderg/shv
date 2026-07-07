@@ -61,6 +61,27 @@ npm run dev:seed:reset
 Reset deletes media rows whose `source_url` starts with `dev-seed://`, removes their placeholder files and thumbnails,
 and removes empty `[dev] ` categories. It leaves ordinary categories and non-seed media in place.
 
+## README Showcase Data And Screenshots
+
+Use the showcase seed when the local library should look polished for README screenshots:
+
+```bash
+npm run showcase:seed:reset
+npm run showcase:seed
+```
+
+The showcase seed creates clean category names, realistic video titles, SVG thumbnails, and a few non-running queue jobs.
+It is separate from stress-test dev data, and reset removes only rows and files created by the showcase workflow.
+
+With the Docker Compose app running, refresh README screenshots with:
+
+```bash
+npm run showcase:screenshots
+```
+
+The screenshot command writes PNG files under `docs/assets` and defaults to `http://127.0.0.1:8080`. Override the target with
+`SHV_SCREENSHOT_BASE_URL` when needed.
+
 ## Frontend UI Notes
 
 Design the library UI touch-first. Phones and tablets are supported browsing surfaces, so primary actions must remain visible and usable without hover. Hover and focus states can add polish, but they must not be the only way to discover or use video, category, queue, or dialog actions.

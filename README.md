@@ -12,6 +12,14 @@ Self-hosted local video library and downloader for a trusted home LAN or VPN.
 - Track queued, running, failed, canceled, and completed downloads.
 - Stream saved videos back from the local library with thumbnail and metadata support.
 
+## Interface Preview
+
+![Library grid with saved videos and categories](docs/assets/shv-library.png)
+
+![Add video dialog for queueing a download](docs/assets/shv-add-video.png)
+
+![Download queue with manual selection and retry states](docs/assets/shv-queue.png)
+
 ## Important Safety Notes
 
 - Use `shv` only for content you own, created, are allowed to download, or are otherwise legally permitted to save.
