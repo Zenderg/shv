@@ -13,6 +13,7 @@ import {
 type DialogState =
   | { kind: 'none' }
   | { kind: 'add' }
+  | { kind: 'createCategory' }
   | { kind: 'play'; item: MediaItem }
   | { kind: 'edit'; item: MediaItem }
   | { category: Category; kind: 'deleteCategory' }
@@ -110,6 +111,21 @@ export function App() {
     }
   }
 
+  async function createCategory(name: string) {
+    setBusy(true);
+    setError(null);
+    try {
+      const category = await api.createCategory(name);
+      setDialog({ kind: 'none' });
+      setPage('library');
+      await refresh(category.id);
+    } catch (caught) {
+      setError(message(caught));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function afterMediaChange() {
     setDialog({ kind: 'none' });
     if (selectedCategoryId) {
@@ -183,62 +199,70 @@ export function App() {
           </button>
         </nav>
 
-        <nav className="categoryNav" aria-label="Categories">
-          {categories.map((category) => (
-            <div
-              className={page === 'library' && category.id === selectedCategoryId ? 'categoryNavItem selected' : 'categoryNavItem'}
-              data-category-menu-root={category.id}
-              key={category.id}
-            >
-              <button
-                className="categoryLink"
-                onClick={() => {
-                  setOpenCategoryMenuId(null);
-                  void chooseCategory(category.id);
-                }}
-                type="button"
+        <div className="categorySection">
+          <div className="categoryHeader">
+            <span>Categories</span>
+            <button aria-label="Create category" onClick={() => setDialog({ kind: 'createCategory' })} type="button">
+              <PlusIcon />
+            </button>
+          </div>
+          <nav className="categoryNav" aria-label="Categories">
+            {categories.map((category) => (
+              <div
+                className={page === 'library' && category.id === selectedCategoryId ? 'categoryNavItem selected' : 'categoryNavItem'}
+                data-category-menu-root={category.id}
+                key={category.id}
               >
-                <FolderIcon />
-                <span>{category.name}</span>
-              </button>
-              <button
-                aria-expanded={openCategoryMenuId === category.id}
-                aria-haspopup="menu"
-                aria-label={`Open menu for ${category.name}`}
-                className="categoryMenuButton"
-                onClick={() => setOpenCategoryMenuId((current) => (current === category.id ? null : category.id))}
-                type="button"
-              >
-                <EllipsisIcon />
-              </button>
-              {openCategoryMenuId === category.id ? (
-                <div className="categoryMenu" role="menu">
-                  <button
-                    onClick={() => {
-                      setOpenCategoryMenuId(null);
-                      setDialog({ category, kind: 'renameCategory' });
-                    }}
-                    role="menuitem"
-                    type="button"
-                  >
-                    Rename
-                  </button>
-                  <button
-                    className="dangerMenuItem"
-                    onClick={() => {
-                      setOpenCategoryMenuId(null);
-                      setDialog({ category, kind: 'deleteCategory' });
-                    }}
-                    role="menuitem"
-                    type="button"
-                  >
-                    Delete
-                  </button>
-                </div>
-              ) : null}
-            </div>
-          ))}
-        </nav>
+                <button
+                  className="categoryLink"
+                  onClick={() => {
+                    setOpenCategoryMenuId(null);
+                    void chooseCategory(category.id);
+                  }}
+                  type="button"
+                >
+                  <FolderIcon />
+                  <span>{category.name}</span>
+                </button>
+                <button
+                  aria-expanded={openCategoryMenuId === category.id}
+                  aria-haspopup="menu"
+                  aria-label={`Open menu for ${category.name}`}
+                  className="categoryMenuButton"
+                  onClick={() => setOpenCategoryMenuId((current) => (current === category.id ? null : category.id))}
+                  type="button"
+                >
+                  <EllipsisIcon />
+                </button>
+                {openCategoryMenuId === category.id ? (
+                  <div className="categoryMenu" role="menu">
+                    <button
+                      onClick={() => {
+                        setOpenCategoryMenuId(null);
+                        setDialog({ category, kind: 'renameCategory' });
+                      }}
+                      role="menuitem"
+                      type="button"
+                    >
+                      Rename
+                    </button>
+                    <button
+                      className="dangerMenuItem"
+                      onClick={() => {
+                        setOpenCategoryMenuId(null);
+                        setDialog({ category, kind: 'deleteCategory' });
+                      }}
+                      role="menuitem"
+                      type="button"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            ))}
+          </nav>
+        </div>
       </aside>
 
       <section className="workspace">
@@ -299,6 +323,16 @@ export function App() {
           onSubmit={(input) => void submitJob(input)}
         />
       ) : null}
+      {dialog.kind === 'createCategory' ? (
+        <CategoryNameDialog
+          actionLabel="Create category"
+          busy={busy}
+          initialName=""
+          onClose={() => setDialog({ kind: 'none' })}
+          onSave={(name) => void createCategory(name)}
+          title="New category"
+        />
+      ) : null}
       {dialog.kind === 'play' ? <PlayerDialog item={dialog.item} onClose={() => setDialog({ kind: 'none' })} /> : null}
       {dialog.kind === 'edit' ? (
         <EditDialog
@@ -312,8 +346,10 @@ export function App() {
         />
       ) : null}
       {dialog.kind === 'renameCategory' ? (
-        <RenameCategoryDialog
-          category={dialog.category}
+        <CategoryNameDialog
+          actionLabel="Save"
+          busy={busy}
+          initialName={dialog.category.name}
           onClose={() => setDialog({ kind: 'none' })}
           onSave={async (name) => {
             setBusy(true);
@@ -328,6 +364,7 @@ export function App() {
               setBusy(false);
             }
           }}
+          title="Rename category"
         />
       ) : null}
       {dialog.kind === 'deleteCategory' ? (
@@ -507,14 +544,26 @@ function LibraryGrid({
       {items.map((item) => (
         <article className="videoCard" key={item.id}>
           <button className="poster" onClick={() => onPlay(item)} type="button">
-            {item.thumbnailPath ? <img alt="" src={`/thumbnails/${item.id}`} /> : <PlayIcon />}
+            {item.thumbnailPath ? (
+              <img
+                alt=""
+                onError={(event) => {
+                  event.currentTarget.style.display = 'none';
+                }}
+                src={`/thumbnails/${item.id}`}
+              />
+            ) : (
+              <span className="posterPlaceholder" />
+            )}
+            <span className="playBadge" aria-hidden="true">
+              <PlayIcon />
+            </span>
+            <span className="durationBadge">{formatDuration(item.durationSeconds)}</span>
           </button>
           <div className="videoMeta">
             <h2>{item.title}</h2>
-            <p>
-              {formatDuration(item.durationSeconds)} · {formatResolution(item)} · {formatBytes(item.sizeBytes)} ·{' '}
-              {categories.find((category) => category.id === item.categoryId)?.name ?? 'Unknown'}
-            </p>
+            <p>{formatResolution(item)} · {formatBytes(item.sizeBytes)}</p>
+            <span>{categories.find((category) => category.id === item.categoryId)?.name ?? 'Unknown'}</span>
           </div>
           <div className="cardActions">
             <button onClick={() => onEdit(item)} title="Rename or move" type="button">
@@ -689,16 +738,22 @@ function EditDialog({
   );
 }
 
-function RenameCategoryDialog({
-  category,
+function CategoryNameDialog({
+  actionLabel,
+  busy,
+  initialName,
   onClose,
-  onSave
+  onSave,
+  title
 }: {
-  category: Category;
+  actionLabel: string;
+  busy: boolean;
+  initialName: string;
   onClose: () => void;
-  onSave: (name: string) => Promise<void>;
+  onSave: (name: string) => void;
+  title: string;
 }) {
-  const [name, setName] = useState(category.name);
+  const [name, setName] = useState(initialName);
   const canSubmit = name.trim().length > 0;
   return (
     <DialogBackdrop onClose={onClose}>
@@ -712,7 +767,7 @@ function RenameCategoryDialog({
         }}
       >
         <header>
-          <h2>Rename category</h2>
+          <h2>{title}</h2>
           <button onClick={onClose} type="button">
             <CloseIcon />
           </button>
@@ -721,8 +776,8 @@ function RenameCategoryDialog({
           Name
           <input autoFocus onChange={(event) => setName(event.target.value)} value={name} />
         </label>
-        <button disabled={!canSubmit} type="submit">
-          Save
+        <button disabled={busy || !canSubmit} type="submit">
+          {actionLabel}
         </button>
       </form>
     </DialogBackdrop>

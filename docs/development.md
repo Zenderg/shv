@@ -38,6 +38,10 @@ npm run typecheck
 npm run build
 ```
 
+## Frontend UI Notes
+
+Design the library UI touch-first. Phones and tablets are supported browsing surfaces, so primary actions must remain visible and usable without hover. Hover and focus states can add polish, but they must not be the only way to discover or use video, category, queue, or dialog actions.
+
 ## Downloader Boundary
 
 Generic sites should continue to use the built-in web/media pipeline: HTTP probing, Playwright/extension network capture, HTML media extraction, HLS/DASH manifest handling, and ffmpeg/ffprobe.
