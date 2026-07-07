@@ -125,6 +125,112 @@ describe('extension bridge', () => {
     await openPromise;
   });
 
+  test('retries open-source commands through the content-script bridge after immediate runtime delivery failure', async () => {
+    let messageHandler: ((event: MessageEvent) => void) | undefined;
+    const postMessage = vi.fn();
+    const runtime = {
+      lastError: undefined as { message?: string } | undefined,
+      sendMessage: vi.fn((_extensionId: string, _message: unknown, callback: (response: unknown) => void) => {
+        runtime.lastError = { message: 'Could not establish connection. Receiving end does not exist.' };
+        callback(undefined);
+      })
+    };
+
+    globalThis.window = {
+      addEventListener: vi.fn((_type: string, listener: EventListenerOrEventListenerObject) => {
+        messageHandler = listener as (event: MessageEvent) => void;
+      }),
+      chrome: {
+        runtime
+      },
+      clearTimeout: globalThis.clearTimeout.bind(globalThis),
+      crypto: {
+        randomUUID: () => 'request-id'
+      },
+      location: {
+        origin: 'https://videos.example.test'
+      },
+      postMessage,
+      removeEventListener: vi.fn(),
+      setTimeout: globalThis.setTimeout.bind(globalThis)
+    } as unknown as Window & typeof globalThis;
+
+    const openPromise = openSourceWithExtension({
+      jobId: 'job-id',
+      sourceUrl: 'https://source.example.test/watch',
+      titleHint: null
+    });
+
+    await vi.waitFor(() => expect(postMessage).toHaveBeenCalledOnce());
+    const payload = postMessage.mock.calls[0]?.[0] as { requestId?: string };
+    expect(payload).toMatchObject({
+      channel: 'SHV_SOURCE_HELPER',
+      message: expect.objectContaining({ type: 'SHV_OPEN_SOURCE' })
+    });
+
+    messageHandler?.({
+      data: {
+        channel: 'SHV_SOURCE_HELPER_RESPONSE',
+        extensionId: 'ncgeehcdlbbdgojleaoefhhdinmdhcaf',
+        requestId: payload.requestId,
+        response: { ok: true }
+      },
+      source: window
+    } as unknown as MessageEvent);
+
+    await openPromise;
+  });
+
+  test('reports an outdated extension through the content-script bridge after immediate runtime delivery failure', async () => {
+    let messageHandler: ((event: MessageEvent) => void) | undefined;
+    const runtime = {
+      lastError: undefined as { message?: string } | undefined,
+      sendMessage: vi.fn((_extensionId: string, _message: unknown, callback: (response: unknown) => void) => {
+        runtime.lastError = { message: 'Could not establish connection. Receiving end does not exist.' };
+        callback(undefined);
+      })
+    };
+
+    globalThis.window = {
+      addEventListener: vi.fn((_type: string, listener: EventListenerOrEventListenerObject) => {
+        messageHandler = listener as (event: MessageEvent) => void;
+      }),
+      chrome: {
+        runtime
+      },
+      clearTimeout: globalThis.clearTimeout.bind(globalThis),
+      crypto: {
+        randomUUID: () => 'request-id'
+      },
+      location: {
+        origin: 'https://videos.example.test'
+      },
+      postMessage: vi.fn(),
+      removeEventListener: vi.fn(),
+      setTimeout: globalThis.setTimeout.bind(globalThis)
+    } as unknown as Window & typeof globalThis;
+
+    const statusPromise = checkSourceExtension();
+    await vi.waitFor(() => expect(window.postMessage).toHaveBeenCalledOnce());
+    const payload = vi.mocked(window.postMessage).mock.calls[0]?.[0] as { requestId?: string };
+
+    messageHandler?.({
+      data: {
+        channel: 'SHV_SOURCE_HELPER_RESPONSE',
+        extensionId: 'ncgeehcdlbbdgojleaoefhhdinmdhcaf',
+        requestId: payload.requestId,
+        response: { installed: true, protocolVersion: 1, version: '1.0.22' }
+      },
+      source: window
+    } as unknown as MessageEvent);
+
+    await expect(statusPromise).resolves.toEqual({
+      currentVersion: '1.0.22',
+      kind: 'outdated',
+      requiredVersion: '1.0.23'
+    });
+  });
+
   test('uses a fallback bridge request id when crypto.randomUUID is unavailable', async () => {
     let messageHandler: ((event: MessageEvent) => void) | undefined;
     const postMessage = vi.fn();

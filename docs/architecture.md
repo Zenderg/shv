@@ -150,6 +150,8 @@ The YouTube extractor also passes `--js-runtimes node`; without both pieces, You
 formats and `yt-dlp` will fail with `Requested format is not available`.
 App-to-extension commands that create source tabs must not be retried over the content-script bridge after a runtime
 message timeout, because the first command may still be opening and injecting into a slow page.
+Immediate runtime delivery failures, such as Chrome reporting no receiving end for the expected extension id, are safe
+to retry through the content-script bridge because no service-worker command was accepted.
 The downloaded extension package is origin-aware: the server rewrites the packaged manifest's
 `externally_connectable.matches` and shared `APP_ORIGIN` constant for the browser-visible app origin. Keep production
 deployments downloading the zip from the same origin as the app, or set `PUBLIC_APP_ORIGIN` when proxy headers are not

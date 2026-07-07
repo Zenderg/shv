@@ -37,6 +37,11 @@ interface ChromeRuntime {
   ) => void;
 }
 
+type RuntimeMessageResult<T> =
+  | { kind: 'delivery-failed' }
+  | { kind: 'response'; response: T | null }
+  | { kind: 'timeout' };
+
 declare global {
   interface Window {
     chrome?: {
@@ -108,32 +113,45 @@ async function sendExtensionMessage<T>(
 ): Promise<T | null> {
   const runtime = window.chrome?.runtime;
   if (runtime?.sendMessage) {
-    const response = await sendChromeRuntimeMessage<T>(runtime, message, options.runtimeTimeoutMs ?? 1200);
-    if (response) {
-      return response;
+    const result = await sendChromeRuntimeMessage<T>(runtime, message, options.runtimeTimeoutMs ?? 1200);
+    if (result.kind === 'response' && result.response) {
+      return result.response;
     }
-    if (options.bridgeFallback === 'runtime-missing-only') {
+    if (result.kind === 'timeout' && options.bridgeFallback === 'runtime-missing-only') {
       return null;
     }
   }
   return sendContentScriptBridgeMessage<T>(message);
 }
 
-async function sendChromeRuntimeMessage<T>(runtime: ChromeRuntime, message: unknown, timeoutMs: number): Promise<T | null> {
+async function sendChromeRuntimeMessage<T>(
+  runtime: ChromeRuntime,
+  message: unknown,
+  timeoutMs: number
+): Promise<RuntimeMessageResult<T>> {
   return new Promise((resolve) => {
-    const timeout = window.setTimeout(() => resolve(null), timeoutMs);
+    let settled = false;
+    const finish = (result: RuntimeMessageResult<T>) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      window.clearTimeout(timeout);
+      resolve(result);
+    };
+    const timeout = window.setTimeout(() => {
+      finish({ kind: 'timeout' });
+    }, timeoutMs);
     try {
       runtime.sendMessage(currentSourceExtensionId(), message, (response) => {
-        window.clearTimeout(timeout);
         if (runtime.lastError) {
-          resolve(null);
+          finish({ kind: 'delivery-failed' });
           return;
         }
-        resolve((response ?? null) as T | null);
+        finish({ kind: 'response', response: (response ?? null) as T | null });
       });
     } catch {
-      window.clearTimeout(timeout);
-      resolve(null);
+      finish({ kind: 'delivery-failed' });
     }
   });
 }
