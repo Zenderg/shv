@@ -23,6 +23,9 @@ export interface NormalizeResult extends ProbeResult {
 
 type ProgressCallback = (progress: number) => void;
 type MoveFileSystem = Pick<typeof fs, 'copyFileSync' | 'renameSync' | 'rmSync'>;
+interface TranscodeOptions {
+  preserveInputTimestamps?: boolean;
+}
 
 export class MediaProcessor {
   async normalize(
@@ -59,7 +62,11 @@ export class MediaProcessor {
         }
         remuxRejectionReason = shortProcessingMessage(error);
         fs.rmSync(outputPath, { force: true });
-        await this.transcode(inputPath, outputPath, probe.durationSeconds, onProgress, signal);
+        await this.transcode(inputPath, outputPath, probe.durationSeconds, onProgress, signal, {
+          preserveInputTimestamps: shouldPreserveInputTimestampsAfterRemuxRejection(remuxRejectionReason)
+        });
+        const transcodeProbe = await this.probe(outputPath);
+        assertNoSuspiciousDurationInflation('transcode', probe.durationSeconds, transcodeProbe.durationSeconds, outputPath);
         processingStrategy = 'transcoded';
       }
       if (path.resolve(inputPath) !== path.resolve(outputPath) && fs.existsSync(inputPath)) {
@@ -67,6 +74,8 @@ export class MediaProcessor {
       }
     } else if (!probe.browserFriendly) {
       await this.transcode(inputPath, outputPath, probe.durationSeconds, onProgress, signal);
+      const transcodeProbe = await this.probe(outputPath);
+      assertNoSuspiciousDurationInflation('transcode', probe.durationSeconds, transcodeProbe.durationSeconds, outputPath);
       processingStrategy = 'transcoded';
       if (path.resolve(inputPath) !== path.resolve(outputPath) && fs.existsSync(inputPath)) {
         fs.rmSync(inputPath, { force: true });
@@ -128,35 +137,11 @@ export class MediaProcessor {
     outputPath: string,
     durationSeconds: number | null,
     onProgress: ProgressCallback,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    options: TranscodeOptions = {}
   ): Promise<void> {
     await new Promise<void>((resolve, reject) => {
-      const child = spawn('ffmpeg', [
-        '-hide_banner',
-        '-y',
-        '-i',
-        inputPath,
-        // Structured progress is more reliable than ffmpeg's human-readable stats,
-        // which can be sparse or rewritten in-place for long transcodes.
-        '-nostats',
-        '-progress',
-        'pipe:2',
-        '-map',
-        '0:v:0',
-        '-map',
-        '0:a:0?',
-        '-c:v',
-        'libx264',
-        '-preset',
-        'veryfast',
-        '-crf',
-        '20',
-        '-c:a',
-        'aac',
-        '-movflags',
-        '+faststart',
-        outputPath
-      ], { stdio: ['ignore', 'ignore', 'pipe'] });
+      const child = spawn('ffmpeg', buildTranscodeArgs(inputPath, outputPath, options), { stdio: ['ignore', 'ignore', 'pipe'] });
       const removeAbortListener = onAbort(signal, () => child.kill('SIGTERM'));
       const stderr: Buffer[] = [];
       let progressLog = '';
@@ -248,6 +233,36 @@ export class MediaProcessor {
   private async thumbnail(inputPath: string, thumbnailPath: string, signal?: AbortSignal): Promise<void> {
     await run('ffmpeg', ['-hide_banner', '-y', '-ss', '00:00:01', '-i', inputPath, '-frames:v', '1', '-q:v', '3', thumbnailPath], signal);
   }
+}
+
+export function buildTranscodeArgs(inputPath: string, outputPath: string, options: TranscodeOptions = {}): string[] {
+  return [
+    '-hide_banner',
+    '-y',
+    ...(options.preserveInputTimestamps ? ['-copyts', '-start_at_zero'] : []),
+    '-i',
+    inputPath,
+    // Structured progress is more reliable than ffmpeg's human-readable stats,
+    // which can be sparse or rewritten in-place for long transcodes.
+    '-nostats',
+    '-progress',
+    'pipe:2',
+    '-map',
+    '0:v:0',
+    '-map',
+    '0:a:0?',
+    '-c:v',
+    'libx264',
+    '-preset',
+    'veryfast',
+    '-crf',
+    '20',
+    '-c:a',
+    'aac',
+    '-movflags',
+    '+faststart',
+    outputPath
+  ];
 }
 
 export function latestFfmpegTime(input: string): number | null {
@@ -346,6 +361,23 @@ export function hasSuspiciousDurationInflation(inputDurationSeconds: number | nu
 
 export function hasTimestampWarnings(stderr: string): boolean {
   return /non monotonically increasing dts|invalid, non monotonically increasing|timestamp.*(invalid|discontinuity)/i.test(stderr);
+}
+
+function shouldPreserveInputTimestampsAfterRemuxRejection(reason: string): boolean {
+  return /duration|timestamp|dts/i.test(reason);
+}
+
+function assertNoSuspiciousDurationInflation(
+  operation: string,
+  inputDurationSeconds: number | null,
+  outputDurationSeconds: number | null,
+  outputPath: string
+): void {
+  if (!hasSuspiciousDurationInflation(inputDurationSeconds, outputDurationSeconds)) {
+    return;
+  }
+  fs.rmSync(outputPath, { force: true });
+  throw new Error(`${operation} inflated duration from ${inputDurationSeconds}s to ${outputDurationSeconds}s`);
 }
 
 function isBrowserFriendly(container: string | null, videoCodec: string | null, audioCodec: string | null): boolean {

@@ -132,3 +132,10 @@ Do not enable `reconnect_at_eof` for HLS fallback; VOD media playlists end norma
 When remuxing MPEG-TS HLS work files into MP4, reject copy-remux outputs whose duration inflates beyond a small tolerance
 or whose decoded video stream reports invalid timestamp ordering. Some copied streams can otherwise produce an MP4 with a
 plausible container duration but broken A/V sync. Let the processor fall back to transcoding rather than accepting that file.
+
+If a rejected HLS remux failed because of timestamp or duration inflation, the fallback transcode must preserve the input
+timestamps with `-copyts -start_at_zero`. Some MPEG-TS HLS segments contain discontinuities even when the media playlist
+duration is correct; ordinary ffmpeg timestamp normalization can expand those discontinuities into a long audio tail. This is
+not the same as trimming with `-shortest` or `-t`: the transcode still decodes the source, but avoids converting HLS timestamp
+offsets into extra output duration. Keep the post-transcode duration guard so a future ffmpeg behavior change fails the job
+instead of saving another inflated MP4.

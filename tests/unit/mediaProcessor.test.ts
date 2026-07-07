@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import {
+  buildTranscodeArgs,
   hasSuspiciousDurationInflation,
   hasTimestampWarnings,
   latestFfmpegTime,
@@ -7,6 +8,23 @@ import {
   shouldRemuxToBrowserFriendlyMp4,
   videoDisplayDimensions
 } from '../../src/server/media-processing/mediaProcessor.js';
+
+describe('buildTranscodeArgs', () => {
+  test('preserves input timestamps before decoding timestamp-inflated HLS sources', () => {
+    const args = buildTranscodeArgs('/work/source', '/library/video.mp4', { preserveInputTimestamps: true });
+
+    expect(args.slice(0, 6)).toEqual(['-hide_banner', '-y', '-copyts', '-start_at_zero', '-i', '/work/source']);
+    expect(args).toContain('/library/video.mp4');
+  });
+
+  test('uses ordinary timestamp normalization by default', () => {
+    const args = buildTranscodeArgs('/work/source', '/library/video.mp4');
+
+    expect(args.slice(0, 4)).toEqual(['-hide_banner', '-y', '-i', '/work/source']);
+    expect(args).not.toContain('-copyts');
+    expect(args).not.toContain('-start_at_zero');
+  });
+});
 
 describe('moveFile', () => {
   test('falls back to copy and remove when rename crosses Docker volumes', () => {
