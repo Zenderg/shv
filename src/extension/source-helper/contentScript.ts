@@ -4,6 +4,7 @@ import SourceSidebar from './SourceSidebar.svelte';
 import { setSidebarActions, sidebarView, type SourceSession } from './sidebarStore';
 
 const SIDEBAR_WIDTH = 390;
+const SIDEBAR_COLLAPSED_WIDTH = 48;
 const HIGHLIGHT_PADDING = 8;
 const PLAYBACK_SIGNAL_INTERVAL_MS = 1200;
 const DIAGNOSTIC_SIGNAL_INTERVAL_MS = 1500;
@@ -29,6 +30,7 @@ let sidebarHost: HTMLDivElement | null = null;
 let sidebarShadow: ShadowRoot | null = null;
 let sidebarTabId: number | null = null;
 let sidebarVisible = false;
+let sidebarCollapsed = false;
 let renderTimer: number | null = null;
 let renderSequence = 0;
 let highlightOverlay: (HTMLDivElement & { candidate?: { kind: string; url: string }; target?: Element }) | null = null;
@@ -124,6 +126,7 @@ function showSidebar() {
     return;
   }
   sidebarHost.style.display = 'block';
+  sidebarHost.style.width = sidebarHostWidth(sidebarCollapsed);
   sidebarVisible = true;
   startRenderTimer();
   void renderSidebar();
@@ -149,7 +152,7 @@ function ensureSidebar() {
   sidebarHost.style.top = '0';
   sidebarHost.style.right = '0';
   sidebarHost.style.bottom = '0';
-  sidebarHost.style.width = `${SIDEBAR_WIDTH}px`;
+  sidebarHost.style.width = sidebarHostWidth(false);
   sidebarHost.style.zIndex = '2147483647';
   sidebarHost.style.display = 'none';
   sidebarHost.style.pointerEvents = 'auto';
@@ -168,6 +171,9 @@ function ensureSidebar() {
     },
     startCapture: () => {
       void startManualCapture();
+    },
+    toggleCollapsed: () => {
+      setSidebarCollapsed(!sidebarCollapsed);
     }
   });
 
@@ -216,11 +222,27 @@ async function renderSidebar() {
 function updateSidebarView(session: SourceSession | null) {
   sidebarView.set({
     capturePending,
+    collapsed: sidebarCollapsed,
     highlightedUrl: highlightedCandidate?.url ?? null,
     selectingUrls: [...selectingSourceUrls],
     session,
     status: session ? `${session.candidates.length} active / ${sessionDisplayStatus(session)}` : 'Open a source from shv'
   });
+}
+
+function setSidebarCollapsed(collapsed: boolean) {
+  sidebarCollapsed = collapsed;
+  if (sidebarHost) {
+    sidebarHost.style.width = sidebarHostWidth(collapsed);
+  }
+  if (collapsed) {
+    clearCandidateHighlight();
+  }
+  updateSidebarView(currentSidebarSession());
+}
+
+function sidebarHostWidth(collapsed: boolean) {
+  return collapsed ? `${SIDEBAR_COLLAPSED_WIDTH}px` : `min(100vw, ${SIDEBAR_WIDTH}px)`;
 }
 
 async function selectSource(url: string) {
@@ -357,7 +379,7 @@ function updateHighlightOverlay() {
   }
   const left = Math.max(HIGHLIGHT_PADDING, rect.left - HIGHLIGHT_PADDING);
   const top = Math.max(HIGHLIGHT_PADDING, rect.top - HIGHLIGHT_PADDING);
-  const rightLimit = window.innerWidth - SIDEBAR_WIDTH - HIGHLIGHT_PADDING;
+  const rightLimit = window.innerWidth - sidebarReservedWidth() - HIGHLIGHT_PADDING;
   const width = Math.max(48, Math.min(rect.width + HIGHLIGHT_PADDING * 2, rightLimit - left));
   const height = Math.max(48, Math.min(rect.height + HIGHLIGHT_PADDING * 2, window.innerHeight - top - HIGHLIGHT_PADDING));
   highlightOverlay.style.cssText = `
@@ -439,7 +461,7 @@ function dominantVideoElement() {
 }
 
 function largeVisibleVideoEntries() {
-  const reservedWidth = IS_TOP_FRAME ? SIDEBAR_WIDTH : 0;
+  const reservedWidth = IS_TOP_FRAME ? sidebarReservedWidth() : 0;
   const viewportArea = Math.max(1, (window.innerWidth - reservedWidth) * window.innerHeight);
   const minimumArea = Math.min(160000, viewportArea * 0.08);
   return [...document.querySelectorAll('video')]
@@ -631,7 +653,7 @@ function activeVideoCandidates(video: HTMLVideoElement) {
       continue;
     }
     urls.add(rawUrl);
-    const candidate = candidateFromUrl(new URL(rawUrl, window.location.href).href, null, 'html-video');
+    const candidate = candidateFromUrl(rawUrl, null, 'html-video', window.location.href);
     if (candidate) {
       candidates.push(candidate);
     }
@@ -665,7 +687,25 @@ function sidebarCss() {
       grid-template-rows: auto auto 1fr;
       height: 100vh;
       overflow: hidden;
-      width: ${SIDEBAR_WIDTH}px;
+      width: min(100vw, ${SIDEBAR_WIDTH}px);
+    }
+
+    .panel.collapsed {
+      align-items: start;
+      background: #ffffff;
+      grid-template-rows: auto 1fr;
+      justify-items: center;
+      width: ${SIDEBAR_COLLAPSED_WIDTH}px;
+    }
+
+    .rail-label {
+      color: #64716b;
+      font-size: 12px;
+      font-weight: 800;
+      margin-top: 12px;
+      transform: rotate(90deg);
+      transform-origin: center;
+      white-space: nowrap;
     }
 
     header {
@@ -708,6 +748,30 @@ function sidebarCss() {
       height: 30px;
       justify-content: center;
       width: 30px;
+    }
+
+    .header-actions {
+      align-items: center;
+      display: flex;
+      gap: 8px;
+    }
+
+    .collapse-button {
+      align-items: center;
+      background: #21362e;
+      border: 0;
+      border-radius: 999px;
+      color: #ffffff;
+      cursor: pointer;
+      display: inline-flex;
+      font: 900 15px/1 Inter, ui-sans-serif, system-ui, sans-serif;
+      height: 30px;
+      justify-content: center;
+      width: 30px;
+    }
+
+    .rail-button {
+      margin-top: 18px;
     }
 
     .job {
@@ -857,10 +921,9 @@ function sidebarCss() {
       overflow-wrap: anywhere;
     }
 
-    @media (max-width: 720px) {
-      .panel {
-        width: min(100vw, ${SIDEBAR_WIDTH}px);
-      }
-    }
   `;
+}
+
+function sidebarReservedWidth() {
+  return sidebarCollapsed ? SIDEBAR_COLLAPSED_WIDTH : Math.min(window.innerWidth, SIDEBAR_WIDTH);
 }

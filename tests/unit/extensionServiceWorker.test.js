@@ -145,6 +145,41 @@ describe('extension service worker', () => {
     expect(storage.sourceState.sessions[42].diagnostics.network.lastHeaderKeys).toBe('Referer, User-Agent');
   });
 
+  test('serializes concurrent state updates so burst network candidates are not lost', async () => {
+    globalThis.chrome.storage.local.get = vi.fn(async () => structuredClone(storage));
+    globalThis.chrome.storage.local.set = vi.fn(async (next) => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      storage = { ...storage, ...structuredClone(next) };
+    });
+    await import('../../extension/chrome-source-helper/service-worker.js');
+
+    listeners.headersReceived({
+      initiator: 'https://www.youtube.com',
+      requestId: 'request-a',
+      responseHeaders: [{ name: 'content-type', value: 'video/mp4' }],
+      statusCode: 200,
+      tabId: 42,
+      type: 'media',
+      url: 'https://media.example.test/video-a.mp4'
+    });
+    listeners.headersReceived({
+      initiator: 'https://www.youtube.com',
+      requestId: 'request-b',
+      responseHeaders: [{ name: 'content-type', value: 'video/mp4' }],
+      statusCode: 200,
+      tabId: 42,
+      type: 'media',
+      url: 'https://media.example.test/video-b.mp4'
+    });
+
+    await vi.waitFor(() =>
+      expect(storage.sourceState.sessions[42].candidates.map((candidate) => candidate.url).sort()).toEqual([
+        'https://media.example.test/video-a.mp4',
+        'https://media.example.test/video-b.mp4'
+      ])
+    );
+  });
+
   test('sends relevant browser cookies when a source is selected', async () => {
     storage.sourceState.sessions[42].candidates = [
       {

@@ -1,13 +1,13 @@
 export const PROTOCOL_VERSION = 1;
-export const EXTENSION_VERSION = '1.0.23';
+export const EXTENSION_VERSION = '1.0.24';
 export const APP_ORIGIN = 'http://127.0.0.1:8080';
 
 const VIDEO_EXTENSIONS = ['.mp4', '.webm', '.mov', '.m4v', '.mkv'];
 
-export function candidateFromUrl(url, contentType = null, kindOverride = null) {
+export function candidateFromUrl(url, contentType = null, kindOverride = null, baseUrl = undefined) {
   let parsed;
   try {
-    parsed = new URL(url);
+    parsed = new URL(url, baseUrl);
   } catch {
     return null;
   }

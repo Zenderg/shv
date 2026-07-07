@@ -3,7 +3,8 @@ declare module '*extension/chrome-source-helper/shared.js' {
   export function candidateFromUrl(
     url: string,
     contentType?: string | null,
-    kindOverride?: string | null
+    kindOverride?: string | null,
+    baseUrl?: string
   ): {
     bitrate: number | null;
     confidence: number;

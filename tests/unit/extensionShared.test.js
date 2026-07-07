@@ -16,6 +16,13 @@ describe('extension shared candidate detection', () => {
     expect(candidateFromUrl('https://media.example.test/video.mp4', 'video/mp4')?.kind).toBe('browser-request');
   });
 
+  test('accepts relative DOM media URLs against the page URL', () => {
+    const candidate = candidateFromUrl('/media/video.mp4', null, 'html-video', 'https://source.example.test/watch');
+
+    expect(candidate?.url).toBe('https://source.example.test/media/video.mp4');
+    expect(candidate?.kind).toBe('html-video');
+  });
+
   test('accepts extensionless media URLs with an explicit video mime query hint', () => {
     const candidate = candidateFromUrl('https://rr1---sn.example.test/videoplayback?mime=video%2Fmp4&clen=12345');
 

@@ -44,6 +44,10 @@
     return selectingUrls.includes(candidate.url) ? 'Selecting...' : 'Use source';
   }
 
+  function collapseButtonLabel(collapsed: boolean) {
+    return collapsed ? 'Expand sources' : 'Collapse sources';
+  }
+
   function emptyMessage(session: SourceSession | null) {
     if (!session) {
       return {
@@ -64,82 +68,104 @@
   }
 </script>
 
-<aside class="panel" aria-label="shv sources">
-  <header>
-    <div>
-      <h1>Sources</h1>
-      <p>{$sidebarView.status}</p>
-    </div>
-    <button class="icon-button" type="button" aria-label="Close sources" onclick={sidebarActions.close}>x</button>
-  </header>
-
-  {#if $sidebarView.session}
-    {@const session = $sidebarView.session}
-    <section class="job">
-      <strong>{session.titleHint || hostname(session.sourceUrl)}</strong>
-      <span>{session.sourceUrl}</span>
-      {#if session.status !== 'selected'}
+<aside class:collapsed={$sidebarView.collapsed} class="panel" aria-label="shv sources">
+  {#if $sidebarView.collapsed}
+    <button
+      class="collapse-button rail-button"
+      type="button"
+      aria-label={collapseButtonLabel($sidebarView.collapsed)}
+      onclick={sidebarActions.toggleCollapsed}
+    >
+      &lt;
+    </button>
+    <span class="rail-label">Sources</span>
+  {:else}
+    <header>
+      <div>
+        <h1>Sources</h1>
+        <p>{$sidebarView.status}</p>
+      </div>
+      <div class="header-actions">
         <button
-          class="capture-button"
-          disabled={$sidebarView.capturePending || captureSecondsRemaining(session) > 0}
+          class="collapse-button"
           type="button"
-          onclick={sidebarActions.startCapture}
+          aria-label={collapseButtonLabel($sidebarView.collapsed)}
+          onclick={sidebarActions.toggleCollapsed}
         >
-          {captureButtonLabel(session)}
+          &gt;
         </button>
+        <button class="icon-button" type="button" aria-label="Close sources" onclick={sidebarActions.close}>x</button>
+      </div>
+    </header>
+
+    {#if $sidebarView.session}
+      {@const session = $sidebarView.session}
+      <section class="job">
+        <strong>{session.titleHint || hostname(session.sourceUrl)}</strong>
+        <span>{session.sourceUrl}</span>
+        {#if session.status !== 'selected'}
+          <button
+            class="capture-button"
+            disabled={$sidebarView.capturePending || captureSecondsRemaining(session) > 0}
+            type="button"
+            onclick={sidebarActions.startCapture}
+          >
+            {captureButtonLabel(session)}
+          </button>
+        {/if}
+      </section>
+    {/if}
+
+    <section class="sources">
+      {#if !$sidebarView.session || $sidebarView.session.candidates.length === 0}
+        {@const message = emptyMessage($sidebarView.session)}
+        <div class="empty">
+          <strong>{message.title}</strong>
+          <p>{message.detail}</p>
+        </div>
+        <Diagnostics session={$sidebarView.session} />
+      {:else}
+        {@const selected = $sidebarView.session.status === 'selected'}
+        {#each $sidebarView.session.candidates as candidate (candidate.url)}
+          <article
+            class:is-highlighted={$sidebarView.highlightedUrl === candidate.url}
+            class="source"
+            data-highlight-kind={candidate.kind}
+            data-highlight-source={candidate.url}
+            data-source-card="true"
+            data-source-url={candidate.url}
+            onblur={(event) => {
+              if (!(event.currentTarget instanceof HTMLElement) || event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                return;
+              }
+              sidebarActions.clearHighlight();
+            }}
+            onfocus={() => sidebarActions.highlight(candidate.url)}
+            onmouseout={(event) => {
+              if (!(event.currentTarget instanceof HTMLElement) || event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                return;
+              }
+              sidebarActions.clearHighlight();
+            }}
+            onmouseover={() => sidebarActions.highlight(candidate.url)}
+          >
+            <div class="source-top">
+              <strong>{candidate.kind}</strong>
+              <span>{Math.round(candidate.confidence * 100)}%</span>
+            </div>
+            <p>{candidateType(candidate)}</p>
+            <code>{candidate.url}</code>
+            <button
+              disabled={selected || $sidebarView.selectingUrls.includes(candidate.url)}
+              type="button"
+              onclick={() => sidebarActions.selectSource(candidate.url)}
+            >
+              {buttonLabel(candidate, selected, $sidebarView.selectingUrls)}
+            </button>
+          </article>
+        {/each}
+        <Diagnostics session={$sidebarView.session} />
       {/if}
     </section>
   {/if}
-
-  <section class="sources">
-    {#if !$sidebarView.session || $sidebarView.session.candidates.length === 0}
-      {@const message = emptyMessage($sidebarView.session)}
-      <div class="empty">
-        <strong>{message.title}</strong>
-        <p>{message.detail}</p>
-      </div>
-      <Diagnostics session={$sidebarView.session} />
-    {:else}
-      {@const selected = $sidebarView.session.status === 'selected'}
-      {#each $sidebarView.session.candidates as candidate (candidate.url)}
-        <article
-          class:is-highlighted={$sidebarView.highlightedUrl === candidate.url}
-          class="source"
-          data-highlight-kind={candidate.kind}
-          data-highlight-source={candidate.url}
-          data-source-card="true"
-          data-source-url={candidate.url}
-          onblur={(event) => {
-            if (!(event.currentTarget instanceof HTMLElement) || event.currentTarget.contains(event.relatedTarget as Node | null)) {
-              return;
-            }
-            sidebarActions.clearHighlight();
-          }}
-          onfocus={() => sidebarActions.highlight(candidate.url)}
-          onmouseout={(event) => {
-            if (!(event.currentTarget instanceof HTMLElement) || event.currentTarget.contains(event.relatedTarget as Node | null)) {
-              return;
-            }
-            sidebarActions.clearHighlight();
-          }}
-          onmouseover={() => sidebarActions.highlight(candidate.url)}
-        >
-          <div class="source-top">
-            <strong>{candidate.kind}</strong>
-            <span>{Math.round(candidate.confidence * 100)}%</span>
-          </div>
-          <p>{candidateType(candidate)}</p>
-          <code>{candidate.url}</code>
-          <button
-            disabled={selected || $sidebarView.selectingUrls.includes(candidate.url)}
-            type="button"
-            onclick={() => sidebarActions.selectSource(candidate.url)}
-          >
-            {buttonLabel(candidate, selected, $sidebarView.selectingUrls)}
-          </button>
-        </article>
-      {/each}
-      <Diagnostics session={$sidebarView.session} />
-    {/if}
-  </section>
 </aside>

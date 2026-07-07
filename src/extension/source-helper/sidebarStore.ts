@@ -30,6 +30,7 @@ export type SourceSession = {
 
 export type SidebarView = {
   capturePending: boolean;
+  collapsed: boolean;
   highlightedUrl: string | null;
   selectingUrls: string[];
   session: SourceSession | null;
@@ -38,6 +39,7 @@ export type SidebarView = {
 
 export const sidebarView = writable<SidebarView>({
   capturePending: false,
+  collapsed: false,
   highlightedUrl: null,
   selectingUrls: [],
   session: null,
@@ -50,6 +52,7 @@ type SidebarActions = {
   highlight: (url: string) => void;
   selectSource: (url: string) => void;
   startCapture: () => void;
+  toggleCollapsed: () => void;
 };
 
 export const sidebarActions: SidebarActions = {
@@ -57,7 +60,8 @@ export const sidebarActions: SidebarActions = {
   close: () => undefined,
   highlight: (_url: string) => undefined,
   selectSource: (_url: string) => undefined,
-  startCapture: () => undefined
+  startCapture: () => undefined,
+  toggleCollapsed: () => undefined
 };
 
 export function setSidebarActions(actions: Partial<SidebarActions>) {

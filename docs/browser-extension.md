@@ -50,6 +50,8 @@ The app is commonly opened from another LAN device over plain HTTP, for example 
 
 The production UX is the in-page Sources sidebar injected by the extension content script. Do not require users to enable Yandex's `YandexSidePanel` feature flag or depend on Chrome's native `sidePanel` API.
 
+The sidebar can be collapsed into a narrow right-edge handle with its arrow button and expanded again with the same control.
+
 The Sources sidebar captures candidates around active playback instead of listing every media-looking request on the page. Start the main video first; the content script reports playback from one visible dominant `<video>`, and the service worker accepts recent network candidates only during a short rolling active window. Byte-range URLs such as `?bytes=0-6402` are ignored because they are chunks, not standalone downloadable sources.
 
 Extensionless media request URLs with an explicit `mime=video/...` query hint are treated like direct video responses; large video platforms commonly use that shape for playable media while response headers may be hidden from ordinary extension header observation.

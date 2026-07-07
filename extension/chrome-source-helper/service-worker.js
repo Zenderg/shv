@@ -12,6 +12,7 @@ const ACTIVE_CAPTURE_WINDOW_MS = 30000;
 const PENDING_NETWORK_BUFFER_MS = 15000;
 const pendingNetworkCandidatesByTab = new Map();
 const requestHeadersByRequestId = new Map();
+let stateWriteChain = Promise.resolve();
 const DOWNLOAD_HEADER_NAMES = new Set([
   'accept',
   'accept-language',
@@ -636,10 +637,16 @@ async function getState() {
 }
 
 async function upsertState(mutator) {
-  const state = await getState();
-  state.sessions ??= {};
-  mutator(state);
-  await chrome.storage.local.set({ sourceState: state });
+  const update = stateWriteChain
+    .catch(() => undefined)
+    .then(async () => {
+      const state = await getState();
+      state.sessions ??= {};
+      mutator(state);
+      await chrome.storage.local.set({ sourceState: state });
+    });
+  stateWriteChain = update.catch(() => undefined);
+  return update;
 }
 
 function notifyPanel(tabId = null) {
