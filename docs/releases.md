@@ -7,7 +7,7 @@
 - Releases are cut only from `main`.
 - Release tags use `vX.Y.Z`, for example `v1.2.3`.
 - Pushing a release tag starts the GitHub Actions release workflow.
-- The workflow runs `npm test`, `npm run typecheck`, and `npm run build` before publishing an image.
+- The workflow installs `ffmpeg`/`ffprobe`, then runs `npm test`, `npm run typecheck`, and `npm run build` before publishing an image.
 - The workflow publishes these image tags:
   - `ghcr.io/zenderg/shv:vX.Y.Z`
   - `ghcr.io/zenderg/shv:X.Y.Z`
