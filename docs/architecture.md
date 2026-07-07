@@ -154,6 +154,12 @@ The downloaded extension package is origin-aware: the server rewrites the packag
 `externally_connectable.matches` and shared `APP_ORIGIN` constant for the browser-visible app origin. Keep production
 deployments downloading the zip from the same origin as the app, or set `PUBLIC_APP_ORIGIN` when proxy headers are not
 enough to reconstruct that origin.
+Production and development extension packages must continue to share the single source directory
+`extension/chrome-source-helper`. They differ only at package time: production uses `/extension/shv-source-helper.zip`
+and id `ncgeehcdlbbdgojleaoefhhdinmdhcaf`, while local origins use `/extension/shv-source-helper-dev.zip` and id
+`jglagfhfffmokhgmaijndppinlbolpee`. The app includes the expected extension id in content-script bridge messages so a
+production content script installed in the same browser profile cannot satisfy a local development app's extension
+probe.
 When capture is empty, the sidebar renders diagnostics from both the content script and service worker: DOM video counts,
 dominant/active playback flags, media-like network observations, classifier hits, and session-mapping counters. Keep
 those diagnostics available while triaging site-specific capture failures so future fixes can target the failing layer.

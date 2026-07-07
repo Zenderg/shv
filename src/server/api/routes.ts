@@ -12,6 +12,14 @@ import type { LiveBrowserService } from '../browser-live/liveBrowserService.js';
 import type { MediaFiles } from '../media-library/mediaFiles.js';
 import type { MediaLibraryService } from '../media-library/mediaLibraryService.js';
 import { buildZipArchive, type ZipEntryInput } from '../utils/zipArchive.js';
+import {
+  DEV_SOURCE_EXTENSION_ID,
+  PROD_SOURCE_EXTENSION_ID,
+  sourceExtensionProfile,
+  type SourceExtensionProfile
+} from '../../shared/sourceExtension.js';
+
+export { DEV_SOURCE_EXTENSION_ID, PROD_SOURCE_EXTENSION_ID, sourceExtensionProfile };
 
 export interface RouteServices {
   config: AppConfig;
@@ -107,18 +115,31 @@ export function createRouter(services: RouteServices): Router {
   });
 
   router.get('/extension/shv-source-helper.zip', (request, response) => {
+    sendSourceExtensionPackage(request, response, services, sourceExtensionProfile('prod'));
+  });
+
+  router.get('/extension/shv-source-helper-dev.zip', (request, response) => {
+    sendSourceExtensionPackage(request, response, services, sourceExtensionProfile('dev'));
+  });
+
+  function sendSourceExtensionPackage(
+    request: Request,
+    response: Response,
+    services: RouteServices,
+    profile: SourceExtensionProfile
+  ) {
     const extensionRoot = path.resolve(process.cwd(), 'extension/chrome-source-helper');
     if (!fs.existsSync(extensionRoot)) {
       response.status(404).json({ error: 'extension_artifact_not_found' });
       return;
     }
     const archive = buildZipArchive(
-      extensionZipEntries(extensionRoot, 'shv-source-helper', appOriginForExtension(request, services.config))
+      extensionZipEntries(extensionRoot, profile, appOriginForExtension(request, services.config))
     );
     response.setHeader('Cache-Control', 'no-store');
-    response.setHeader('Content-Disposition', 'attachment; filename="shv-source-helper.zip"');
+    response.setHeader('Content-Disposition', `attachment; filename="${profile.packageFilename}"`);
     response.type('zip').send(archive);
-  });
+  }
 
   router.post('/api/jobs', (request, response) => {
     const body = z.object({ sourceUrl: z.string().url(), categoryId: z.string().uuid() }).parse(request.body);
@@ -264,13 +285,21 @@ function listZipEntries(root: string, prefix: string): ZipEntryInput[] {
   return entries;
 }
 
-export function extensionZipEntries(root: string, prefix: string, appOrigin: string): ZipEntryInput[] {
-  return listZipEntries(root, prefix).map((entry) => {
-    if (entry.name === `${prefix}/manifest.json`) {
+export function extensionZipEntries(
+  root: string,
+  profile: SourceExtensionProfile,
+  appOrigin: string
+): ZipEntryInput[] {
+  return listZipEntries(root, profile.packagePrefix).map((entry) => {
+    if (entry.name === `${profile.packagePrefix}/manifest.json`) {
       const manifest = JSON.parse(entry.data.toString('utf8')) as {
         externally_connectable?: { matches?: string[] };
         host_permissions?: string[];
+        key?: string;
+        name?: string;
       };
+      manifest.name = profile.name;
+      manifest.key = profile.key;
       manifest.externally_connectable = {
         ...manifest.externally_connectable,
         matches: uniqueStrings([...(manifest.externally_connectable?.matches ?? []), `${appOrigin}/*`])
@@ -278,7 +307,7 @@ export function extensionZipEntries(root: string, prefix: string, appOrigin: str
       manifest.host_permissions = uniqueStrings([...(manifest.host_permissions ?? []), `${appOrigin}/*`]);
       return { ...entry, data: Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`) };
     }
-    if (entry.name === `${prefix}/shared.js`) {
+    if (entry.name === `${profile.packagePrefix}/shared.js`) {
       const source = entry.data.toString('utf8').replace(
         /^export const APP_ORIGIN = '[^']+';/m,
         `export const APP_ORIGIN = '${appOrigin}';`

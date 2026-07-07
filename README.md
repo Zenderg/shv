@@ -79,11 +79,12 @@ Manual source selection uses a local Chromium browser extension. The running app
 
 ```text
 http://127.0.0.1:8080/extension/shv-source-helper.zip
+http://127.0.0.1:8080/extension/shv-source-helper-dev.zip
 ```
 
-Download the extension package from the same app URL you use in the browser. If you open `shv` from a LAN address such
-as `http://192.168.x.x:8080`, download the extension from that address too, then reload the unpacked extension in your
-browser.
+Download the extension package from the same app URL you use in the browser. Local development origins such as
+`localhost`, `127.0.0.1`, and private LAN addresses use the dev package/id so they can coexist with the production
+extension in the same browser profile.
 
 See [docs/browser-extension.md](docs/browser-extension.md) for installation, behavior, and troubleshooting details.
 

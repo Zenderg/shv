@@ -2,10 +2,11 @@
 
 Manual source selection uses a local Chromium browser extension so source pages open as normal browser tabs with a live Sources sidebar embedded directly into the page.
 
-The current extension package is served by the running app:
+The extension packages are served by the running app:
 
 ```text
-http://127.0.0.1:8080/extension/shv-source-helper.zip
+Production/public origins: http://127.0.0.1:8080/extension/shv-source-helper.zip
+Local development origins: http://127.0.0.1:8080/extension/shv-source-helper-dev.zip
 ```
 
 The downloaded package is tailored to the app origin that served it. In production, download it from the same URL where
@@ -13,21 +14,29 @@ the app is open so the extension manifest allows that origin and the service wor
 origin. If the app runs behind a reverse proxy that hides the public scheme or host from Node, set `PUBLIC_APP_ORIGIN`
 to the browser-visible origin, for example `https://videos.example.com`.
 
+The source files under `extension/chrome-source-helper` are shared by both packages. The server rewrites only the
+packaged manifest profile and `APP_ORIGIN`: local development origins (`localhost`, `127.*`, `10.*`, `172.16.*` through
+`172.31.*`, and `192.168.*`) receive the dev package so it can be installed alongside the production extension without
+Chrome treating them as the same extension.
+
 ## Install or Update
 
 1. Download the zip from the running app.
 2. Unzip it somewhere stable on this machine.
 3. Open the browser extensions page (`chrome://extensions`, `browser://extensions`, or the equivalent page in that browser).
 4. Enable Developer mode.
-5. Choose Load unpacked and select the unzipped `shv-source-helper` folder.
+5. Choose Load unpacked and select the unzipped `shv-source-helper` or `shv-source-helper-dev` folder shown by the app.
 
-The unpacked extension has a stable manifest key, so its expected Chrome extension id is:
+The unpacked extensions have stable manifest keys. The expected Chrome extension ids are:
 
 ```text
-ncgeehcdlbbdgojleaoefhhdinmdhcaf
+Production: ncgeehcdlbbdgojleaoefhhdinmdhcaf
+Development: jglagfhfffmokhgmaijndppinlbolpee
 ```
 
-When `Choose source` is clicked, the app checks for this extension and its protocol version. If it is missing or old, the app shows an install/update dialog with the same download link and instructions.
+When `Choose source` is clicked, the app checks the extension id selected for the current app origin and verifies its
+protocol version. If it is missing or old, the app shows an install/update dialog with the matching download link and
+instructions.
 
 The app is commonly opened from another LAN device over plain HTTP, for example `http://192.168.x.x:8080`. Browser-side extension bridge code must not require HTTPS-only Web Crypto APIs such as `crypto.randomUUID`; use a fallback request id when probing the content-script bridge.
 

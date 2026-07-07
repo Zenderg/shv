@@ -81,10 +81,14 @@ if (IS_TOP_FRAME) {
     if (event.source !== window || event.data?.channel !== 'SHV_SOURCE_HELPER') {
       return;
     }
+    if (event.data.extensionId && event.data.extensionId !== chrome.runtime.id) {
+      return;
+    }
     sendRuntimeMessage(event.data.message, (response) => {
       window.postMessage(
         {
           channel: 'SHV_SOURCE_HELPER_RESPONSE',
+          extensionId: chrome.runtime.id,
           requestId: event.data.requestId,
           response
         },

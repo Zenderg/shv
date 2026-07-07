@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { api, type Category, type DownloadJob, type MediaCandidate, type MediaItem, type QueueSnapshot } from './lib/api';
 import {
-  SOURCE_EXTENSION_DOWNLOAD_PATH,
-  SOURCE_EXTENSION_ID,
   SOURCE_EXTENSION_PROTOCOL_VERSION,
   SOURCE_EXTENSION_REQUIRED_VERSION,
   checkSourceExtension,
   openSourceWithExtension,
+  sourceExtensionTargetForOrigin,
   type ExtensionStatus
 } from './lib/extensionBridge';
 
@@ -870,6 +869,7 @@ function ExtensionInstallDialog({
   status: Exclude<ExtensionStatus, { kind: 'ready' }>;
 }) {
   const isOutdated = status.kind === 'outdated';
+  const extensionTarget = sourceExtensionTargetForOrigin(window.location.origin);
   return (
     <DialogBackdrop onClose={onClose}>
       <section className="extensionDialog">
@@ -902,18 +902,18 @@ function ExtensionInstallDialog({
             ) : null}
           </div>
           <ol>
-            <li>Download the latest extension package from this app.</li>
+            <li>Download the latest {extensionTarget.kind === 'dev' ? 'development' : 'production'} extension package from this app.</li>
             <li>Unzip it somewhere stable on this machine.</li>
             <li>Open your browser extensions page, enable Developer mode, and choose Load unpacked.</li>
-            <li>Select the unzipped <code>shv-source-helper</code> folder.</li>
+            <li>Select the unzipped <code>{extensionTarget.packagePrefix}</code> folder.</li>
             <li>Return here and click Check again.</li>
           </ol>
           <p className="extensionId">
-            Expected extension id: <code>{SOURCE_EXTENSION_ID}</code>
+            Expected extension id: <code>{extensionTarget.id}</code>
           </p>
         </div>
         <footer>
-          <a className="downloadButton" href={SOURCE_EXTENSION_DOWNLOAD_PATH}>
+          <a className="downloadButton" href={extensionTarget.downloadPath}>
             Download extension
           </a>
           <button onClick={onCheckAgain} type="button">

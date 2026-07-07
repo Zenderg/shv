@@ -1,7 +1,15 @@
-export const SOURCE_EXTENSION_ID = 'ncgeehcdlbbdgojleaoefhhdinmdhcaf';
+import {
+  DEV_SOURCE_EXTENSION_ID,
+  PROD_SOURCE_EXTENSION_ID,
+  sourceExtensionTargetForOrigin
+} from '../../../shared/sourceExtension';
+
+export { DEV_SOURCE_EXTENSION_ID, PROD_SOURCE_EXTENSION_ID, sourceExtensionTargetForOrigin };
+
+export const SOURCE_EXTENSION_ID = PROD_SOURCE_EXTENSION_ID;
 export const SOURCE_EXTENSION_REQUIRED_VERSION = '1.0.22';
 export const SOURCE_EXTENSION_PROTOCOL_VERSION = 1;
-export const SOURCE_EXTENSION_DOWNLOAD_PATH = '/extension/shv-source-helper.zip';
+export const SOURCE_EXTENSION_DOWNLOAD_PATH = sourceExtensionTargetForOrigin(currentWindowOrigin()).downloadPath;
 
 export interface ExtensionHandshake {
   installed: true;
@@ -115,7 +123,7 @@ async function sendChromeRuntimeMessage<T>(runtime: ChromeRuntime, message: unkn
   return new Promise((resolve) => {
     const timeout = window.setTimeout(() => resolve(null), timeoutMs);
     try {
-      runtime.sendMessage(SOURCE_EXTENSION_ID, message, (response) => {
+      runtime.sendMessage(currentSourceExtensionId(), message, (response) => {
         window.clearTimeout(timeout);
         if (runtime.lastError) {
           resolve(null);
@@ -133,6 +141,7 @@ async function sendChromeRuntimeMessage<T>(runtime: ChromeRuntime, message: unkn
 async function sendContentScriptBridgeMessage<T>(message: unknown): Promise<T | null> {
   return new Promise((resolve) => {
     const requestId = createBridgeRequestId();
+    const extensionId = currentSourceExtensionId();
     const timeout = window.setTimeout(() => {
       window.removeEventListener('message', handleMessage);
       resolve(null);
@@ -142,6 +151,7 @@ async function sendContentScriptBridgeMessage<T>(message: unknown): Promise<T | 
       if (
         event.source !== window ||
         event.data?.channel !== 'SHV_SOURCE_HELPER_RESPONSE' ||
+        event.data?.extensionId !== extensionId ||
         event.data?.requestId !== requestId
       ) {
         return;
@@ -152,8 +162,16 @@ async function sendContentScriptBridgeMessage<T>(message: unknown): Promise<T | 
     }
 
     window.addEventListener('message', handleMessage);
-    window.postMessage({ channel: 'SHV_SOURCE_HELPER', message, requestId }, window.location.origin);
+    window.postMessage({ channel: 'SHV_SOURCE_HELPER', extensionId, message, requestId }, window.location.origin);
   });
+}
+
+function currentSourceExtensionId(): string {
+  return sourceExtensionTargetForOrigin(currentWindowOrigin()).id;
+}
+
+function currentWindowOrigin(): string {
+  return typeof window === 'undefined' ? 'https://shv.local' : window.location.origin;
 }
 
 function createBridgeRequestId(): string {
