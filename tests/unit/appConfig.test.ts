@@ -1,0 +1,30 @@
+import { describe, expect, test } from 'vitest';
+import { loadAppConfig } from '../../src/server/config/appConfig.js';
+
+describe('loadAppConfig', () => {
+  test('ignores a blank Chromium executable override', () => {
+    const config = loadAppConfig({
+      APP_DATA_ROOT: '/data/app',
+      CHROMIUM_EXECUTABLE_PATH: '   '
+    } as NodeJS.ProcessEnv);
+
+    expect(config.chromiumExecutablePath).toBeUndefined();
+  });
+
+  test('defaults the yt-dlp cookie file to app data storage', () => {
+    const config = loadAppConfig({
+      APP_DATA_ROOT: '/data/app'
+    } as NodeJS.ProcessEnv);
+
+    expect(config.ytDlpCookiesPath).toBe('/data/app/youtube-cookies.txt');
+  });
+
+  test('allows overriding the yt-dlp cookie file path', () => {
+    const config = loadAppConfig({
+      APP_DATA_ROOT: '/data/app',
+      YTDLP_COOKIES_FILE: '/cookies/youtube.txt'
+    } as NodeJS.ProcessEnv);
+
+    expect(config.ytDlpCookiesPath).toBe('/cookies/youtube.txt');
+  });
+});

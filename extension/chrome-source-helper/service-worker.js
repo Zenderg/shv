@@ -1,0 +1,678 @@
+import {
+  APP_ORIGIN,
+  EXTENSION_VERSION,
+  PROTOCOL_VERSION,
+  candidateFromUrl,
+  candidateRejectionReason,
+  mergeCandidates,
+  sessionTabIdsForRequest
+} from './shared.js';
+
+const ACTIVE_CAPTURE_WINDOW_MS = 30000;
+const PENDING_NETWORK_BUFFER_MS = 15000;
+const pendingNetworkCandidatesByTab = new Map();
+const requestHeadersByRequestId = new Map();
+const DOWNLOAD_HEADER_NAMES = new Set([
+  'accept',
+  'accept-language',
+  'origin',
+  'referer',
+  'sec-ch-ua',
+  'sec-ch-ua-mobile',
+  'sec-ch-ua-platform',
+  'user-agent'
+]);
+
+chrome.action.onClicked.addListener(() => {
+  void toggleActiveTabSidebar();
+});
+
+chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => {
+  if (message?.type === 'SHV_HELLO') {
+    sendResponse({ installed: true, protocolVersion: PROTOCOL_VERSION, version: EXTENSION_VERSION });
+    return false;
+  }
+
+  if (message?.type === 'SHV_OPEN_SOURCE') {
+    openSourceTab(message, sender).then(sendResponse).catch((error) => {
+      sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) });
+    });
+    return true;
+  }
+
+  return false;
+});
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === 'SHV_HELLO') {
+    sendResponse({ installed: true, protocolVersion: PROTOCOL_VERSION, version: EXTENSION_VERSION });
+    return false;
+  }
+  if (message?.type === 'SHV_OPEN_SOURCE') {
+    openSourceTab(message, sender).then(sendResponse).catch((error) => {
+      sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) });
+    });
+    return true;
+  }
+  if (message?.type === 'SHV_PAGE_CANDIDATES' && sender.tab?.id != null) {
+    mergeTabCandidates(sender.tab.id, message.candidates ?? []).then(sendResponse).catch((error) => {
+      sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) });
+    });
+    return true;
+  }
+  if (message?.type === 'SHV_ACTIVE_PLAYBACK' && sender.tab?.id != null) {
+    activatePlaybackCapture(sender.tab.id, message.candidates ?? []).then(sendResponse).catch((error) => {
+      sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) });
+    });
+    return true;
+  }
+  if (message?.type === 'SHV_PLAYBACK_DIAGNOSTIC' && sender.tab?.id != null) {
+    updatePlaybackDiagnostics(sender.tab.id, message.diagnostic).then(sendResponse).catch((error) => {
+      sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) });
+    });
+    return true;
+  }
+  if (message?.type === 'SHV_START_CAPTURE') {
+    startManualCapture(message.tabId ?? sender.tab?.id).then(sendResponse).catch((error) => {
+      sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) });
+    });
+    return true;
+  }
+  if (message?.type === 'SHV_GET_PANEL_STATE') {
+    panelState().then(sendResponse).catch((error) => {
+      sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) });
+    });
+    return true;
+  }
+  if (message?.type === 'SHV_SELECT_SOURCE') {
+    selectSource(message.tabId, message.url).then(sendResponse).catch((error) => {
+      sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) });
+    });
+    return true;
+  }
+  return false;
+});
+
+chrome.webRequest.onHeadersReceived.addListener(
+  (details) => {
+    const requestHeaders = requestHeadersByRequestId.get(details.requestId) ?? {};
+    void recordNetworkDetails(details, requestHeaders).finally(() => {
+      requestHeadersByRequestId.delete(details.requestId);
+    });
+  },
+  { urls: ['<all_urls>'] },
+  ['responseHeaders', 'extraHeaders']
+);
+
+chrome.webRequest.onBeforeSendHeaders.addListener(
+  (details) => {
+    const headers = downloadableRequestHeaders(details.requestHeaders ?? []);
+    if (Object.keys(headers).length > 0) {
+      requestHeadersByRequestId.set(details.requestId, headers);
+    }
+  },
+  { urls: ['<all_urls>'] },
+  ['requestHeaders', 'extraHeaders']
+);
+
+chrome.webRequest.onCompleted.addListener(
+  (details) => {
+    requestHeadersByRequestId.delete(details.requestId);
+  },
+  { urls: ['<all_urls>'] }
+);
+
+chrome.webRequest.onErrorOccurred.addListener(
+  (details) => {
+    requestHeadersByRequestId.delete(details.requestId);
+  },
+  { urls: ['<all_urls>'] }
+);
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  void removeTabSession(tabId);
+});
+
+async function openSourceTab(message, sender) {
+  assertOpenSourceMessage(message);
+  const appTabId = await resolveAppTabId(sender);
+  const tab = await chrome.tabs.create({ active: true, url: message.sourceUrl });
+  if (tab.id == null) {
+    throw new Error('Chrome did not return a tab id');
+  }
+
+  await upsertState((state) => {
+    state.activeTabId = tab.id;
+    state.sessions[String(tab.id)] = {
+      candidates: [],
+      appTabId,
+      activeCaptureUntil: null,
+      currentUrl: message.sourceUrl,
+      diagnostics: emptyDiagnostics(),
+      jobId: message.jobId,
+      sourceUrl: message.sourceUrl,
+      status: 'waiting for playback',
+      titleHint: message.titleHint ?? null,
+      updatedAt: new Date().toISOString()
+    };
+  });
+
+  await showSidebarInTab(tab.id);
+  notifyPanel(tab.id);
+  return { ok: true, tabId: tab.id };
+}
+
+async function activatePlaybackCapture(tabId, candidates) {
+  return openCaptureWindow(tabId, candidates);
+}
+
+async function startManualCapture(tabId) {
+  if (tabId == null) {
+    throw new Error('No source tab available for capture');
+  }
+  return openCaptureWindow(tabId, []);
+}
+
+async function openCaptureWindow(tabId, candidates) {
+  const now = Date.now();
+  const activeCaptureUntil = now + ACTIVE_CAPTURE_WINDOW_MS;
+  const pendingCandidates = takePendingNetworkCandidates(tabId, now);
+  let session = null;
+
+  await upsertState((state) => {
+    session = state.sessions[String(tabId)];
+    if (!session) {
+      return;
+    }
+    session.activeCaptureUntil = activeCaptureUntil;
+    session.status = 'listening';
+    session.updatedAt = new Date().toISOString();
+  });
+
+  if (!session) {
+    return { ok: true };
+  }
+
+  await mergeTabCandidates(tabId, [...pendingCandidates, ...candidates], { requireActive: false });
+  notifyPanel(tabId);
+  return { captured: pendingCandidates.length + candidates.length, ok: true };
+}
+
+async function resolveAppTabId(sender) {
+  if (sender?.tab?.id != null) {
+    return sender.tab.id;
+  }
+  if (!isAppUrl(sender?.url)) {
+    return null;
+  }
+  const tabs = await chrome.tabs.query({ url: ['http://127.0.0.1:8080/*', 'http://localhost:8080/*'] }).catch(() => []);
+  const exact = tabs.find((tab) => tab.url === sender.url);
+  return exact?.id ?? tabs.find((tab) => tab.active)?.id ?? tabs[0]?.id ?? null;
+}
+
+function isAppUrl(url) {
+  if (!url) {
+    return false;
+  }
+  try {
+    const parsed = new URL(url);
+    return (
+      (parsed.hostname === '127.0.0.1' || parsed.hostname === 'localhost') &&
+      parsed.port === new URL(APP_ORIGIN).port
+    );
+  } catch {
+    return false;
+  }
+}
+
+async function toggleActiveTabSidebar() {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (tab?.id == null) {
+    return;
+  }
+  await sendTabMessage(tab.id, { tabId: tab.id, type: 'SHV_TOGGLE_SIDEBAR' }).catch(() => undefined);
+}
+
+async function showSidebarInTab(tabId) {
+  await retryTabMessage(tabId, { tabId, type: 'SHV_SHOW_SIDEBAR' });
+}
+
+async function retryTabMessage(tabId, message) {
+  let lastError = null;
+  for (let attempt = 0; attempt < 36; attempt += 1) {
+    try {
+      return await sendTabMessage(tabId, message);
+    } catch (error) {
+      lastError = error;
+      await delay(250);
+    }
+  }
+  throw lastError ?? new Error('The source sidebar did not become ready');
+}
+
+function sendTabMessage(tabId, message) {
+  return chrome.tabs.sendMessage(tabId, message);
+}
+
+function delay(milliseconds) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, milliseconds);
+  });
+}
+
+async function recordNetworkDetails(details, requestHeaders = {}) {
+  const contentType = headerValue(details.responseHeaders ?? [], 'content-type');
+  const candidate = candidateFromUrl(details.url, contentType, 'browser-request');
+  const state = await getState();
+  const tabIds = sessionTabIdsForRequest(details, state);
+  const diagnostic = networkDiagnosticFor(details, contentType, candidate, requestHeaders);
+  if (diagnostic) {
+    const diagnosticTabIds = tabIds.length > 0 ? tabIds : state.activeTabId != null ? [state.activeTabId] : [];
+    for (const tabId of diagnosticTabIds) {
+      await updateNetworkDiagnostics(tabId, diagnostic, {
+        classified: Boolean(candidate),
+        mapped: tabIds.includes(tabId),
+        unmapped: tabIds.length === 0
+      });
+    }
+  }
+  if (!candidate) {
+    return;
+  }
+  candidate.headers = requestHeaders;
+  for (const tabId of tabIds) {
+    await recordNetworkCandidate(tabId, candidate);
+  }
+}
+
+async function updatePlaybackDiagnostics(tabId, diagnostic) {
+  await upsertState((state) => {
+    const session = state.sessions[String(tabId)];
+    if (!session) {
+      return;
+    }
+    session.diagnostics ??= emptyDiagnostics();
+    session.diagnostics.playback = betterPlaybackDiagnostic(session.diagnostics.playback, diagnostic);
+    session.updatedAt = new Date().toISOString();
+  });
+  notifyPanel(tabId);
+  return { ok: true };
+}
+
+async function updateNetworkDiagnostics(tabId, diagnostic, flags) {
+  await upsertState((state) => {
+    const session = state.sessions[String(tabId)];
+    if (!session) {
+      return;
+    }
+    session.diagnostics ??= emptyDiagnostics();
+    session.diagnostics.network ??= {};
+    const network = session.diagnostics.network;
+    network.observed = (network.observed ?? 0) + 1;
+    network.classified = (network.classified ?? 0) + (flags.classified ? 1 : 0);
+    network.mapped = (network.mapped ?? 0) + (flags.mapped ? 1 : 0);
+    network.unmapped = (network.unmapped ?? 0) + (flags.unmapped ? 1 : 0);
+    network.lastAt = new Date().toISOString();
+    network.lastContentType = diagnostic.contentType;
+    network.lastHost = diagnostic.host;
+    network.lastPath = diagnostic.path;
+    network.lastQueryKeys = diagnostic.queryKeys;
+    network.lastRejectReason = diagnostic.rejectReason;
+    network.lastReason = diagnostic.reason;
+    network.lastStatusCode = diagnostic.statusCode;
+    network.lastTabId = diagnostic.tabId;
+    network.lastType = diagnostic.type;
+    network.lastInitiator = diagnostic.initiator;
+    network.lastHeaderKeys = diagnostic.headerKeys;
+    session.updatedAt = new Date().toISOString();
+  });
+  notifyPanel(tabId);
+}
+
+function emptyDiagnostics() {
+  return {
+    network: {
+      classified: 0,
+      mapped: 0,
+      observed: 0,
+      unmapped: 0
+    },
+    playback: null
+  };
+}
+
+function networkDiagnosticFor(details, contentType, candidate, requestHeaders = {}) {
+  let parsed = null;
+  try {
+    parsed = new URL(details.url);
+  } catch {
+    return null;
+  }
+  const normalizedContentType = contentType ? contentType.split(';')[0].trim().toLowerCase() : null;
+  const hasVideoMimeQuery = parsed.searchParams.get('mime')?.toLowerCase().startsWith('video/');
+  const isMediaLike =
+    Boolean(candidate) ||
+    parsed.hostname.includes('googlevideo') ||
+    parsed.pathname.includes('videoplayback') ||
+    normalizedContentType?.startsWith('video/') ||
+    normalizedContentType?.startsWith('audio/') ||
+    hasVideoMimeQuery;
+  if (!isMediaLike) {
+    return null;
+  }
+  return {
+    contentType: normalizedContentType ?? parsed.searchParams.get('mime') ?? 'unknown',
+    headerKeys: Object.keys(requestHeaders).sort().join(', ') || 'none',
+    host: parsed.hostname,
+    initiator: details.initiator ?? details.documentUrl ?? null,
+    path: parsed.pathname,
+    queryKeys: [...parsed.searchParams.keys()].slice(0, 16).join(', ') || 'none',
+    rejectReason: candidate ? 'accepted' : candidateRejectionReason(details.url, contentType),
+    reason: candidate ? 'classified as candidate' : 'media-like request rejected by classifier',
+    statusCode: details.statusCode ?? null,
+    tabId: details.tabId,
+    type: details.type ?? 'unknown'
+  };
+}
+
+function betterPlaybackDiagnostic(current, incoming) {
+  if (!incoming) {
+    return current ?? null;
+  }
+  if (!current) {
+    return incoming;
+  }
+  const currentScore = playbackDiagnosticScore(current);
+  const incomingScore = playbackDiagnosticScore(incoming);
+  if (incomingScore >= currentScore) {
+    return incoming;
+  }
+  const currentAt = Date.parse(current.sentAt ?? '') || 0;
+  const incomingAt = Date.parse(incoming.sentAt ?? '') || 0;
+  return incomingAt - currentAt > 5000 ? incoming : current;
+}
+
+function playbackDiagnosticScore(diagnostic) {
+  return (
+    (diagnostic.activeFound ? 100 : 0) +
+    (diagnostic.dominantFound ? 20 : 0) +
+    Math.min(10, diagnostic.largeVisibleCount ?? 0) +
+    Math.min(5, diagnostic.videoCount ?? 0)
+  );
+}
+
+async function recordNetworkCandidate(tabId, candidate) {
+  rememberPendingNetworkCandidate(tabId, candidate);
+  await mergeTabCandidates(tabId, [candidate], { requireActive: true });
+}
+
+async function mergeTabCandidates(tabId, candidates, options = {}) {
+  const normalized = candidates.filter(Boolean);
+  if (normalized.length === 0) {
+    return { ok: true };
+  }
+
+  let session = null;
+  await upsertState((state) => {
+    session = state.sessions[String(tabId)];
+    if (!session) {
+      return;
+    }
+    if (options.requireActive && !isSessionCaptureActive(session)) {
+      return;
+    }
+    session.candidates = mergeCandidates(session.candidates, normalized);
+    session.updatedAt = new Date().toISOString();
+  });
+
+  if (session && (!options.requireActive || isSessionCaptureActive(session))) {
+    await postCandidates(session.jobId, session.candidates);
+    notifyPanel(tabId);
+  }
+  return { ok: true };
+}
+
+function rememberPendingNetworkCandidate(tabId, candidate) {
+  const now = Date.now();
+  const pending = pendingNetworkCandidatesByTab.get(tabId) ?? [];
+  pending.push({ candidate, capturedAt: now });
+  pendingNetworkCandidatesByTab.set(
+    tabId,
+    pending.filter((entry) => now - entry.capturedAt <= PENDING_NETWORK_BUFFER_MS).slice(-80)
+  );
+}
+
+function takePendingNetworkCandidates(tabId, now = Date.now()) {
+  const pending = pendingNetworkCandidatesByTab.get(tabId) ?? [];
+  const fresh = pending.filter((entry) => now - entry.capturedAt <= PENDING_NETWORK_BUFFER_MS).map((entry) => entry.candidate);
+  pendingNetworkCandidatesByTab.delete(tabId);
+  return fresh;
+}
+
+function isSessionCaptureActive(session) {
+  return typeof session.activeCaptureUntil === 'number' && session.activeCaptureUntil >= Date.now();
+}
+
+async function selectSource(tabId, url) {
+  const state = await getState();
+  const sourceTabId = tabId ?? state.activeTabId ?? null;
+  const session = state.sessions[String(sourceTabId ?? '')];
+  if (!session) {
+    throw new Error('No active source session');
+  }
+  const cookieSnapshot = await cookieSnapshotForSession(session, url);
+  if (cookieSnapshot.cookies.length > 0) {
+    await postCookies(session.jobId, cookieSnapshot.cookies);
+  }
+  const sessionCandidates = withCookieHeaders(session.candidates, cookieSnapshot.cookiesByUrl);
+  const candidates = await postCandidates(session.jobId, sessionCandidates);
+  const selected = candidates.find((candidate) => candidate.url === url);
+  if (!selected) {
+    throw new Error('Selected source was not accepted by the app');
+  }
+  await fetch(`${APP_ORIGIN}/api/jobs/${session.jobId}/select-candidate`, {
+    body: JSON.stringify({ candidateId: selected.id }),
+    headers: { 'Content-Type': 'application/json' },
+    method: 'POST'
+  }).then(ensureOk);
+  await upsertState((nextState) => {
+    const nextSession = nextState.sessions[String(sourceTabId ?? nextState.activeTabId ?? '')];
+    if (nextSession) {
+      nextSession.status = 'selected';
+      nextSession.updatedAt = new Date().toISOString();
+    }
+  });
+  notifyPanel(sourceTabId);
+  await notifyAppSelection(session.appTabId, session.jobId);
+  await focusAppTab(session.appTabId);
+  return { ok: true };
+}
+
+async function cookieSnapshotForSession(session, selectedUrl) {
+  const urls = uniqueHttpUrls([
+    session.sourceUrl,
+    session.currentUrl,
+    selectedUrl,
+    ...(session.candidates ?? []).map((candidate) => candidate.url)
+  ]);
+  const cookiesByUrl = {};
+  const allCookies = [];
+  for (const url of urls) {
+    const cookies = await cookiesForUrl(url);
+    cookiesByUrl[url] = cookies;
+    allCookies.push(...cookies);
+  }
+  return { cookies: dedupeCookies(allCookies), cookiesByUrl };
+}
+
+async function cookiesForUrl(url) {
+  if (!chrome.cookies?.getAll) {
+    return [];
+  }
+  try {
+    return (await chrome.cookies.getAll({ url })).map(normalizeCookie).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function normalizeCookie(cookie) {
+  if (!cookie?.name || !cookie.domain || !cookie.path) {
+    return null;
+  }
+  return {
+    domain: cookie.domain,
+    expirationDate: Number.isFinite(cookie.expirationDate) ? Math.floor(cookie.expirationDate) : null,
+    httpOnly: Boolean(cookie.httpOnly),
+    name: cookie.name,
+    path: cookie.path,
+    secure: Boolean(cookie.secure),
+    value: cookie.value ?? ''
+  };
+}
+
+function uniqueHttpUrls(urls) {
+  const result = [];
+  const seen = new Set();
+  for (const url of urls) {
+    if (!url || seen.has(url)) {
+      continue;
+    }
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        continue;
+      }
+      result.push(parsed.href);
+      seen.add(parsed.href);
+    } catch {
+      // Ignore invalid candidate URLs; schema validation already handles posted candidates.
+    }
+  }
+  return result;
+}
+
+function withCookieHeaders(candidates, cookiesByUrl) {
+  return candidates.map((candidate) => {
+    const cookieHeader = cookieHeaderFor(cookiesByUrl[candidate.url] ?? []);
+    if (!cookieHeader) {
+      return candidate;
+    }
+    return { ...candidate, headers: { ...candidate.headers, Cookie: cookieHeader } };
+  });
+}
+
+function cookieHeaderFor(cookies) {
+  return cookies.map((cookie) => `${cookie.name}=${cookie.value}`).join('; ');
+}
+
+function dedupeCookies(cookies) {
+  const byKey = new Map();
+  for (const cookie of cookies) {
+    byKey.set(`${cookie.domain}\t${cookie.path}\t${cookie.name}`, cookie);
+  }
+  return [...byKey.values()];
+}
+
+async function notifyAppSelection(appTabId, jobId) {
+  if (appTabId == null) {
+    return;
+  }
+  await sendTabMessage(appTabId, { jobId, type: 'SHV_SOURCE_SELECTED' }).catch(() => undefined);
+}
+
+async function focusAppTab(appTabId) {
+  if (appTabId == null) {
+    return;
+  }
+  try {
+    const tab = await chrome.tabs.update(appTabId, { active: true });
+    if (tab.windowId != null) {
+      await chrome.windows.update(tab.windowId, { focused: true });
+    }
+  } catch {
+    // The app tab may have been closed; selection has already succeeded.
+  }
+}
+
+async function postCandidates(jobId, candidates) {
+  return fetch(`${APP_ORIGIN}/api/jobs/${jobId}/extension-candidates`, {
+    body: JSON.stringify({ candidates }),
+    headers: { 'Content-Type': 'application/json' },
+    method: 'POST'
+  }).then(ensureOk);
+}
+
+async function postCookies(jobId, cookies) {
+  return fetch(`${APP_ORIGIN}/api/jobs/${jobId}/cookies`, {
+    body: JSON.stringify({ cookies }),
+    headers: { 'Content-Type': 'application/json' },
+    method: 'POST'
+  }).then(ensureOk);
+}
+
+async function ensureOk(response) {
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.status === 204 ? null : response.json();
+}
+
+async function panelState() {
+  const state = await getState();
+  return { ok: true, state };
+}
+
+async function removeTabSession(tabId) {
+  pendingNetworkCandidatesByTab.delete(tabId);
+  await upsertState((state) => {
+    delete state.sessions[String(tabId)];
+    if (state.activeTabId === tabId) {
+      state.activeTabId = null;
+    }
+  });
+}
+
+async function getState() {
+  const result = await chrome.storage.local.get('sourceState');
+  return result.sourceState ?? { activeTabId: null, sessions: {} };
+}
+
+async function upsertState(mutator) {
+  const state = await getState();
+  state.sessions ??= {};
+  mutator(state);
+  await chrome.storage.local.set({ sourceState: state });
+}
+
+function notifyPanel(tabId = null) {
+  chrome.runtime.sendMessage({ type: 'SHV_SOURCE_STATE_CHANGED' }).catch(() => undefined);
+  if (tabId != null) {
+    sendTabMessage(tabId, { tabId, type: 'SHV_SOURCE_STATE_CHANGED' }).catch(() => undefined);
+  }
+}
+
+function headerValue(headers, name) {
+  const match = headers.find((header) => header.name.toLowerCase() === name);
+  return match?.value ?? null;
+}
+
+function downloadableRequestHeaders(headers) {
+  const result = {};
+  for (const header of headers) {
+    const name = header.name.toLowerCase();
+    if (DOWNLOAD_HEADER_NAMES.has(name) && header.value) {
+      result[header.name] = header.value;
+    }
+  }
+  return result;
+}
+
+function assertOpenSourceMessage(message) {
+  if (message.protocolVersion !== PROTOCOL_VERSION) {
+    throw new Error('Unsupported protocol version');
+  }
+  if (!message.jobId || !message.sourceUrl) {
+    throw new Error('Missing jobId or sourceUrl');
+  }
+}
