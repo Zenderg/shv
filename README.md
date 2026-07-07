@@ -47,6 +47,12 @@ Persistent host folders are mounted under `./data`:
 - `./data/app` -> `/data/app`: SQLite database, thumbnails, Chromium profile state, diagnostics, and cookies used by download helpers.
 - `./data/work` -> `/work`: temporary active download and media-processing files.
 
+## Releases
+
+Prebuilt release images are published to GHCR as `ghcr.io/zenderg/shv:vX.Y.Z`.
+
+Release process and deployment snippets are documented in [docs/releases.md](docs/releases.md).
+
 ## Local Checks
 
 Local commands are available for checks and tests:
@@ -74,4 +80,5 @@ See [docs/browser-extension.md](docs/browser-extension.md) for installation, beh
 - [docs/architecture.md](docs/architecture.md): runtime layout, module ownership, queue behavior, and media pipeline boundaries.
 - [docs/browser-extension.md](docs/browser-extension.md): helper extension installation and capture behavior.
 - [docs/development.md](docs/development.md): local checks, Docker/Codex notes, and downloader implementation notes.
+- [docs/releases.md](docs/releases.md): release workflow, GHCR image tags, and deployment snippet.
 - [docs/superpowers/specs/2026-07-06-local-video-library-design.md](docs/superpowers/specs/2026-07-06-local-video-library-design.md): product design specification.
