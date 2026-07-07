@@ -25,6 +25,20 @@ The Sources sidebar content script is generated from `src/extension/source-helpe
 hand-edit `extension/chrome-source-helper/content-script.js` except for emergency debugging, because the next extension
 build will replace it.
 
+## Visual Preview
+
+For sidebar layout work that does not need real browser-extension APIs, run:
+
+```text
+npm run preview:extension
+```
+
+This starts a local Vite-only visual harness at `http://127.0.0.1:5174`. It mounts the real `SourceSidebar` component in
+Shadow DOM with mocked states for collapsed, empty, listening, candidate, selected, and long-URL views. It intentionally
+does not require Docker Compose, a loaded browser extension, cookies, or source capture runtime. Use the full Docker
+Compose app plus a real unpacked extension when validating `Use source`, extension messaging, network capture, cookies,
+or server integration.
+
 ## Install or Update
 
 1. Download the zip from the running app.

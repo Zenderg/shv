@@ -7,6 +7,7 @@
     "dev": "tsx watch src/server/index.ts",
     "build": "npm run build:extension && npm run build:web && npm run build:server",
     "build:extension": "vite build --config vite.extension.config.ts",
+    "build:extension-preview": "vite build --config vite.extension-preview.config.ts",
     "build:web": "vite build",
     "build:server": "tsc -p tsconfig.server.json",
     "dev:seed": "tsx scripts/devLibrarySeed.ts seed",
@@ -14,6 +15,7 @@
     "showcase:seed": "tsx scripts/showcaseLibrarySeed.ts seed",
     "showcase:seed:reset": "tsx scripts/showcaseLibrarySeed.ts reset",
     "showcase:screenshots": "tsx scripts/captureReadmeScreenshots.ts",
+    "preview:extension": "vite --config vite.extension-preview.config.ts",
     "start": "node dist/server/index.js",
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.server.json"

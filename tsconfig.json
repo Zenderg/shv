@@ -16,5 +16,15 @@
     "noEmit": true,
     "jsx": "react-jsx"
   },
-  "include": ["src/extension", "src/web/src", "src/shared", "vite.config.ts", "vite.extension.config.ts", "vitest.config.ts", "tests"]
+  "include": [
+    "src/extension",
+    "src/extension-preview",
+    "src/web/src",
+    "src/shared",
+    "vite.config.ts",
+    "vite.extension.config.ts",
+    "vite.extension-preview.config.ts",
+    "vitest.config.ts",
+    "tests"
+  ]
 }
