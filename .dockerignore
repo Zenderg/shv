@@ -2,6 +2,14 @@ node_modules
 dist
 data
 .git
+.github
+docs
+scripts
+tests
 .DS_Store
+.gitignore
+AGENTS.md
+LICENSE
+README.md
 npm-debug.log
 coverage

@@ -55,9 +55,6 @@ jobs:
       - name: Run typecheck
         run: npm run typecheck
 
-      - name: Build application
-        run: npm run build
-
       - name: Resolve image name
         id: image
         shell: bash
