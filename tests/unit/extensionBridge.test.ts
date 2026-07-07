@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { evaluateExtensionHandshake, isVersionAtLeast, openSourceWithExtension } from '../../src/web/src/lib/extensionBridge.js';
+import { checkSourceExtension, evaluateExtensionHandshake, isVersionAtLeast, openSourceWithExtension } from '../../src/web/src/lib/extensionBridge.js';
 
 const originalWindow = globalThis.window;
 
@@ -7,6 +7,7 @@ describe('extension bridge', () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
     globalThis.window = originalWindow;
   });
 
@@ -76,5 +77,44 @@ describe('extension bridge', () => {
     }
     callback({ ok: true });
     await openPromise;
+  });
+
+  test('uses a fallback bridge request id when crypto.randomUUID is unavailable', async () => {
+    let messageHandler: ((event: MessageEvent) => void) | undefined;
+    const postMessage = vi.fn();
+
+    vi.stubGlobal('crypto', {});
+    globalThis.window = {
+      addEventListener: vi.fn((_type: string, listener: EventListenerOrEventListenerObject) => {
+        messageHandler = listener as (event: MessageEvent) => void;
+      }),
+      clearTimeout: globalThis.clearTimeout.bind(globalThis),
+      crypto: {},
+      location: {
+        origin: 'http://192.168.1.42:8080'
+      },
+      postMessage,
+      removeEventListener: vi.fn(),
+      setTimeout: globalThis.setTimeout.bind(globalThis)
+    } as unknown as Window & typeof globalThis;
+
+    const statusPromise = checkSourceExtension();
+
+    expect(postMessage).toHaveBeenCalledOnce();
+    const payload = postMessage.mock.calls[0]?.[0] as { requestId?: string };
+    expect(payload.requestId).toEqual(expect.any(String));
+    expect(payload.requestId).not.toHaveLength(0);
+    expect(messageHandler).toBeDefined();
+
+    messageHandler?.({
+      data: {
+        channel: 'SHV_SOURCE_HELPER_RESPONSE',
+        requestId: payload.requestId,
+        response: { installed: true, protocolVersion: 1, version: '1.0.21' }
+      },
+      source: window
+    } as unknown as MessageEvent);
+
+    await expect(statusPromise).resolves.toEqual({ kind: 'ready', version: '1.0.21' });
   });
 });

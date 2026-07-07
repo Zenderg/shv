@@ -24,6 +24,8 @@ ncgeehcdlbbdgojleaoefhhdinmdhcaf
 
 When `Choose source` is clicked, the app checks for this extension and its protocol version. If it is missing or old, the app shows an install/update dialog with the same download link and instructions.
 
+The app is commonly opened from another LAN device over plain HTTP, for example `http://192.168.x.x:8080`. Browser-side extension bridge code must not require HTTPS-only Web Crypto APIs such as `crypto.randomUUID`; use a fallback request id when probing the content-script bridge.
+
 ## Capture Behavior
 
 The production UX is the in-page Sources sidebar injected by the extension content script. Do not require users to enable Yandex's `YandexSidePanel` feature flag or depend on Chrome's native `sidePanel` API.

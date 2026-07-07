@@ -37,6 +37,8 @@ declare global {
   }
 }
 
+let bridgeRequestSequence = 0;
+
 export function isVersionAtLeast(current: string, required: string): boolean {
   const currentParts = parseVersion(current);
   const requiredParts = parseVersion(required);
@@ -130,7 +132,7 @@ async function sendChromeRuntimeMessage<T>(runtime: ChromeRuntime, message: unkn
 
 async function sendContentScriptBridgeMessage<T>(message: unknown): Promise<T | null> {
   return new Promise((resolve) => {
-    const requestId = crypto.randomUUID();
+    const requestId = createBridgeRequestId();
     const timeout = window.setTimeout(() => {
       window.removeEventListener('message', handleMessage);
       resolve(null);
@@ -152,6 +154,41 @@ async function sendContentScriptBridgeMessage<T>(message: unknown): Promise<T | 
     window.addEventListener('message', handleMessage);
     window.postMessage({ channel: 'SHV_SOURCE_HELPER', message, requestId }, window.location.origin);
   });
+}
+
+function createBridgeRequestId(): string {
+  const cryptoSource = window.crypto;
+  if (typeof cryptoSource?.randomUUID === 'function') {
+    return cryptoSource.randomUUID();
+  }
+  if (typeof cryptoSource?.getRandomValues === 'function') {
+    try {
+      const bytes = cryptoSource.getRandomValues(new Uint8Array(16));
+      bytes[6] = (bytes[6] & 0x0f) | 0x40;
+      bytes[8] = (bytes[8] & 0x3f) | 0x80;
+      return formatUuidBytes(bytes);
+    } catch {
+      // LAN deployments can run over plain HTTP where Web Crypto is limited.
+    }
+  }
+  bridgeRequestSequence += 1;
+  return [
+    'bridge',
+    Date.now().toString(36),
+    bridgeRequestSequence.toString(36),
+    Math.random().toString(36).slice(2)
+  ].join('-');
+}
+
+function formatUuidBytes(bytes: Uint8Array): string {
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0'));
+  return [
+    hex.slice(0, 4).join(''),
+    hex.slice(4, 6).join(''),
+    hex.slice(6, 8).join(''),
+    hex.slice(8, 10).join(''),
+    hex.slice(10, 16).join('')
+  ].join('-');
 }
 
 function parseVersion(value: string): number[] {
