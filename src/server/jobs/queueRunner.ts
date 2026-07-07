@@ -9,9 +9,17 @@ import type { MediaFiles } from '../media-library/mediaFiles.js';
 import type { MediaLibraryService } from '../media-library/mediaLibraryService.js';
 import type { MediaProcessor } from '../media-processing/mediaProcessor.js';
 import { NoopSourceExtractor, type SourceExtractor } from '../source-extractors/sourceExtractorService.js';
-import { JobCanceledError, isCancellationError, throwIfAborted } from '../utils/cancellation.js';
+import { JobCanceledError, isCancellationError, onAbort, throwIfAborted } from '../utils/cancellation.js';
 import { titleFromUrl } from '../utils/fileSafety.js';
+import { logJobEvent, safeUrlParts, shortMessage } from '../utils/jobLogger.js';
 import type { JobService } from './jobService.js';
+
+class DownloadStalledError extends Error {
+  constructor(jobId: string, timeoutMs: number, progress: number) {
+    super(`Download stalled for ${Math.round(timeoutMs / 1000)}s without progress (job ${jobId}, last progress ${Math.round(progress * 100)}%).`);
+    this.name = 'DownloadStalledError';
+  }
+}
 
 export class QueueRunner {
   private readonly activeControllers = new Map<string, AbortController>();
@@ -82,6 +90,7 @@ export class QueueRunner {
     try {
       this.throwIfCanceled(jobId, signal);
       let job = this.jobs.transition(jobId, 'analyzing', 0.05);
+      logJobEvent('info', 'job-started', { jobId, source: safeUrlParts(job.sourceUrl) });
       const category = this.categories.get(job.categoryId);
       if (!category) {
         throw new Error('Job category does not exist');
@@ -104,6 +113,11 @@ export class QueueRunner {
             errorCode: 'manual_selection_required',
             errorMessage: analysis.diagnostics.join('\n') || 'Choose a detected media candidate to continue.'
           });
+          logJobEvent('warn', 'job-needs-manual-selection', {
+            candidates: candidates.length,
+            jobId: job.id,
+            source: safeUrlParts(job.sourceUrl)
+          });
           return;
         }
       }
@@ -114,21 +128,27 @@ export class QueueRunner {
       workDir = path.join(this.config.workRoot, job.id);
       fs.mkdirSync(workDir, { recursive: true });
       const downloadPath = path.join(workDir, 'source');
+      logJobEvent('info', 'download-started', {
+        candidate: selected ? candidateLogFields(selected) : { extractor: 'source' },
+        jobId: job.id,
+        timeoutSeconds: Math.round(downloadStallTimeoutMs(this.config) / 1000)
+      });
       if (useSourceExtractor) {
-        await this.sourceExtractors.download(job.sourceUrl, downloadPath, (progress) => {
-          this.transitionIfRunning(job.id, 'downloading', 0.22 + progress * 0.55, { selectedCandidateId }, signal);
-        }, signal);
+        await this.runDownloadStage(job.id, signal, (onProgress, downloadSignal) =>
+          this.sourceExtractors.download(job.sourceUrl, downloadPath, onProgress, downloadSignal)
+        );
       } else {
         if (!selected) {
           throw new Error('No selected media candidate is available for download');
         }
-        await this.downloader.download(selected, downloadPath, (progress) => {
-          this.transitionIfRunning(job.id, 'downloading', 0.22 + progress * 0.55, { selectedCandidateId }, signal);
-        }, signal);
+        await this.runDownloadStage(job.id, signal, (onProgress, downloadSignal) =>
+          this.downloader.download(selected, downloadPath, onProgress, downloadSignal)
+        );
       }
 
       this.throwIfCanceled(job.id, signal);
       this.jobs.transition(job.id, 'processing', 0.82, { selectedCandidateId });
+      logJobEvent('info', 'processing-started', { jobId: job.id });
       const title = job.titleHint ?? titleFromUrl(job.sourceUrl);
       finalPath = this.mediaFiles.finalVideoPath(category, `${title}.mp4`);
       const mediaId = job.id;
@@ -155,12 +175,14 @@ export class QueueRunner {
 
       fs.rmSync(workDir, { recursive: true, force: true });
       this.jobs.transition(job.id, 'completed', 1, { selectedCandidateId });
+      logJobEvent('info', 'job-completed', { jobId: job.id, title });
     } catch (error) {
       if (isCancellationError(error) || signal.aborted || this.jobs.get(jobId)?.status === 'canceled' || !this.jobs.get(jobId)) {
         cleanupCanceledArtifacts(workDir, finalPath, thumbnailPath);
         if (this.jobs.get(jobId)) {
           this.jobs.cancel(jobId);
         }
+        logJobEvent('info', 'job-canceled', { jobId });
         return;
       }
       if (!this.jobs.get(jobId)) {
@@ -170,6 +192,7 @@ export class QueueRunner {
         errorCode: 'pipeline_failed',
         errorMessage: error instanceof Error ? error.message : String(error)
       });
+      logJobEvent('error', 'job-failed', { error: shortMessage(error), jobId });
     } finally {
       if (this.activeControllers.get(jobId) === controller) {
         this.activeControllers.delete(jobId);
@@ -191,6 +214,79 @@ export class QueueRunner {
     this.jobs.transition(jobId, status, progress, extra);
   }
 
+  private async runDownloadStage<T>(
+    jobId: string,
+    parentSignal: AbortSignal,
+    run: (onProgress: (progress: number) => void, signal: AbortSignal) => Promise<T>
+  ): Promise<T> {
+    const downloadController = new AbortController();
+    const timeoutMs = downloadStallTimeoutMs(this.config);
+    let lastProgress = 0;
+    let lastLoggedBucket = -1;
+    let timeout: NodeJS.Timeout | null = null;
+    let settled = false;
+
+    const clearTimer = () => {
+      if (timeout) {
+        clearTimeout(timeout);
+        timeout = null;
+      }
+    };
+    let finishReject: (reason?: unknown) => void = () => undefined;
+    const resetTimer = () => {
+      clearTimer();
+      timeout = setTimeout(() => {
+        const error = new DownloadStalledError(jobId, timeoutMs, lastProgress);
+        logJobEvent('warn', 'download-stalled', {
+          jobId,
+          lastProgress: progressForLog(lastProgress),
+          timeoutSeconds: Math.round(timeoutMs / 1000)
+        });
+        downloadController.abort();
+        finishReject(error);
+      }, timeoutMs);
+    };
+
+    return await new Promise<T>((resolve, reject) => {
+      let removeParentAbortListener: () => void = () => undefined;
+      const settle = (callback: () => void) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimer();
+        removeParentAbortListener();
+        callback();
+      };
+      finishReject = (error) => settle(() => reject(error));
+      removeParentAbortListener = onAbort(parentSignal, () => {
+        downloadController.abort();
+        finishReject(new JobCanceledError());
+      });
+      const onProgress = (progress: number) => {
+        const nextProgress = clamp01(progress);
+        const advanced = nextProgress > lastProgress + 0.001;
+        lastProgress = Math.max(lastProgress, nextProgress);
+        const overallProgress = 0.22 + lastProgress * 0.55;
+        this.transitionIfRunning(jobId, 'downloading', overallProgress, {}, parentSignal);
+        const bucket = Math.floor(lastProgress * 10);
+        if (bucket !== lastLoggedBucket || lastProgress >= 0.95) {
+          lastLoggedBucket = bucket;
+          logJobEvent('info', 'download-progress', { jobId, progress: progressForLog(lastProgress) });
+        }
+        if (advanced) {
+          resetTimer();
+        }
+      };
+
+      resetTimer();
+      run(onProgress, downloadController.signal).then(
+        (result) => settle(() => resolve(result)),
+        (error) => settle(() => reject(error))
+      );
+    });
+  }
+
   private throwIfCanceled(jobId: string, signal: AbortSignal): void {
     throwIfAborted(signal);
     const job = this.jobs.get(jobId);
@@ -198,6 +294,29 @@ export class QueueRunner {
       throw new JobCanceledError();
     }
   }
+}
+
+function candidateLogFields(candidate: MediaCandidate): Record<string, unknown> {
+  return {
+    confidence: candidate.confidence,
+    contentType: candidate.contentType,
+    headerKeys: Object.keys(candidate.headers).filter((key) => key.toLowerCase() !== 'cookie').sort(),
+    kind: candidate.kind,
+    manifestType: candidate.manifestType,
+    url: safeUrlParts(candidate.url)
+  };
+}
+
+function clamp01(value: number): number {
+  return Math.min(1, Math.max(0, value));
+}
+
+function progressForLog(value: number): number {
+  return Math.round(clamp01(value) * 1000) / 1000;
+}
+
+function downloadStallTimeoutMs(config: AppConfig): number {
+  return config.downloadStallTimeoutMs ?? 120_000;
 }
 
 function chooseAutomaticCandidate(candidates: MediaCandidate[]): MediaCandidate | null {

@@ -50,6 +50,42 @@ describe('QueueRunner', () => {
     expect(jobs.requireJob(job.id).status).toBe('canceled');
   });
 
+  test('fails a job when downloading stalls without progress', async () => {
+    const { categories, config, jobs } = createServices();
+    config.downloadStallTimeoutMs = 20;
+    const category = categories.create('test');
+    const job = jobs.create('https://example.test/video', category.id);
+    jobs.saveCandidates(job.id, [candidate('https://media.example.test/video.mp4')]);
+    jobs.selectCandidate(job.id, jobs.listCandidates(job.id)[0].id);
+
+    const started = deferred<void>();
+    const downloader = {
+      download: (_candidate, _outputPath, _onProgress, signal?: AbortSignal) =>
+        new Promise<never>((_resolve, reject) => {
+          started.resolve();
+          signal?.addEventListener('abort', () => reject(new JobCanceledError()), { once: true });
+        })
+    } satisfies Pick<DownloadEngine, 'download'>;
+    const runner = new QueueRunner(
+      config,
+      jobs,
+      {} as BrowserAnalyzer,
+      downloader as unknown as DownloadEngine,
+      {} as MediaProcessor,
+      categories,
+      {} as MediaFiles,
+      {} as MediaLibraryService
+    );
+
+    const tick = runner.tick();
+    await started.promise;
+
+    await expect(Promise.race([tick.then(() => 'finished'), delay(200).then(() => 'timed-out')])).resolves.toBe('finished');
+    const failed = jobs.requireJob(job.id);
+    expect(failed.status).toBe('failed');
+    expect(failed.errorMessage).toContain('Download stalled');
+  });
+
   test('deletes a queued job and removes job-owned artifacts', () => {
     const { categories, config, jobs } = createServices();
     const category = categories.create('test');
@@ -167,7 +203,8 @@ function createServices() {
     workRoot: path.join(root, 'work'),
     databasePath: path.join(appDataRoot, 'db.sqlite'),
     chromiumExecutablePath: undefined,
-    ytDlpCookiesPath: path.join(appDataRoot, 'youtube-cookies.txt')
+    ytDlpCookiesPath: path.join(appDataRoot, 'youtube-cookies.txt'),
+    downloadStallTimeoutMs: 120_000
   };
   const db = openDatabase(config.databasePath);
   const categories = new CategoryService(db, config);
@@ -219,4 +256,8 @@ function deferred<T>() {
     reject = innerReject;
   });
   return { promise, reject, resolve };
+}
+
+function delay(milliseconds: number) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }

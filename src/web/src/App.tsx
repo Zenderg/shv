@@ -37,6 +37,7 @@ export function App() {
   const [page, setPage] = useState<AppPage>('library');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [queueActionJobIds, setQueueActionJobIds] = useState<Record<string, string>>({});
 
   const selectedCategory = categories.find((category) => category.id === selectedCategoryId) ?? categories[0] ?? null;
 
@@ -174,6 +175,22 @@ export function App() {
     await openSourceWithExtension({ jobId: job.id, sourceUrl: job.sourceUrl, titleHint: job.titleHint });
   }
 
+  async function runQueueAction(job: DownloadJob, action: string, operation: () => Promise<void>) {
+    setError(null);
+    setQueueActionJobIds((current) => ({ ...current, [job.id]: action }));
+    try {
+      await operation();
+    } catch (caught) {
+      setError(message(caught));
+    } finally {
+      setQueueActionJobIds((current) => {
+        const next = { ...current };
+        delete next[job.id];
+        return next;
+      });
+    }
+  }
+
   const activeProblems = useMemo(
     () => queue.jobs.filter((job) => job.status === 'failed' || job.status === 'needs_manual_selection').length,
     [queue.jobs]
@@ -295,21 +312,28 @@ export function App() {
           />
         ) : (
           <QueuePanel
+            busyJobIds={queueActionJobIds}
             candidatesByJobId={queue.candidatesByJobId}
             jobs={queue.jobs}
-            onCancel={async (job) => {
-              await api.cancelJob(job.id);
-              setQueue(await api.queue());
-            }}
-            onDelete={async (job) => {
-              await api.deleteJob(job.id);
-              setQueue(await api.queue());
-            }}
-            onManual={(job) => void chooseSource(job).catch((caught) => setError(message(caught)))}
-            onRetry={async (job) => {
-              await api.retryJob(job.id);
-              setQueue(await api.queue());
-            }}
+            onCancel={(job) =>
+              runQueueAction(job, 'Canceling', async () => {
+                await api.cancelJob(job.id);
+                setQueue(await api.queue());
+              })
+            }
+            onDelete={(job) =>
+              runQueueAction(job, 'Deleting', async () => {
+                await api.deleteJob(job.id);
+                setQueue(await api.queue());
+              })
+            }
+            onManual={(job) => void runQueueAction(job, 'Opening source', () => chooseSource(job))}
+            onRetry={(job) =>
+              runQueueAction(job, 'Retrying', async () => {
+                await api.retryJob(job.id);
+                setQueue(await api.queue());
+              })
+            }
           />
         )}
       </section>
@@ -580,6 +604,7 @@ function LibraryGrid({
 }
 
 function QueuePanel({
+  busyJobIds,
   candidatesByJobId,
   jobs,
   onCancel,
@@ -587,12 +612,13 @@ function QueuePanel({
   onManual,
   onRetry
 }: {
+  busyJobIds: Record<string, string>;
   candidatesByJobId: Record<string, MediaCandidate[]>;
   jobs: DownloadJob[];
-  onCancel: (job: DownloadJob) => Promise<void>;
-  onDelete: (job: DownloadJob) => Promise<void>;
+  onCancel: (job: DownloadJob) => void;
+  onDelete: (job: DownloadJob) => void;
   onManual: (job: DownloadJob) => void;
-  onRetry: (job: DownloadJob) => Promise<void>;
+  onRetry: (job: DownloadJob) => void;
 }) {
   return (
     <section className="queueList" aria-label="Queue jobs">
@@ -601,6 +627,8 @@ function QueuePanel({
         const stage = jobStageProgress(job);
         const canCancel = ['pending', 'analyzing', 'downloading', 'processing'].includes(job.status);
         const canRetry = job.status === 'failed' || job.status === 'canceled';
+        const actionLabel = busyJobIds[job.id];
+        const actionBusy = Boolean(actionLabel);
         return (
           <article className={`queueJob ${job.status}`} key={job.id}>
             <div className="jobHeader">
@@ -614,23 +642,29 @@ function QueuePanel({
             {job.errorMessage ? <p>{job.errorMessage}</p> : null}
             <div className="jobActions">
               {job.status === 'needs_manual_selection' || job.status === 'failed' ? (
-                <button onClick={() => onManual(job)} type="button">
-                  Choose source ({candidatesByJobId[job.id]?.length ?? 0})
+                <button disabled={actionBusy} onClick={() => onManual(job)} type="button">
+                  {actionLabel ?? `Choose source (${candidatesByJobId[job.id]?.length ?? 0})`}
                 </button>
               ) : null}
               {canRetry ? (
-                <button onClick={() => void onRetry(job)} type="button">
-                  Retry
+                <button disabled={actionBusy} onClick={() => onRetry(job)} type="button">
+                  {actionLabel ?? 'Retry'}
                 </button>
               ) : null}
               {canCancel ? (
-                <button onClick={() => void onCancel(job)} type="button">
-                  Cancel
+                <button disabled={actionBusy} onClick={() => onCancel(job)} type="button">
+                  {actionLabel ?? 'Cancel'}
                 </button>
               ) : null}
-              <button className="dangerButton" onClick={() => void onDelete(job)} title="Delete from queue" type="button">
+              <button
+                className="dangerButton"
+                disabled={actionBusy || canCancel}
+                onClick={() => onDelete(job)}
+                title={canCancel ? 'Cancel the running job before deleting it' : 'Delete from queue'}
+                type="button"
+              >
                 <TrashIcon />
-                Delete
+                {actionLabel ?? 'Delete'}
               </button>
             </div>
           </article>

@@ -94,6 +94,17 @@ Site-specific downloader engines are allowed only behind explicit extractors for
 
 Do not support DRM bypass, key extraction, paywall bypass, or circumvention of protected media systems.
 
+## Production Download Diagnostics
+
+Queue downloads emit compact structured lines prefixed with `[shv]`. Useful events include `job-started`, `download-started`,
+`download-progress`, `processing-started`, `job-completed`, `download-stalled`, and `job-failed`. These logs intentionally keep
+candidate URLs to `host` and `path`, list only request header names, and omit cookies/query strings so production snippets can be
+shared for debugging without leaking signed media URLs.
+
+`DOWNLOAD_STALL_TIMEOUT_MS` controls how long a download may sit without progress before the runner aborts that transfer and marks
+the job failed. The default is 120000 milliseconds. Raise it for very slow sources; lower it when production should fail faster
+than the UI polling loop can make obvious.
+
 ## HLS and DASH Notes
 
 DASH manifests are XML, so representation URLs may contain escaped query separators such as `&amp;`; the downloader decodes those before invoking ffmpeg.

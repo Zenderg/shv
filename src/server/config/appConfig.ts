@@ -12,6 +12,7 @@ export interface AppConfig {
   databasePath: string;
   chromiumExecutablePath: string | undefined;
   ytDlpCookiesPath: string | undefined;
+  downloadStallTimeoutMs?: number;
 }
 
 export function loadAppConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -30,8 +31,14 @@ export function loadAppConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     workRoot: path.resolve(env.WORK_ROOT ?? '/work'),
     databasePath: path.join(appDataRoot, 'shv.sqlite'),
     chromiumExecutablePath,
-    ytDlpCookiesPath
+    ytDlpCookiesPath,
+    downloadStallTimeoutMs: positiveNumber(env.DOWNLOAD_STALL_TIMEOUT_MS, 120_000)
   };
+}
+
+function positiveNumber(value: string | undefined, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 function normalizePublicOrigin(value: string | undefined): string | undefined {

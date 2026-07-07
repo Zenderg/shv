@@ -36,4 +36,13 @@ describe('loadAppConfig', () => {
 
     expect(config.publicOrigin).toBe('https://prod.example.test');
   });
+
+  test('allows overriding the download stall timeout', () => {
+    const config = loadAppConfig({
+      APP_DATA_ROOT: '/data/app',
+      DOWNLOAD_STALL_TIMEOUT_MS: '45000'
+    } as NodeJS.ProcessEnv);
+
+    expect(config.downloadStallTimeoutMs).toBe(45_000);
+  });
 });
