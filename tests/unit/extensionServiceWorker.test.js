@@ -225,4 +225,77 @@ describe('extension service worker', () => {
     expect(JSON.parse(candidateCall[1].body).candidates[0].headers.Cookie).toBe('media_session=media-value');
     expect(JSON.parse(cookieCall[1].body).cookies.map((cookie) => cookie.name).sort()).toEqual(['SID', 'media_session']);
   });
+
+  test('does not let a source tab select a different tab session by spoofing tabId', async () => {
+    storage.sourceState.sessions[43] = {
+      ...storage.sourceState.sessions[42],
+      candidates: [
+        {
+          bitrate: null,
+          confidence: 0.86,
+          contentType: 'video/mp4',
+          durationSeconds: null,
+          headers: {},
+          kind: 'browser-request',
+          manifestType: null,
+          resolution: null,
+          sizeBytes: null,
+          url: 'https://media.example.test/video.mp4'
+        }
+      ],
+      jobId: 'other-job-id',
+      sourceUrl: 'https://other.example.test/watch'
+    };
+    globalThis.fetch = vi.fn(async (url, options) => {
+      const body = options?.body ? JSON.parse(options.body) : {};
+      if (String(url).endsWith('/extension-candidates')) {
+        return {
+          json: async () => body.candidates.map((candidate, index) => ({ ...candidate, id: `candidate-${index}` })),
+          ok: true,
+          status: 200
+        };
+      }
+      return {
+        json: async () => ({ ok: true }),
+        ok: true,
+        status: 200
+      };
+    });
+    const sendResponse = vi.fn();
+    await import('../../extension/chrome-source-helper/service-worker.js');
+
+    listeners.runtimeMessage(
+      { tabId: 43, type: 'SHV_SELECT_SOURCE', url: 'https://media.example.test/video.mp4' },
+      { tab: { id: 42 }, url: 'https://www.youtube.com/watch?v=test' },
+      sendResponse
+    );
+
+    await vi.waitFor(() => expect(sendResponse).toHaveBeenCalledWith(expect.objectContaining({ ok: false })));
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  test('updates the session current URL from playback diagnostics after page navigation', async () => {
+    const sendResponse = vi.fn();
+    await import('../../extension/chrome-source-helper/service-worker.js');
+
+    listeners.runtimeMessage(
+      {
+        diagnostic: {
+          activeFound: true,
+          dominantFound: true,
+          frameUrl: 'https://www.youtube.com/watch?v=next',
+          isTopFrame: true,
+          largeVisibleCount: 1,
+          sentAt: new Date().toISOString(),
+          videoCount: 1
+        },
+        type: 'SHV_PLAYBACK_DIAGNOSTIC'
+      },
+      { tab: { id: 42 }, url: 'https://www.youtube.com/watch?v=next' },
+      sendResponse
+    );
+
+    await vi.waitFor(() => expect(sendResponse).toHaveBeenCalledWith({ ok: true }));
+    expect(storage.sourceState.sessions[42].currentUrl).toBe('https://www.youtube.com/watch?v=next');
+  });
 });

@@ -1,5 +1,5 @@
 import { mount } from 'svelte';
-import { candidateFromUrl, PROTOCOL_VERSION } from '../../../extension/chrome-source-helper/shared.js';
+import { APP_ORIGIN, candidateFromUrl, PROTOCOL_VERSION } from '../../../extension/chrome-source-helper/shared.js';
 import SourceSidebar from './SourceSidebar.svelte';
 import { setSidebarActions, sidebarView, type SourceSession } from './sidebarStore';
 
@@ -100,7 +100,7 @@ chrome?.runtime?.onMessage.addListener((message, _sender, sendResponse) => {
 
 if (IS_TOP_FRAME) {
   window.addEventListener('message', (event) => {
-    if (event.source !== window || event.data?.channel !== 'SHV_SOURCE_HELPER') {
+    if (window.location.origin !== APP_ORIGIN || event.source !== window || event.data?.channel !== 'SHV_SOURCE_HELPER') {
       return;
     }
     if (event.data.extensionId && event.data.extensionId !== chrome?.runtime?.id) {

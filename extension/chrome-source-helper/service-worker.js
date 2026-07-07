@@ -35,6 +35,10 @@ chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => 
   }
 
   if (message?.type === 'SHV_OPEN_SOURCE') {
+    if (!isAppUrl(sender?.url)) {
+      sendResponse({ ok: false, error: 'Source tabs can only be opened by the shv app page' });
+      return false;
+    }
     openSourceTab(message, sender).then(sendResponse).catch((error) => {
       sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) });
     });
@@ -74,7 +78,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
   if (message?.type === 'SHV_START_CAPTURE') {
-    startManualCapture(message.tabId ?? sender.tab?.id).then(sendResponse).catch((error) => {
+    Promise.resolve().then(() => startManualCapture(sourceTabIdForRuntimeCommand(message, sender))).then(sendResponse).catch((error) => {
       sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) });
     });
     return true;
@@ -86,7 +90,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
   if (message?.type === 'SHV_SELECT_SOURCE') {
-    selectSource(message.tabId, message.url).then(sendResponse).catch((error) => {
+    Promise.resolve().then(() => selectSource(sourceTabIdForRuntimeCommand(message, sender), message.url)).then(sendResponse).catch((error) => {
       sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) });
     });
     return true;
@@ -223,6 +227,20 @@ function isAppUrl(url) {
   }
 }
 
+function sourceTabIdForRuntimeCommand(message, sender) {
+  const senderTabId = sender?.tab?.id ?? null;
+  if (isAppUrl(sender?.url)) {
+    return message.tabId ?? senderTabId;
+  }
+  if (senderTabId == null) {
+    return message.tabId ?? null;
+  }
+  if (message.tabId != null && message.tabId !== senderTabId) {
+    throw new Error('Source tabs cannot act on a different tab session');
+  }
+  return senderTabId;
+}
+
 async function toggleActiveTabSidebar() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (tab?.id == null) {
@@ -291,6 +309,7 @@ async function updatePlaybackDiagnostics(tabId, diagnostic) {
     }
     session.diagnostics ??= emptyDiagnostics();
     session.diagnostics.playback = betterPlaybackDiagnostic(session.diagnostics.playback, diagnostic);
+    session.currentUrl = currentUrlFromPlaybackDiagnostic(session.diagnostics.playback) ?? session.currentUrl;
     session.updatedAt = new Date().toISOString();
   });
   notifyPanel(tabId);
@@ -388,6 +407,18 @@ function betterPlaybackDiagnostic(current, incoming) {
   const currentAt = Date.parse(current.sentAt ?? '') || 0;
   const incomingAt = Date.parse(incoming.sentAt ?? '') || 0;
   return incomingAt - currentAt > 5000 ? incoming : current;
+}
+
+function currentUrlFromPlaybackDiagnostic(diagnostic) {
+  try {
+    const parsed = new URL(diagnostic?.frameUrl);
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      return parsed.href;
+    }
+  } catch {
+    // Ignore missing or browser-internal frame URLs.
+  }
+  return null;
 }
 
 function playbackDiagnosticScore(diagnostic) {

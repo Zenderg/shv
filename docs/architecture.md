@@ -161,6 +161,10 @@ The downloaded extension package is origin-aware: the server rewrites the packag
 `externally_connectable.matches` and shared `APP_ORIGIN` constant for the browser-visible app origin. Keep production
 deployments downloading the zip from the same origin as the app, or set `PUBLIC_APP_ORIGIN` when proxy headers are not
 enough to reconstruct that origin.
+The content-script page bridge must accept `window.postMessage` commands only when the page origin matches that packaged
+`APP_ORIGIN`; the same content script is injected into arbitrary source pages, and those pages must not be able to relay
+privileged app commands through the extension. Runtime tab commands from a source tab may act only on that sender tab;
+only the trusted app origin may address another source tab by id.
 Production and development extension packages must continue to share the runtime package directory
 `extension/chrome-source-helper`. The visible Sources sidebar is authored in Svelte under `src/extension/source-helper`
 and built into `extension/chrome-source-helper/content-script.js` with `npm run build:extension`. The packages differ
