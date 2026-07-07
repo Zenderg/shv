@@ -1,5 +1,15 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, expect, test } from 'vitest';
-import { buildDashFfmpegArgs, buildHlsFfmpegArgs, formatFfmpegError } from '../../src/server/download-engine/downloadEngine.js';
+import {
+  DownloadEngine,
+  buildDashFfmpegArgs,
+  buildHlsFfmpegArgs,
+  formatFfmpegError,
+  type BrowserRequestDownloadInput
+} from '../../src/server/download-engine/downloadEngine.js';
+import type { MediaCandidate } from '../../src/shared/types.js';
 import type { DashRepresentation } from '../../src/server/download-engine/dash.js';
 
 describe('DownloadEngine ffmpeg helpers', () => {
@@ -71,5 +81,56 @@ describe('DownloadEngine ffmpeg helpers', () => {
     expect(error).toContain('Stream ends prematurely');
     expect(error).not.toContain('frame= 4120');
     expect(error).not.toContain('token=secret');
+  });
+
+  test('uses the browser-impersonated downloader directly for browser-request media', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'shv-browser-request-'));
+    const outputPath = path.join(tempDir, 'source');
+    const calls: BrowserRequestDownloadInput[] = [];
+    const engine = new DownloadEngine(async (input) => {
+      calls.push(input);
+      fs.writeFileSync(input.outputPath, 'browser bytes');
+      input.onProgress(0.5);
+      return { bytesWritten: fs.statSync(input.outputPath).size, filePath: input.outputPath };
+    });
+    const candidate: MediaCandidate = {
+      bitrate: null,
+      confidence: 0.86,
+      contentType: 'video/mp4',
+      discoveredAt: new Date().toISOString(),
+      durationSeconds: null,
+      headers: {
+        Cookie: 'csrftoken=value',
+        Referer: 'https://source.example.test/player',
+        'User-Agent': 'Mozilla/5.0 test'
+      },
+      id: 'candidate-id',
+      jobId: 'job-id',
+      kind: 'browser-request',
+      manifestType: null,
+      resolution: null,
+      sizeBytes: 1200,
+      url: 'https://media.example.test/video.mp4'
+    };
+    const progress: number[] = [];
+
+    const result = await engine.download(candidate, outputPath, (value) => progress.push(value));
+
+    expect(result.bytesWritten).toBe('browser bytes'.length);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      outputPath,
+      url: candidate.url
+    });
+    expect(calls[0].headers).toMatchObject({
+      Cookie: 'csrftoken=value',
+      Range: 'bytes=0-',
+      Referer: 'https://source.example.test/player',
+      'Sec-Fetch-Dest': 'video',
+      'Sec-Fetch-Mode': 'no-cors',
+      'Sec-Fetch-Site': 'cross-site',
+      'User-Agent': 'Mozilla/5.0 test'
+    });
+    expect(progress).toContain(0.5);
   });
 });

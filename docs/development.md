@@ -92,6 +92,11 @@ Generic sites should continue to use the built-in web/media pipeline: HTTP probi
 
 Site-specific downloader engines are allowed only behind explicit extractors for known complex platforms. YouTube uses `yt-dlp` because `googlevideo` playback URLs can be bound to player/runtime details that are not replayable by the generic downloader.
 
+Direct `browser-request` media candidates are intentionally downloaded with the browser-impersonated `curl_cffi` path instead
+of Node `fetch`. Some CDNs accept the same signed URL, cookies, referer, range, and sec-fetch headers from Chromium's media
+network stack but return HTTP 403 to Node/undici. Do not "fix" those failures by adding more headers to `fetch`; use the
+dedicated browser-request path so that this class of source has one debuggable backend.
+
 Do not support DRM bypass, key extraction, paywall bypass, or circumvention of protected media systems.
 
 ## Production Download Diagnostics

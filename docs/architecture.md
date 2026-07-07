@@ -140,6 +140,11 @@ service-worker `fetch` is still a different request context and can return the s
 checks the original `sourceUrl` before using manual candidates, and known YouTube page URLs go through the backend
 `yt-dlp` source extractor. Generic extension/manual capture remains the path for ordinary direct, HLS, and DASH media
 URLs.
+Ordinary direct `browser-request` media candidates still may not be replayable through Node/undici `fetch`: some CDNs
+accept the signed URL from Chromium's media stack but return HTTP 403 to a new server-side fetch with the same cookies,
+referer, range, and sec-fetch headers. The download engine handles those candidates with a dedicated
+browser-impersonated `curl_cffi` backend (`impersonate="chrome"`), not as a fallback after `fetch` fails. Keep this as
+the single backend for direct `browser-request` media so failures have one debuggable request path.
 If YouTube requires sign-in or bot confirmation, the extractor passes the configured Netscape-format cookies file to
 `yt-dlp`. By default this is `/data/app/youtube-cookies.txt`, which is `./data/app/youtube-cookies.txt` in the Docker
 Compose mount; set `YTDLP_COOKIES_FILE` only to point at a different mounted cookie file. The backend merges uploaded

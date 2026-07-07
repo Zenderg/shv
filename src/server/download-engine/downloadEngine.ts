@@ -13,7 +13,19 @@ export interface DownloadResult {
   bytesWritten: number;
 }
 
+export interface BrowserRequestDownloadInput {
+  url: string;
+  headers: Record<string, string>;
+  outputPath: string;
+  onProgress: (progress: number) => void;
+  signal?: AbortSignal;
+}
+
+export type BrowserRequestDownloadRunner = (input: BrowserRequestDownloadInput) => Promise<DownloadResult>;
+
 export class DownloadEngine {
+  constructor(private readonly browserRequestDownloader: BrowserRequestDownloadRunner = downloadBrowserRequestMedia) {}
+
   async download(
     candidate: MediaCandidate,
     outputPath: string,
@@ -28,7 +40,26 @@ export class DownloadEngine {
     if (candidate.manifestType === 'dash') {
       return this.downloadDash(candidate, outputPath, onProgress, signal);
     }
+    if (isDirectBrowserRequest(candidate)) {
+      return this.downloadBrowserRequestDirect(candidate, outputPath, onProgress, signal);
+    }
     return this.downloadDirect(candidate, outputPath, onProgress, signal);
+  }
+
+  private async downloadBrowserRequestDirect(
+    candidate: MediaCandidate,
+    outputPath: string,
+    onProgress: (progress: number) => void,
+    signal?: AbortSignal
+  ): Promise<DownloadResult> {
+    const existingBytes = fs.existsSync(outputPath) ? fs.statSync(outputPath).size : 0;
+    return this.browserRequestDownloader({
+      headers: browserRequestHeaders(candidate.headers, existingBytes),
+      onProgress,
+      outputPath,
+      signal,
+      url: candidate.url
+    });
   }
 
   private async downloadDirect(
@@ -263,6 +294,61 @@ export class DownloadEngine {
   }
 }
 
+async function downloadBrowserRequestMedia(input: BrowserRequestDownloadInput): Promise<DownloadResult> {
+  fs.mkdirSync(path.dirname(input.outputPath), { recursive: true });
+  throwIfAborted(input.signal);
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn('python3', ['-c', browserRequestDownloadScript], { stdio: ['pipe', 'pipe', 'pipe'] });
+    const removeAbortListener = onAbort(input.signal, () => child.kill('SIGTERM'));
+    let stdout = '';
+    let stderr = '';
+    let lineBuffer = '';
+    const settle = (callback: () => void) => {
+      removeAbortListener();
+      callback();
+    };
+
+    child.stdout.on('data', (chunk: Buffer) => {
+      const text = chunk.toString('utf8');
+      stdout = `${stdout}${text}`.slice(-4000);
+      lineBuffer += text;
+      let newlineIndex = lineBuffer.indexOf('\n');
+      while (newlineIndex >= 0) {
+        const line = lineBuffer.slice(0, newlineIndex).trim();
+        lineBuffer = lineBuffer.slice(newlineIndex + 1);
+        if (line) {
+          const progress = progressFromBrowserRequestLine(line);
+          if (progress != null) {
+            input.onProgress(progress);
+          }
+        }
+        newlineIndex = lineBuffer.indexOf('\n');
+      }
+    });
+    child.stderr.on('data', (chunk: Buffer) => {
+      stderr = `${stderr}${chunk.toString('utf8')}`.slice(-4000);
+    });
+    child.on('error', (error) => {
+      settle(() => reject(error));
+    });
+    child.on('close', (code) => {
+      if (input.signal?.aborted) {
+        settle(() => reject(new JobCanceledError()));
+        return;
+      }
+      if (code === 0) {
+        input.onProgress(0.95);
+        settle(() => resolve());
+        return;
+      }
+      settle(() => reject(new Error(formatBrowserRequestDownloadError(code, `${stdout}\n${stderr}`))));
+    });
+    child.stdin.end(JSON.stringify({ headers: input.headers, outputPath: input.outputPath, url: input.url }));
+  });
+  throwIfAborted(input.signal);
+  return { filePath: input.outputPath, bytesWritten: fs.statSync(input.outputPath).size };
+}
+
 export function buildHlsFfmpegArgs(variantUrl: string, headers: Record<string, string>, outputPath: string): string[] {
   return [
     '-y',
@@ -280,6 +366,96 @@ export function buildHlsFfmpegArgs(variantUrl: string, headers: Record<string, s
     outputPath
   ];
 }
+
+function isDirectBrowserRequest(candidate: MediaCandidate): boolean {
+  return candidate.kind === 'browser-request' && candidate.manifestType === null;
+}
+
+function browserRequestHeaders(headers: Record<string, string>, existingBytes: number): Record<string, string> {
+  return {
+    ...headers,
+    Range: `bytes=${Math.max(0, existingBytes)}-`,
+    'Sec-Fetch-Dest': headers['Sec-Fetch-Dest'] ?? headers['sec-fetch-dest'] ?? 'video',
+    'Sec-Fetch-Mode': headers['Sec-Fetch-Mode'] ?? headers['sec-fetch-mode'] ?? 'no-cors',
+    'Sec-Fetch-Site': headers['Sec-Fetch-Site'] ?? headers['sec-fetch-site'] ?? 'cross-site'
+  };
+}
+
+function progressFromBrowserRequestLine(line: string): number | null {
+  try {
+    const message = JSON.parse(line) as { progress?: unknown };
+    const progress = typeof message.progress === 'number' ? message.progress : null;
+    return progress == null || !Number.isFinite(progress) ? null : Math.min(0.95, Math.max(0, progress));
+  } catch {
+    return null;
+  }
+}
+
+function formatBrowserRequestDownloadError(code: number | null, log: string): string {
+  const detail = redactSignedUrls(log.trim());
+  return detail
+    ? `Browser-impersonated media download exited with code ${code}: ${detail}`
+    : `Browser-impersonated media download exited with code ${code}`;
+}
+
+const browserRequestDownloadScript = String.raw`
+import json
+import os
+import sys
+
+from curl_cffi import requests
+
+
+def report(progress):
+    print(json.dumps({"progress": progress}), flush=True)
+
+
+payload = json.loads(sys.stdin.read())
+url = payload["url"]
+headers = payload["headers"]
+output_path = payload["outputPath"]
+existing_bytes = 0
+range_header = headers.get("Range") or headers.get("range") or ""
+if range_header.startswith("bytes=") and range_header.endswith("-"):
+    try:
+        existing_bytes = max(0, int(range_header.removeprefix("bytes=").removesuffix("-")))
+    except ValueError:
+        existing_bytes = 0
+
+os.makedirs(os.path.dirname(output_path), exist_ok=True)
+response = requests.get(url, headers=headers, impersonate="chrome", stream=True, timeout=30)
+if response.status_code < 200 or response.status_code >= 300:
+    raise RuntimeError(f"HTTP {response.status_code}")
+
+content_range = response.headers.get("content-range") or response.headers.get("Content-Range")
+content_length = int(response.headers.get("content-length") or response.headers.get("Content-Length") or 0)
+total = content_length
+if content_range and "/" in content_range:
+    try:
+        total = int(content_range.rsplit("/", 1)[1])
+    except ValueError:
+        total = content_length
+
+append = response.status_code == 206 and existing_bytes > 0
+written = existing_bytes if append else 0
+mode = "ab" if append else "wb"
+last_report = written
+reported_cap = False
+with open(output_path, mode + "") as output:
+    for chunk in response.iter_content(chunk_size=262144):
+        if not chunk:
+            continue
+        output.write(chunk)
+        written += len(chunk)
+        if total > 0 and not reported_cap and (written - last_report >= 1048576 or written >= total):
+            progress = min(0.95, written / total)
+            report(progress)
+            reported_cap = progress >= 0.95
+            last_report = written
+
+if total > 0 and not reported_cap:
+    report(min(0.95, written / total))
+`;
 
 export function buildDashFfmpegArgs(
   video: DashRepresentation | null,

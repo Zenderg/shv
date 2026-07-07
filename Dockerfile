@@ -11,7 +11,7 @@ RUN apt-get update \
     python3-pip \
     tini \
   && rm -rf /var/lib/apt/lists/*
-RUN python3 -m pip install --break-system-packages --no-cache-dir --upgrade "yt-dlp[default]"
+RUN python3 -m pip install --break-system-packages --no-cache-dir --upgrade "yt-dlp[default]" curl_cffi
 
 COPY package.json package-lock.json* ./
 RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
