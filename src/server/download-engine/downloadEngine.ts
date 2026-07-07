@@ -6,6 +6,7 @@ import { latestFfmpegTime } from '../media-processing/mediaProcessor.js';
 import { canDownloadPlainHlsSegments, parseHlsDurationSeconds, parseHlsSegments, selectBestHlsVariant, type HlsSegment } from './hls.js';
 import { selectBestDashRenditions, type DashRepresentation } from './dash.js';
 import { JobCanceledError, onAbort, throwIfAborted } from '../utils/cancellation.js';
+import { logJobEvent, safeUrlParts, shortMessage } from '../utils/jobLogger.js';
 
 export interface DownloadResult {
   filePath: string;
@@ -95,10 +96,24 @@ export class DownloadEngine {
     const variantUrl = selectBestHlsVariant(manifest, candidate.url);
     const mediaManifest = variantUrl === candidate.url ? manifest : await fetchText(variantUrl, candidate.headers, signal);
     const segments = parseHlsSegments(mediaManifest, variantUrl);
-    if (canDownloadPlainHlsSegments(mediaManifest, segments)) {
+    const plainSegmentDownload = canDownloadPlainHlsSegments(mediaManifest, segments);
+    const durationSeconds = parseHlsDurationSeconds(mediaManifest);
+    logJobEvent('info', 'hls-manifest-selected', {
+      durationSeconds,
+      firstSegment: segments[0] ? safeUrlParts(segments[0].uri) : null,
+      hasDiscontinuity: /#EXT-X-DISCONTINUITY\b/.test(mediaManifest),
+      hasEndList: /#EXT-X-ENDLIST\b/.test(mediaManifest),
+      input: safeUrlParts(candidate.url),
+      jobId: jobIdFromOutputPath(outputPath),
+      lastSegment: segments.at(-1) ? safeUrlParts(segments.at(-1)?.uri ?? '') : null,
+      plainSegmentDownload,
+      segmentCount: segments.length,
+      targetDurationSeconds: hlsNumericTag(mediaManifest, 'EXT-X-TARGETDURATION'),
+      variant: safeUrlParts(variantUrl)
+    });
+    if (plainSegmentDownload) {
       return this.downloadHlsSegments(segments, candidate.headers, outputPath, onProgress, signal);
     }
-    const durationSeconds = parseHlsDurationSeconds(mediaManifest);
     await this.runFfmpeg(
       buildHlsFfmpegArgs(variantUrl, candidate.headers, outputPath),
       onProgress,
@@ -169,7 +184,18 @@ export class DownloadEngine {
 
       try {
         await stitchDownloadedHlsSegments(downloadedSegments, outputPath, signal);
+        logJobEvent('info', 'hls-segments-stitched', {
+          jobId: jobIdFromOutputPath(outputPath),
+          method: 'ffmpeg-concat',
+          segmentCount: downloadedSegments.length
+        });
       } catch (error) {
+        logJobEvent('warn', 'hls-segments-stitch-fallback', {
+          error: shortMessage(error),
+          jobId: jobIdFromOutputPath(outputPath),
+          method: 'raw-concat',
+          segmentCount: downloadedSegments.length
+        });
         fs.rmSync(outputPath, { force: true });
         await concatenateDownloadedHlsSegments(downloadedSegments, outputPath, signal);
       }
@@ -304,6 +330,16 @@ function ffmpegNetworkInputArgs(options: { reconnectAtEof?: boolean } = {}): str
     args.splice(4, 0, '-reconnect_at_eof', '1');
   }
   return args;
+}
+
+function hlsNumericTag(manifest: string, tag: string): number | null {
+  const match = manifest.match(new RegExp(`^#${tag}:(\\d+(?:\\.\\d+)?)`, 'm'));
+  const value = match ? Number(match[1]) : null;
+  return Number.isFinite(value) ? value : null;
+}
+
+function jobIdFromOutputPath(outputPath: string): string | null {
+  return path.basename(path.dirname(outputPath)) || null;
 }
 
 async function writeChunk(stream: fs.WriteStream, chunk: Uint8Array): Promise<void> {

@@ -97,13 +97,21 @@ Do not support DRM bypass, key extraction, paywall bypass, or circumvention of p
 ## Production Download Diagnostics
 
 Queue downloads emit compact structured lines prefixed with `[shv]`. Useful events include `job-started`, `download-started`,
-`download-progress`, `processing-started`, `job-completed`, `download-stalled`, and `job-failed`. These logs intentionally keep
+`hls-manifest-selected`, `hls-segments-stitched`, `download-probed`, `download-progress`, `processing-started`,
+`processing-completed`, `job-completed`, `download-stalled`, and `job-failed`. These logs intentionally keep
 candidate URLs to `host` and `path`, list only request header names, and omit cookies/query strings so production snippets can be
 shared for debugging without leaking signed media URLs.
+
+`processing-completed` includes `processingStrategy` (`moved`, `remuxed`, or `transcoded`) and may include
+`remuxRejectionReason` when a copy-remux candidate was rejected and the processor fell back to transcoding.
 
 `DOWNLOAD_STALL_TIMEOUT_MS` controls how long a download may sit without progress before the runner aborts that transfer and marks
 the job failed. The default is 120000 milliseconds. Raise it for very slow sources; lower it when production should fail faster
 than the UI polling loop can make obvious.
+
+Set `PRESERVE_WORK_DIR=1` only during local/media diagnostics when the intermediate `WORK_ROOT/<jobId>/source.preserved`
+file is needed for ffprobe or ffmpeg experiments. Do not enable it by default in production because preserved source files
+can be large.
 
 ## HLS and DASH Notes
 
@@ -120,3 +128,7 @@ structured `-progress` output when using the fallback path. Do not infer progres
 
 For HLS segment reliability, keep the ffmpeg reconnect options enabled and keep HLS `http_persistent` disabled; some signed segment CDNs can invalidate or truncate keepalive/TLS sessions mid-download, producing partial segments and corrupt audio packets.
 Do not enable `reconnect_at_eof` for HLS fallback; VOD media playlists end normally at EOF, and treating that as a reconnect point can make ffmpeg loop instead of advancing through the playlist.
+
+When remuxing MPEG-TS HLS work files into MP4, reject copy-remux outputs whose duration inflates beyond a small tolerance
+or whose decoded video stream reports invalid timestamp ordering. Some copied streams can otherwise produce an MP4 with a
+plausible container duration but broken A/V sync. Let the processor fall back to transcoding rather than accepting that file.

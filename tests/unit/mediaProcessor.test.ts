@@ -1,5 +1,12 @@
 import { describe, expect, test } from 'vitest';
-import { latestFfmpegTime, moveFile, shouldRemuxToBrowserFriendlyMp4, videoDisplayDimensions } from '../../src/server/media-processing/mediaProcessor.js';
+import {
+  hasSuspiciousDurationInflation,
+  hasTimestampWarnings,
+  latestFfmpegTime,
+  moveFile,
+  shouldRemuxToBrowserFriendlyMp4,
+  videoDisplayDimensions
+} from '../../src/server/media-processing/mediaProcessor.js';
 
 describe('moveFile', () => {
   test('falls back to copy and remove when rename crosses Docker volumes', () => {
@@ -119,5 +126,30 @@ describe('shouldRemuxToBrowserFriendlyMp4', () => {
         browserFriendly: false
       })
     ).toBe(false);
+  });
+});
+
+describe('hasSuspiciousDurationInflation', () => {
+  test('flags remux outputs that grow far beyond the input duration', () => {
+    expect(hasSuspiciousDurationInflation(651.960589, 692.261)).toBe(true);
+  });
+
+  test('allows small container duration differences after remuxing', () => {
+    expect(hasSuspiciousDurationInflation(651.960589, 651.980589)).toBe(false);
+  });
+
+  test('ignores unknown durations', () => {
+    expect(hasSuspiciousDurationInflation(null, 692.261)).toBe(false);
+    expect(hasSuspiciousDurationInflation(651.960589, null)).toBe(false);
+  });
+});
+
+describe('hasTimestampWarnings', () => {
+  test('flags non-monotonic timestamp warnings', () => {
+    expect(hasTimestampWarnings('Application provided invalid, non monotonically increasing dts to muxer in stream 0')).toBe(true);
+  });
+
+  test('allows ordinary ffmpeg output', () => {
+    expect(hasTimestampWarnings('frame=10 fps=0.0 size=1kB time=00:00:01.0')).toBe(false);
   });
 });

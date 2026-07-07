@@ -147,6 +147,11 @@ export class QueueRunner {
       }
 
       this.throwIfCanceled(job.id, signal);
+      await this.logProbeResult('download-probed', job.id, downloadPath);
+      if (process.env.PRESERVE_WORK_DIR === '1') {
+        fs.copyFileSync(downloadPath, `${downloadPath}.preserved`);
+        logJobEvent('info', 'download-preserved', { jobId: job.id, path: `${downloadPath}.preserved` });
+      }
       this.jobs.transition(job.id, 'processing', 0.82, { selectedCandidateId });
       logJobEvent('info', 'processing-started', { jobId: job.id });
       const title = job.titleHint ?? titleFromUrl(job.sourceUrl);
@@ -156,6 +161,16 @@ export class QueueRunner {
       const normalized = await this.processor.normalize(downloadPath, finalPath, thumbnailPath, (progress) => {
         this.transitionIfRunning(job.id, 'processing', 0.82 + progress * 0.16, { selectedCandidateId }, signal);
       }, signal);
+      logJobEvent('info', 'processing-completed', {
+        audioCodec: normalized.audioCodec,
+        container: normalized.container,
+        durationSeconds: normalized.durationSeconds,
+        jobId: job.id,
+        processingStrategy: normalized.processingStrategy,
+        remuxRejectionReason: normalized.remuxRejectionReason,
+        sizeBytes: normalized.sizeBytes,
+        videoCodec: normalized.videoCodec
+      });
 
       this.throwIfCanceled(job.id, signal);
       this.mediaLibrary.create({
@@ -173,7 +188,11 @@ export class QueueRunner {
         audioCodec: normalized.audioCodec
       });
 
-      fs.rmSync(workDir, { recursive: true, force: true });
+      if (process.env.PRESERVE_WORK_DIR === '1') {
+        logJobEvent('info', 'work-dir-preserved', { jobId: job.id, workDir });
+      } else {
+        fs.rmSync(workDir, { recursive: true, force: true });
+      }
       this.jobs.transition(job.id, 'completed', 1, { selectedCandidateId });
       logJobEvent('info', 'job-completed', { jobId: job.id, title });
     } catch (error) {
@@ -292,6 +311,23 @@ export class QueueRunner {
     const job = this.jobs.get(jobId);
     if (!job || job.status === 'canceled') {
       throw new JobCanceledError();
+    }
+  }
+
+  private async logProbeResult(event: string, jobId: string, filePath: string): Promise<void> {
+    try {
+      const probe = await this.processor.probe(filePath);
+      logJobEvent('info', event, {
+        audioCodec: probe.audioCodec,
+        browserFriendly: probe.browserFriendly,
+        container: probe.container,
+        durationSeconds: probe.durationSeconds,
+        jobId,
+        sizeBytes: probe.sizeBytes,
+        videoCodec: probe.videoCodec
+      });
+    } catch (error) {
+      logJobEvent('warn', `${event}-failed`, { error: shortMessage(error), jobId });
     }
   }
 }

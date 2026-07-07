@@ -17,6 +17,8 @@ export interface ProbeResult {
 export interface NormalizeResult extends ProbeResult {
   outputPath: string;
   thumbnailPath: string | null;
+  processingStrategy: 'moved' | 'remuxed' | 'transcoded';
+  remuxRejectionReason?: string;
 }
 
 type ProgressCallback = (progress: number) => void;
@@ -35,25 +37,37 @@ export class MediaProcessor {
 
     throwIfAborted(signal);
     const probe = await this.probe(inputPath);
+    let processingStrategy: NormalizeResult['processingStrategy'] = 'transcoded';
+    let remuxRejectionReason: string | undefined;
     if (probe.browserFriendly && path.resolve(inputPath) !== path.resolve(outputPath)) {
       throwIfAborted(signal);
       moveFile(inputPath, outputPath);
+      processingStrategy = 'moved';
       onProgress(0.84);
     } else if (shouldRemuxToBrowserFriendlyMp4(probe)) {
       try {
         await this.remuxToMp4(inputPath, outputPath, probe.durationSeconds, onProgress, signal);
+        const remuxProbe = await this.probe(outputPath);
+        if (hasSuspiciousDurationInflation(probe.durationSeconds, remuxProbe.durationSeconds)) {
+          throw new Error(`remux inflated duration from ${probe.durationSeconds}s to ${remuxProbe.durationSeconds}s`);
+        }
+        await assertPlayableTimestamps(outputPath, signal);
+        processingStrategy = 'remuxed';
       } catch (error) {
         if (signal?.aborted || error instanceof JobCanceledError) {
           throw error;
         }
+        remuxRejectionReason = shortProcessingMessage(error);
         fs.rmSync(outputPath, { force: true });
         await this.transcode(inputPath, outputPath, probe.durationSeconds, onProgress, signal);
+        processingStrategy = 'transcoded';
       }
       if (path.resolve(inputPath) !== path.resolve(outputPath) && fs.existsSync(inputPath)) {
         fs.rmSync(inputPath, { force: true });
       }
     } else if (!probe.browserFriendly) {
       await this.transcode(inputPath, outputPath, probe.durationSeconds, onProgress, signal);
+      processingStrategy = 'transcoded';
       if (path.resolve(inputPath) !== path.resolve(outputPath) && fs.existsSync(inputPath)) {
         fs.rmSync(inputPath, { force: true });
       }
@@ -65,7 +79,13 @@ export class MediaProcessor {
     const finalProbe = await this.probe(outputPath);
     throwIfAborted(signal);
     onProgress(1);
-    return { ...finalProbe, outputPath, thumbnailPath: fs.existsSync(thumbnailPath) ? thumbnailPath : null };
+    return {
+      ...finalProbe,
+      outputPath,
+      thumbnailPath: fs.existsSync(thumbnailPath) ? thumbnailPath : null,
+      processingStrategy,
+      ...(remuxRejectionReason ? { remuxRejectionReason } : {})
+    };
   }
 
   async probe(filePath: string): Promise<ProbeResult> {
@@ -316,6 +336,18 @@ export function shouldRemuxToBrowserFriendlyMp4(probe: ProbeResult): boolean {
   return !probe.browserFriendly && !isMp4Container(probe.container) && hasBrowserCompatibleCodecs(probe.videoCodec, probe.audioCodec);
 }
 
+export function hasSuspiciousDurationInflation(inputDurationSeconds: number | null, outputDurationSeconds: number | null): boolean {
+  if (!inputDurationSeconds || !outputDurationSeconds) {
+    return false;
+  }
+  const toleranceSeconds = Math.max(2, inputDurationSeconds * 0.01);
+  return outputDurationSeconds > inputDurationSeconds + toleranceSeconds;
+}
+
+export function hasTimestampWarnings(stderr: string): boolean {
+  return /non monotonically increasing dts|invalid, non monotonically increasing|timestamp.*(invalid|discontinuity)/i.test(stderr);
+}
+
 function isBrowserFriendly(container: string | null, videoCodec: string | null, audioCodec: string | null): boolean {
   return isMp4Container(container) && hasBrowserCompatibleCodecs(videoCodec, audioCodec);
 }
@@ -332,6 +364,48 @@ function hasBrowserCompatibleCodecs(videoCodec: string | null, audioCodec: strin
 
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {
   return error instanceof Error;
+}
+
+function shortProcessingMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.replace(/\s+/g, ' ').slice(0, 500);
+}
+
+async function assertPlayableTimestamps(filePath: string, signal?: AbortSignal): Promise<void> {
+  const stderr = await runWithStderr('ffmpeg', ['-hide_banner', '-v', 'warning', '-i', filePath, '-map', '0:v:0', '-f', 'null', '-'], signal);
+  if (hasTimestampWarnings(stderr)) {
+    throw new Error(`ffmpeg reported invalid timestamps while validating remuxed output: ${firstTimestampWarning(stderr)}`);
+  }
+}
+
+function firstTimestampWarning(stderr: string): string {
+  return shortProcessingMessage(stderr.split(/\r?\n/).find((line) => hasTimestampWarnings(line)) ?? stderr);
+}
+
+async function runWithStderr(command: string, args: string[], signal?: AbortSignal): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { stdio: ['ignore', 'ignore', 'pipe'] });
+    const removeAbortListener = onAbort(signal, () => child.kill('SIGTERM'));
+    const stderr: Buffer[] = [];
+    child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk));
+    child.on('error', (error) => {
+      removeAbortListener();
+      reject(error);
+    });
+    child.on('close', (code) => {
+      removeAbortListener();
+      const stderrText = Buffer.concat(stderr).toString('utf8');
+      if (signal?.aborted) {
+        reject(new JobCanceledError());
+        return;
+      }
+      if (code === 0) {
+        resolve(stderrText);
+      } else {
+        reject(new Error(`${command} exited with code ${code}: ${stderrText}`));
+      }
+    });
+  });
 }
 
 async function run(command: string, args: string[], signal?: AbortSignal): Promise<string> {

@@ -156,6 +156,7 @@ describe('QueueRunner', () => {
           durationSeconds: 1,
           height: 1080,
           outputPath,
+          processingStrategy: 'transcoded',
           sizeBytes: 10,
           thumbnailPath: null,
           videoCodec: 'h264',
