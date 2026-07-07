@@ -8,6 +8,8 @@
     "build": "npm run build:web && npm run build:server",
     "build:web": "vite build",
     "build:server": "tsc -p tsconfig.server.json",
+    "dev:seed": "tsx scripts/devLibrarySeed.ts seed",
+    "dev:seed:reset": "tsx scripts/devLibrarySeed.ts reset",
     "start": "node dist/server/index.js",
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.server.json"

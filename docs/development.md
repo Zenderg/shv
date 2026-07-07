@@ -38,6 +38,29 @@ npm run typecheck
 npm run build
 ```
 
+## Local UI Seed Data
+
+Use the dev seed command when the local library needs fake categories and media rows for UI work:
+
+```bash
+npm run dev:seed
+npm run dev:seed -- --categories 20 --videos 500
+```
+
+The command appends data under the local Docker Compose mounts in `./data`. It creates `[dev] ` categories, `dev-seed://`
+media records, tiny placeholder `.mp4` files, and a few tiny placeholder thumbnails. The `.mp4` files are intentionally
+not playable videos; they exist to exercise library UI, file paths, card metadata, rename, move, and delete behavior
+without running the downloader or ffmpeg pipeline.
+
+Remove only generated dev seed data with:
+
+```bash
+npm run dev:seed:reset
+```
+
+Reset deletes media rows whose `source_url` starts with `dev-seed://`, removes their placeholder files and thumbnails,
+and removes empty `[dev] ` categories. It leaves ordinary categories and non-seed media in place.
+
 ## Frontend UI Notes
 
 Design the library UI touch-first. Phones and tablets are supported browsing surfaces, so primary actions must remain visible and usable without hover. Hover and focus states can add polish, but they must not be the only way to discover or use video, category, queue, or dialog actions.
