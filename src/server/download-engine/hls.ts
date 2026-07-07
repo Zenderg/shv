@@ -4,6 +4,11 @@ export interface HlsVariant {
   resolution: string | null;
 }
 
+export interface HlsSegment {
+  uri: string;
+  durationSeconds: number | null;
+}
+
 export function parseHlsVariants(manifest: string, baseUrl: string): HlsVariant[] {
   const lines = manifest.split(/\r?\n/).map((line) => line.trim());
   const variants: HlsVariant[] = [];
@@ -47,6 +52,46 @@ export function parseHlsDurationSeconds(manifest: string): number | null {
   }
 
   return foundDuration ? total : null;
+}
+
+export function parseHlsSegments(manifest: string, baseUrl: string): HlsSegment[] {
+  const lines = manifest.split(/\r?\n/).map((line) => line.trim());
+  const segments: HlsSegment[] = [];
+  let pendingDuration: number | null = null;
+
+  for (const line of lines) {
+    if (line.startsWith('#EXTINF:')) {
+      const duration = Number(line.slice('#EXTINF:'.length).split(',')[0]);
+      pendingDuration = Number.isFinite(duration) ? duration : null;
+      continue;
+    }
+    if (!line || line.startsWith('#')) {
+      continue;
+    }
+    segments.push({
+      durationSeconds: pendingDuration,
+      uri: new URL(line, baseUrl).toString()
+    });
+    pendingDuration = null;
+  }
+
+  return segments;
+}
+
+export function canDownloadPlainHlsSegments(manifest: string, segments: HlsSegment[]): boolean {
+  if (segments.length === 0) {
+    return false;
+  }
+  if (/#EXT-X-(KEY|MAP|BYTERANGE):/.test(manifest)) {
+    return false;
+  }
+  return segments.every((segment) => {
+    try {
+      return new URL(segment.uri).pathname.toLowerCase().endsWith('.ts');
+    } catch {
+      return false;
+    }
+  });
 }
 
 function parseAttributes(input: string): Record<string, string> {

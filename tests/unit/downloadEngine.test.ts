@@ -28,7 +28,7 @@ describe('DownloadEngine ffmpeg helpers', () => {
     expect(args).toEqual(expect.arrayContaining(['-reconnect', '1', '-reconnect_on_network_error', '1']));
   });
 
-  test('builds HLS ffmpeg args with reconnects and no persistent segment connections', () => {
+  test('builds HLS ffmpeg args with reconnects but no EOF reconnects or persistent segment connections', () => {
     const args = buildHlsFfmpegArgs(
       'https://media.example.test/playlist.m3u8',
       { Referer: 'https://source.example.test/' },
@@ -38,8 +38,6 @@ describe('DownloadEngine ffmpeg helpers', () => {
     expect(args).toEqual(
       expect.arrayContaining([
         '-reconnect',
-        '1',
-        '-reconnect_at_eof',
         '1',
         '-reconnect_streamed',
         '1',
@@ -52,6 +50,7 @@ describe('DownloadEngine ffmpeg helpers', () => {
       ])
     );
     expect(args.indexOf('-http_persistent')).toBeLessThan(args.indexOf('-i'));
+    expect(args).not.toContain('-reconnect_at_eof');
   });
 
   test('formats ffmpeg HLS network errors without frame spam or signed query strings', () => {

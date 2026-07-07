@@ -111,6 +111,12 @@ DASH manifests are XML, so representation URLs may contain escaped query separat
 
 HLS/DASH downloads write to an extensionless work file, so ffmpeg remux calls pass an explicit output muxer.
 
-HLS/DASH downloads are delegated to ffmpeg because it already handles playlist traversal, segment fetching, and stream copy/remux without reimplementing media container rules in TypeScript. HLS progress should come from ffmpeg's structured `-progress` output and media-playlist `#EXTINF` durations, not from stderr activity.
+Plain, unencrypted HLS media playlists whose segments are ordinary `.ts` files are downloaded by the built-in segment downloader.
+This preserves browser-captured request headers and avoids ffmpeg HLS replay quirks with signed CDN playlists. Complex HLS playlists
+such as encrypted, byte-range, or fMP4/init-map streams stay on the ffmpeg fallback path.
+
+HLS progress should come from media-playlist `#EXTINF` durations when using the built-in segment downloader, or from ffmpeg's
+structured `-progress` output when using the fallback path. Do not infer progress from stderr activity.
 
 For HLS segment reliability, keep the ffmpeg reconnect options enabled and keep HLS `http_persistent` disabled; some signed segment CDNs can invalidate or truncate keepalive/TLS sessions mid-download, producing partial segments and corrupt audio packets.
+Do not enable `reconnect_at_eof` for HLS fallback; VOD media playlists end normally at EOF, and treating that as a reconnect point can make ffmpeg loop instead of advancing through the playlist.

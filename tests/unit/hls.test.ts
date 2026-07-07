@@ -1,5 +1,11 @@
 import { describe, expect, test } from 'vitest';
-import { parseHlsDurationSeconds, parseHlsVariants, selectBestHlsVariant } from '../../src/server/download-engine/hls.js';
+import {
+  canDownloadPlainHlsSegments,
+  parseHlsDurationSeconds,
+  parseHlsSegments,
+  parseHlsVariants,
+  selectBestHlsVariant
+} from '../../src/server/download-engine/hls.js';
 
 describe('HLS parsing', () => {
   const manifest = `#EXTM3U
@@ -33,6 +39,34 @@ seg-2.ts
 seg-3.ts`;
 
     expect(parseHlsDurationSeconds(mediaManifest)).toBeCloseTo(10.48);
+  });
+
+  test('identifies plain TS media segments that can be downloaded directly', () => {
+    const mediaManifest = `#EXTM3U
+#EXT-X-TARGETDURATION:4
+#EXT-X-PLAYLIST-TYPE:VOD
+#EXTINF:3.96,
+seg-1.ts?h=token
+#EXTINF:4,
+https://cdn.example.test/video/seg-2.ts?h=token
+#EXT-X-ENDLIST`;
+
+    const segments = parseHlsSegments(mediaManifest, 'https://example.test/video/index.m3u8');
+
+    expect(segments).toEqual([
+      { durationSeconds: 3.96, uri: 'https://example.test/video/seg-1.ts?h=token' },
+      { durationSeconds: 4, uri: 'https://cdn.example.test/video/seg-2.ts?h=token' }
+    ]);
+    expect(canDownloadPlainHlsSegments(mediaManifest, segments)).toBe(true);
+  });
+
+  test('keeps complex HLS playlists on the ffmpeg fallback path', () => {
+    const encryptedManifest = `#EXTM3U
+#EXT-X-KEY:METHOD=AES-128,URI="key.bin"
+#EXTINF:4,
+seg-1.ts`;
+
+    expect(canDownloadPlainHlsSegments(encryptedManifest, parseHlsSegments(encryptedManifest, 'https://example.test/index.m3u8'))).toBe(false);
   });
 
   test('returns null when a playlist has no media segment durations', () => {
