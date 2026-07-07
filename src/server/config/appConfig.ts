@@ -1,9 +1,11 @@
 import path from 'node:path';
+import type { SourceExtensionKind } from '../../shared/sourceExtension.js';
 
 export interface AppConfig {
   host: string;
   port: number;
   publicOrigin?: string;
+  sourceExtensionProfile: SourceExtensionKind;
   libraryRoot: string;
   appDataRoot: string;
   thumbnailsRoot: string;
@@ -20,10 +22,12 @@ export function loadAppConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const chromiumExecutablePath = env.CHROMIUM_EXECUTABLE_PATH?.trim() || undefined;
   const ytDlpCookiesPath = env.YTDLP_COOKIES_FILE?.trim() || path.join(appDataRoot, 'youtube-cookies.txt');
   const publicOrigin = normalizePublicOrigin(env.PUBLIC_APP_ORIGIN);
+  const sourceExtensionProfile = normalizeSourceExtensionProfile(env.SOURCE_EXTENSION_PROFILE);
   return {
     host: env.HOST ?? '0.0.0.0',
     port: Number(env.PORT ?? 8080),
     publicOrigin,
+    sourceExtensionProfile,
     libraryRoot: path.resolve(env.LIBRARY_ROOT ?? '/data/library'),
     appDataRoot,
     thumbnailsRoot: path.join(appDataRoot, 'thumbnails'),
@@ -50,4 +54,15 @@ function normalizePublicOrigin(value: string | undefined): string | undefined {
     throw new Error('PUBLIC_APP_ORIGIN must use http or https');
   }
   return parsed.origin;
+}
+
+function normalizeSourceExtensionProfile(value: string | undefined): SourceExtensionKind {
+  const normalized = value?.trim().toLowerCase();
+  if (!normalized) {
+    return 'prod';
+  }
+  if (normalized === 'prod' || normalized === 'dev') {
+    return normalized;
+  }
+  throw new Error('SOURCE_EXTENSION_PROFILE must be prod or dev');
 }

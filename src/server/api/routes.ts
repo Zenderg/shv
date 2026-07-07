@@ -38,6 +38,10 @@ export function createRouter(services: RouteServices): Router {
     response.json({ ok: true });
   });
 
+  router.get('/api/runtime-config', (_request, response) => {
+    response.json({ sourceExtensionProfile: services.config.sourceExtensionProfile });
+  });
+
   router.get('/api/categories', (_request, response) => {
     response.json(services.categories.list());
   });

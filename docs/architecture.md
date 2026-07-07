@@ -160,9 +160,10 @@ Production and development extension packages must continue to share the runtime
 `extension/chrome-source-helper`. The visible Sources sidebar is authored in Svelte under `src/extension/source-helper`
 and built into `extension/chrome-source-helper/content-script.js` with `npm run build:extension`. The packages differ
 only at package time: production uses `/extension/shv-source-helper.zip` and id `ncgeehcdlbbdgojleaoefhhdinmdhcaf`,
-while local origins use `/extension/shv-source-helper-dev.zip` and id `jglagfhfffmokhgmaijndppinlbolpee`. The app
-includes the expected extension id in content-script bridge messages so a production content script installed in the
-same browser profile cannot satisfy a local development app's extension probe.
+while the explicit `SOURCE_EXTENSION_PROFILE=dev` profile uses `/extension/shv-source-helper-dev.zip` and id
+`jglagfhfffmokhgmaijndppinlbolpee`. The app includes the expected extension id in content-script bridge messages so a
+production content script installed in the same browser profile cannot satisfy a local development app's extension
+probe. Do not infer the profile from localhost or private LAN origins; Docker Compose opts into the dev profile via env.
 When capture is empty, the sidebar renders diagnostics from both the content script and service worker: DOM video counts,
 dominant/active playback flags, media-like network observations, classifier hits, and session-mapping counters. Keep
 those diagnostics available while triaging site-specific capture failures so future fixes can target the failing layer.

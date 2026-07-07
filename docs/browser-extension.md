@@ -5,8 +5,8 @@ Manual source selection uses a local Chromium browser extension so source pages 
 The extension packages are served by the running app:
 
 ```text
-Production/public origins: http://127.0.0.1:8080/extension/shv-source-helper.zip
-Local development origins: http://127.0.0.1:8080/extension/shv-source-helper-dev.zip
+Production profile: http://127.0.0.1:8080/extension/shv-source-helper.zip
+Development profile: http://127.0.0.1:8080/extension/shv-source-helper-dev.zip
 ```
 
 The downloaded package is tailored to the app origin that served it. In production, download it from the same URL where
@@ -15,9 +15,10 @@ origin. If the app runs behind a reverse proxy that hides the public scheme or h
 to the browser-visible origin, for example `https://videos.example.com`.
 
 The runtime files under `extension/chrome-source-helper` are shared by both packages. The server rewrites only the
-packaged manifest profile and `APP_ORIGIN`: local development origins (`localhost`, `127.*`, `10.*`, `172.16.*` through
-`172.31.*`, and `192.168.*`) receive the dev package so it can be installed alongside the production extension without
-Chrome treating them as the same extension.
+packaged manifest profile and `APP_ORIGIN`. The app uses the production extension profile by default, even on localhost
+or private LAN origins. Set `SOURCE_EXTENSION_PROFILE=dev` to make the app expect the development extension id and show
+the development package in install/update instructions; the repository Docker Compose file sets this for local
+development convenience.
 
 The Sources sidebar content script is generated from `src/extension/source-helper` with Svelte. Run
 `npm run build:extension` after editing that source; `npm run build` runs it before the web and server builds. Do not
@@ -39,9 +40,9 @@ Production: ncgeehcdlbbdgojleaoefhhdinmdhcaf
 Development: jglagfhfffmokhgmaijndppinlbolpee
 ```
 
-When `Choose source` is clicked, the app checks the extension id selected for the current app origin and verifies its
-protocol version. If it is missing or old, the app shows an install/update dialog with the matching download link and
-instructions.
+When `Choose source` is clicked, the app checks the extension id selected by `SOURCE_EXTENSION_PROFILE` and verifies
+its protocol version. If it is missing or old, the app shows an install/update dialog with the matching download link
+and instructions.
 
 The app is commonly opened from another LAN device over plain HTTP, for example `http://192.168.x.x:8080`. Browser-side extension bridge code must not require HTTPS-only Web Crypto APIs such as `crypto.randomUUID`; use a fallback request id when probing the content-script bridge.
 

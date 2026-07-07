@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import type { SourceExtensionKind } from '../../shared/sourceExtension';
 import { api, type Category, type DownloadJob, type MediaCandidate, type MediaItem, type QueueSnapshot } from './lib/api';
 import {
   SOURCE_EXTENSION_PROTOCOL_VERSION,
@@ -37,6 +38,7 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [queueActionJobIds, setQueueActionJobIds] = useState<Record<string, string>>({});
+  const [sourceExtensionProfile, setSourceExtensionProfile] = useState<SourceExtensionKind | null>(null);
 
   const selectedCategory = categories.find((category) => category.id === selectedCategoryId) ?? categories[0] ?? null;
 
@@ -57,6 +59,12 @@ export function App() {
   useEffect(() => {
     void refresh().catch((caught) => setError(message(caught)));
   }, [refresh]);
+
+  useEffect(() => {
+    void api.runtimeConfig()
+      .then((config) => setSourceExtensionProfile(config.sourceExtensionProfile))
+      .catch((caught) => setError(message(caught)));
+  }, []);
 
   useEffect(() => {
     const interval = window.setInterval(() => {
@@ -138,6 +146,15 @@ export function App() {
     setQueue(await api.queue());
   }, []);
 
+  async function currentSourceExtensionProfile(): Promise<SourceExtensionKind> {
+    if (sourceExtensionProfile) {
+      return sourceExtensionProfile;
+    }
+    const config = await api.runtimeConfig();
+    setSourceExtensionProfile(config.sourceExtensionProfile);
+    return config.sourceExtensionProfile;
+  }
+
   useEffect(() => {
     function handleSourceHelperEvent(event: MessageEvent) {
       if (
@@ -156,22 +173,24 @@ export function App() {
 
   async function chooseSource(job: DownloadJob) {
     setError(null);
-    const status = await checkSourceExtension();
+    const profile = await currentSourceExtensionProfile();
+    const status = await checkSourceExtension(profile);
     if (status.kind !== 'ready') {
       setExtensionDialog({ job, kind: 'issue', status });
       return;
     }
-    await openSourceWithExtension({ jobId: job.id, sourceUrl: job.sourceUrl, titleHint: job.titleHint });
+    await openSourceWithExtension({ jobId: job.id, sourceUrl: job.sourceUrl, titleHint: job.titleHint }, profile);
   }
 
   async function recheckExtension(job: DownloadJob) {
-    const status = await checkSourceExtension();
+    const profile = await currentSourceExtensionProfile();
+    const status = await checkSourceExtension(profile);
     if (status.kind !== 'ready') {
       setExtensionDialog({ job, kind: 'issue', status });
       return;
     }
     setExtensionDialog({ kind: 'none' });
-    await openSourceWithExtension({ jobId: job.id, sourceUrl: job.sourceUrl, titleHint: job.titleHint });
+    await openSourceWithExtension({ jobId: job.id, sourceUrl: job.sourceUrl, titleHint: job.titleHint }, profile);
   }
 
   async function runQueueAction(job: DownloadJob, action: string, operation: () => Promise<void>) {
@@ -440,6 +459,7 @@ export function App() {
           job={extensionDialog.job}
           onCheckAgain={() => void recheckExtension(extensionDialog.job).catch((caught) => setError(message(caught)))}
           onClose={() => setExtensionDialog({ kind: 'none' })}
+          sourceExtensionProfile={sourceExtensionProfile ?? 'prod'}
           status={extensionDialog.status}
         />
       ) : null}
@@ -861,15 +881,17 @@ function ExtensionInstallDialog({
   job,
   onCheckAgain,
   onClose,
+  sourceExtensionProfile,
   status
 }: {
   job: DownloadJob;
   onCheckAgain: () => void;
   onClose: () => void;
+  sourceExtensionProfile: SourceExtensionKind;
   status: Exclude<ExtensionStatus, { kind: 'ready' }>;
 }) {
   const isOutdated = status.kind === 'outdated';
-  const extensionTarget = sourceExtensionTargetForOrigin(window.location.origin);
+  const extensionTarget = sourceExtensionTargetForOrigin(window.location.origin, sourceExtensionProfile);
   return (
     <DialogBackdrop onClose={onClose}>
       <section className="extensionDialog">

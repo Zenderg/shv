@@ -8,6 +8,7 @@ services:
     environment:
       PORT: "8080"
       HOST: "0.0.0.0"
+      SOURCE_EXTENSION_PROFILE: "dev"
       LIBRARY_ROOT: "/data/library"
       APP_DATA_ROOT: "/data/app"
       WORK_ROOT: "/work"

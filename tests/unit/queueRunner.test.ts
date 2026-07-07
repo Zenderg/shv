@@ -200,6 +200,7 @@ function createServices() {
     appDataRoot,
     thumbnailsRoot: path.join(appDataRoot, 'thumbnails'),
     browserDataRoot: path.join(appDataRoot, 'browser'),
+    sourceExtensionProfile: 'prod',
     workRoot: path.join(root, 'work'),
     databasePath: path.join(appDataRoot, 'db.sqlite'),
     chromiumExecutablePath: undefined,

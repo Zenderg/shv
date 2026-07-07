@@ -1,4 +1,9 @@
+import type { SourceExtensionKind } from '../../../shared/sourceExtension';
 import type { Category, DownloadJob, MediaCandidate, MediaItem, QueueSnapshot } from '../../../shared/types';
+
+export interface RuntimeConfig {
+  sourceExtensionProfile: SourceExtensionKind;
+}
 
 export interface LiveBrowserState {
   jobId: string;
@@ -30,6 +35,7 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  runtimeConfig: () => request<RuntimeConfig>('/api/runtime-config'),
   categories: () => request<Category[]>('/api/categories'),
   createCategory: (name: string) => request<Category>('/api/categories', { method: 'POST', body: JSON.stringify({ name }) }),
   renameCategory: (id: string, name: string) =>

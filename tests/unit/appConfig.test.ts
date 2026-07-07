@@ -45,4 +45,21 @@ describe('loadAppConfig', () => {
 
     expect(config.downloadStallTimeoutMs).toBe(45_000);
   });
+
+  test('defaults to the production source extension profile', () => {
+    const config = loadAppConfig({
+      APP_DATA_ROOT: '/data/app'
+    } as NodeJS.ProcessEnv);
+
+    expect(config.sourceExtensionProfile).toBe('prod');
+  });
+
+  test('allows opting into the development source extension profile', () => {
+    const config = loadAppConfig({
+      APP_DATA_ROOT: '/data/app',
+      SOURCE_EXTENSION_PROFILE: 'dev'
+    } as NodeJS.ProcessEnv);
+
+    expect(config.sourceExtensionProfile).toBe('dev');
+  });
 });

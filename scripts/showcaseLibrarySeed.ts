@@ -221,6 +221,7 @@ function localDataConfig(root: string): AppConfig {
     host: '127.0.0.1',
     libraryRoot: path.join(root, 'data', 'library'),
     port: 0,
+    sourceExtensionProfile: 'prod',
     thumbnailsRoot: path.join(appDataRoot, 'thumbnails'),
     workRoot: path.join(root, 'data', 'work'),
     ytDlpCookiesPath: path.join(appDataRoot, 'youtube-cookies.txt')

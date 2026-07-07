@@ -104,6 +104,7 @@ function tempConfig(): AppConfig {
     appDataRoot: path.join(root, 'app'),
     thumbnailsRoot: path.join(root, 'app', 'thumbnails'),
     browserDataRoot: path.join(root, 'app', 'browser'),
+    sourceExtensionProfile: 'prod',
     workRoot: path.join(root, 'work'),
     databasePath: path.join(root, 'app', 'db.sqlite'),
     chromiumExecutablePath: undefined,

@@ -44,31 +44,6 @@ export function sourceExtensionProfile(kind: SourceExtensionKind): SourceExtensi
   return PROFILES[kind];
 }
 
-export function sourceExtensionTargetForOrigin(origin: string): SourceExtensionProfile {
-  return isLocalDevelopmentOrigin(origin) ? sourceExtensionProfile('dev') : sourceExtensionProfile('prod');
-}
-
-export function isLocalDevelopmentOrigin(origin: string): boolean {
-  let hostname: string;
-  try {
-    hostname = new URL(origin).hostname.toLowerCase();
-  } catch {
-    return false;
-  }
-
-  if (hostname === 'localhost' || hostname === '::1' || hostname === '0.0.0.0') {
-    return true;
-  }
-  if (hostname.startsWith('127.')) {
-    return true;
-  }
-  if (hostname.startsWith('192.168.')) {
-    return true;
-  }
-  if (hostname.startsWith('10.')) {
-    return true;
-  }
-
-  const private172 = /^172\.(1[6-9]|2\d|3[0-1])\./;
-  return private172.test(hostname);
+export function sourceExtensionTargetForOrigin(_origin: string, profile: SourceExtensionKind = 'prod'): SourceExtensionProfile {
+  return sourceExtensionProfile(profile);
 }

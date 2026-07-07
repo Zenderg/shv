@@ -48,6 +48,7 @@ function createServices() {
     host: '127.0.0.1',
     libraryRoot: path.join(root, 'library'),
     port: 0,
+    sourceExtensionProfile: 'prod',
     thumbnailsRoot: path.join(appDataRoot, 'thumbnails'),
     workRoot: path.join(root, 'work'),
     ytDlpCookiesPath: path.join(appDataRoot, 'youtube-cookies.txt')

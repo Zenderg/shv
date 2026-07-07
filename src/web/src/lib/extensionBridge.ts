@@ -1,6 +1,7 @@
 import {
   DEV_SOURCE_EXTENSION_ID,
   PROD_SOURCE_EXTENSION_ID,
+  type SourceExtensionKind,
   sourceExtensionTargetForOrigin
 } from '../../../shared/sourceExtension';
 
@@ -83,15 +84,15 @@ export function evaluateExtensionHandshake(
   return { kind: 'ready', version: handshake.version };
 }
 
-export async function checkSourceExtension(): Promise<ExtensionStatus> {
+export async function checkSourceExtension(profile: SourceExtensionKind = 'prod'): Promise<ExtensionStatus> {
   const handshake = await sendExtensionMessage<ExtensionHandshake>({
     protocolVersion: SOURCE_EXTENSION_PROTOCOL_VERSION,
     type: 'SHV_HELLO'
-  });
+  }, { profile });
   return evaluateExtensionHandshake(handshake);
 }
 
-export async function openSourceWithExtension(input: OpenSourceRequest): Promise<void> {
+export async function openSourceWithExtension(input: OpenSourceRequest, profile: SourceExtensionKind = 'prod'): Promise<void> {
   const response = await sendExtensionMessage<{ error?: string; ok: boolean }>({
     jobId: input.jobId,
     protocolVersion: SOURCE_EXTENSION_PROTOCOL_VERSION,
@@ -100,6 +101,7 @@ export async function openSourceWithExtension(input: OpenSourceRequest): Promise
     type: 'SHV_OPEN_SOURCE'
   }, {
     bridgeFallback: 'runtime-missing-only',
+    profile,
     runtimeTimeoutMs: 12000
   });
   if (!response?.ok) {
@@ -109,11 +111,11 @@ export async function openSourceWithExtension(input: OpenSourceRequest): Promise
 
 async function sendExtensionMessage<T>(
   message: unknown,
-  options: { bridgeFallback?: 'always' | 'runtime-missing-only'; runtimeTimeoutMs?: number } = {}
+  options: { bridgeFallback?: 'always' | 'runtime-missing-only'; profile?: SourceExtensionKind; runtimeTimeoutMs?: number } = {}
 ): Promise<T | null> {
   const runtime = window.chrome?.runtime;
   if (runtime?.sendMessage) {
-    const result = await sendChromeRuntimeMessage<T>(runtime, message, options.runtimeTimeoutMs ?? 1200);
+    const result = await sendChromeRuntimeMessage<T>(runtime, message, options.runtimeTimeoutMs ?? 1200, options.profile);
     if (result.kind === 'response' && result.response) {
       return result.response;
     }
@@ -121,13 +123,14 @@ async function sendExtensionMessage<T>(
       return null;
     }
   }
-  return sendContentScriptBridgeMessage<T>(message);
+  return sendContentScriptBridgeMessage<T>(message, options.profile);
 }
 
 async function sendChromeRuntimeMessage<T>(
   runtime: ChromeRuntime,
   message: unknown,
-  timeoutMs: number
+  timeoutMs: number,
+  profile: SourceExtensionKind = 'prod'
 ): Promise<RuntimeMessageResult<T>> {
   return new Promise((resolve) => {
     let settled = false;
@@ -143,7 +146,7 @@ async function sendChromeRuntimeMessage<T>(
       finish({ kind: 'timeout' });
     }, timeoutMs);
     try {
-      runtime.sendMessage(currentSourceExtensionId(), message, (response) => {
+      runtime.sendMessage(currentSourceExtensionId(profile), message, (response) => {
         if (runtime.lastError) {
           finish({ kind: 'delivery-failed' });
           return;
@@ -156,10 +159,10 @@ async function sendChromeRuntimeMessage<T>(
   });
 }
 
-async function sendContentScriptBridgeMessage<T>(message: unknown): Promise<T | null> {
+async function sendContentScriptBridgeMessage<T>(message: unknown, profile: SourceExtensionKind = 'prod'): Promise<T | null> {
   return new Promise((resolve) => {
     const requestId = createBridgeRequestId();
-    const extensionId = currentSourceExtensionId();
+    const extensionId = currentSourceExtensionId(profile);
     const timeout = window.setTimeout(() => {
       window.removeEventListener('message', handleMessage);
       resolve(null);
@@ -184,8 +187,8 @@ async function sendContentScriptBridgeMessage<T>(message: unknown): Promise<T | 
   });
 }
 
-function currentSourceExtensionId(): string {
-  return sourceExtensionTargetForOrigin(currentWindowOrigin()).id;
+function currentSourceExtensionId(profile: SourceExtensionKind = 'prod'): string {
+  return sourceExtensionTargetForOrigin(currentWindowOrigin(), profile).id;
 }
 
 function currentWindowOrigin(): string {

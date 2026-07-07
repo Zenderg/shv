@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import {
   DEV_SOURCE_EXTENSION_ID,
+  PROD_SOURCE_EXTENSION_ID,
   checkSourceExtension,
   evaluateExtensionHandshake,
   isVersionAtLeast,
@@ -43,13 +44,18 @@ describe('extension bridge', () => {
     });
   });
 
-  test('uses the dev extension id for local app origins', () => {
-    expect(sourceExtensionTargetForOrigin('http://127.0.0.1:8080').id).toBe(DEV_SOURCE_EXTENSION_ID);
-    expect(sourceExtensionTargetForOrigin('http://localhost:8080').id).toBe(DEV_SOURCE_EXTENSION_ID);
-    expect(sourceExtensionTargetForOrigin('https://videos.example.test').id).not.toBe(DEV_SOURCE_EXTENSION_ID);
+  test('uses the production extension id by default, even for local origins', () => {
+    expect(sourceExtensionTargetForOrigin('http://127.0.0.1:8080').id).not.toBe(DEV_SOURCE_EXTENSION_ID);
+    expect(sourceExtensionTargetForOrigin('http://localhost:8080').id).not.toBe(DEV_SOURCE_EXTENSION_ID);
+    expect(sourceExtensionTargetForOrigin('http://192.168.1.42:8080').id).not.toBe(DEV_SOURCE_EXTENSION_ID);
   });
 
-  test('sends runtime messages to the local dev extension id from localhost', async () => {
+  test('uses the dev extension id only when explicitly requested', () => {
+    expect(sourceExtensionTargetForOrigin('https://videos.example.test', 'dev').id).toBe(DEV_SOURCE_EXTENSION_ID);
+    expect(sourceExtensionTargetForOrigin('http://192.168.1.42:8080', 'dev').id).toBe(DEV_SOURCE_EXTENSION_ID);
+  });
+
+  test('sends runtime messages to the production extension id by default from localhost', async () => {
     const sendMessage = vi.fn((_extensionId: string, _message: unknown, callback: (response: unknown) => void) => {
       callback({ installed: true, protocolVersion: 1, version: '1.0.23' });
     });
@@ -74,6 +80,39 @@ describe('extension bridge', () => {
     } as unknown as Window & typeof globalThis;
 
     await expect(checkSourceExtension()).resolves.toEqual({ kind: 'ready', version: '1.0.23' });
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      PROD_SOURCE_EXTENSION_ID,
+      expect.objectContaining({ type: 'SHV_HELLO' }),
+      expect.any(Function)
+    );
+  });
+
+  test('sends runtime messages to the dev extension id when requested', async () => {
+    const sendMessage = vi.fn((_extensionId: string, _message: unknown, callback: (response: unknown) => void) => {
+      callback({ installed: true, protocolVersion: 1, version: '1.0.23' });
+    });
+
+    globalThis.window = {
+      addEventListener: vi.fn(),
+      chrome: {
+        runtime: {
+          sendMessage
+        }
+      },
+      clearTimeout: globalThis.clearTimeout.bind(globalThis),
+      crypto: {
+        randomUUID: () => 'request-id'
+      },
+      location: {
+        origin: 'http://127.0.0.1:8080'
+      },
+      postMessage: vi.fn(),
+      removeEventListener: vi.fn(),
+      setTimeout: globalThis.setTimeout.bind(globalThis)
+    } as unknown as Window & typeof globalThis;
+
+    await expect(checkSourceExtension('dev')).resolves.toEqual({ kind: 'ready', version: '1.0.23' });
 
     expect(sendMessage).toHaveBeenCalledWith(
       DEV_SOURCE_EXTENSION_ID,
@@ -254,7 +293,7 @@ describe('extension bridge', () => {
 
     expect(postMessage).toHaveBeenCalledOnce();
     const payload = postMessage.mock.calls[0]?.[0] as { extensionId?: string; requestId?: string };
-    expect(payload.extensionId).toBe(DEV_SOURCE_EXTENSION_ID);
+    expect(payload.extensionId).not.toBe(DEV_SOURCE_EXTENSION_ID);
     expect(payload.requestId).toEqual(expect.any(String));
     expect(payload.requestId).not.toHaveLength(0);
     expect(messageHandler).toBeDefined();
@@ -262,7 +301,7 @@ describe('extension bridge', () => {
     messageHandler?.({
       data: {
         channel: 'SHV_SOURCE_HELPER_RESPONSE',
-        extensionId: DEV_SOURCE_EXTENSION_ID,
+        extensionId: payload.extensionId,
         requestId: payload.requestId,
         response: { installed: true, protocolVersion: 1, version: '1.0.23' }
       },
