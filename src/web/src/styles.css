@@ -71,7 +71,8 @@ svg {
 .shell {
   display: grid;
   grid-template-columns: 260px minmax(0, 1fr);
-  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
 }
 
 .sidebar {
@@ -80,6 +81,8 @@ svg {
   display: flex;
   flex-direction: column;
   gap: 28px;
+  min-height: 0;
+  overflow-y: auto;
   padding: 24px 18px;
 }
 
@@ -253,7 +256,9 @@ svg {
 }
 
 .workspace {
+  min-height: 0;
   min-width: 0;
+  overflow-y: auto;
   padding: 32px;
 }
 
@@ -1003,11 +1008,18 @@ progress {
   }
 
   .shell {
+    height: auto;
     min-height: auto;
+    overflow: visible;
   }
 
   .sidebar {
     gap: 18px;
+    overflow: visible;
+  }
+
+  .workspace {
+    overflow: visible;
   }
 
 }
