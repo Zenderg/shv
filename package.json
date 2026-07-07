@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/server/index.ts",
-    "build": "npm run build:web && npm run build:server",
+    "build": "npm run build:extension && npm run build:web && npm run build:server",
+    "build:extension": "vite build --config vite.extension.config.ts",
     "build:web": "vite build",
     "build:server": "tsc -p tsconfig.server.json",
     "dev:seed": "tsx scripts/devLibrarySeed.ts seed",
@@ -30,12 +31,14 @@
     "zod": "^3.24.1"
   },
   "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^5.1.1",
     "@types/express": "^5.0.0",
     "@types/mime-types": "^2.1.4",
     "@types/node": "^22.10.5",
     "@types/react": "^19.0.4",
     "@types/react-dom": "^19.0.2",
     "supertest": "^7.0.0",
+    "svelte": "^5.56.4",
     "typescript": "^5.7.2",
     "vitest": "^4.1.10"
   }

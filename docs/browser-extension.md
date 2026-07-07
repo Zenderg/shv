@@ -14,10 +14,15 @@ the app is open so the extension manifest allows that origin and the service wor
 origin. If the app runs behind a reverse proxy that hides the public scheme or host from Node, set `PUBLIC_APP_ORIGIN`
 to the browser-visible origin, for example `https://videos.example.com`.
 
-The source files under `extension/chrome-source-helper` are shared by both packages. The server rewrites only the
+The runtime files under `extension/chrome-source-helper` are shared by both packages. The server rewrites only the
 packaged manifest profile and `APP_ORIGIN`: local development origins (`localhost`, `127.*`, `10.*`, `172.16.*` through
 `172.31.*`, and `192.168.*`) receive the dev package so it can be installed alongside the production extension without
 Chrome treating them as the same extension.
+
+The Sources sidebar content script is generated from `src/extension/source-helper` with Svelte. Run
+`npm run build:extension` after editing that source; `npm run build` runs it before the web and server builds. Do not
+hand-edit `extension/chrome-source-helper/content-script.js` except for emergency debugging, because the next extension
+build will replace it.
 
 ## Install or Update
 

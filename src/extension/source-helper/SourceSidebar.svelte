@@ -1,0 +1,145 @@
+<script lang="ts">
+  import Diagnostics from './Diagnostics.svelte';
+  import { sidebarActions, sidebarView, type Candidate, type SourceSession } from './sidebarStore';
+
+  function hostname(url: string) {
+    try {
+      return new URL(url).hostname;
+    } catch {
+      return url;
+    }
+  }
+
+  function captureSecondsRemaining(session: SourceSession) {
+    if (typeof session.activeCaptureUntil !== 'number') {
+      return 0;
+    }
+    return Math.max(0, Math.ceil((session.activeCaptureUntil - Date.now()) / 1000));
+  }
+
+  function captureButtonLabel(session: SourceSession) {
+    if ($sidebarView.capturePending) {
+      return 'Capturing...';
+    }
+    const remainingSeconds = captureSecondsRemaining(session);
+    return remainingSeconds > 0 ? `Listening... ${remainingSeconds}s` : 'Capture now';
+  }
+
+  function sessionDisplayStatus(session: SourceSession) {
+    if (session.status === 'selected') {
+      return 'selected';
+    }
+    const remainingSeconds = captureSecondsRemaining(session);
+    return remainingSeconds > 0 ? `listening ${remainingSeconds}s` : 'waiting for playback';
+  }
+
+  function candidateType(candidate: Candidate) {
+    return candidate.contentType ?? candidate.manifestType ?? 'unknown type';
+  }
+
+  function buttonLabel(candidate: Candidate, selected: boolean, selectingUrls: string[]) {
+    if (selected) {
+      return 'Selected';
+    }
+    return selectingUrls.includes(candidate.url) ? 'Selecting...' : 'Use source';
+  }
+
+  function emptyMessage(session: SourceSession | null) {
+    if (!session) {
+      return {
+        detail: 'Go back to shv and click Choose source.',
+        title: 'No active job.'
+      };
+    }
+    if (captureSecondsRemaining(session) > 0) {
+      return {
+        detail: 'Keep the video playing or seek so the player makes a fresh media request.',
+        title: 'Listening for media sources...'
+      };
+    }
+    return {
+      detail: 'Start the main video, then use Capture now if the player is embedded or hidden from the page.',
+      title: 'No active media sources yet.'
+    };
+  }
+</script>
+
+<aside class="panel" aria-label="shv sources">
+  <header>
+    <div>
+      <h1>Sources</h1>
+      <p>{$sidebarView.status}</p>
+    </div>
+    <button class="icon-button" type="button" aria-label="Close sources" onclick={sidebarActions.close}>x</button>
+  </header>
+
+  {#if $sidebarView.session}
+    {@const session = $sidebarView.session}
+    <section class="job">
+      <strong>{session.titleHint || hostname(session.sourceUrl)}</strong>
+      <span>{session.sourceUrl}</span>
+      {#if session.status !== 'selected'}
+        <button
+          class="capture-button"
+          disabled={$sidebarView.capturePending || captureSecondsRemaining(session) > 0}
+          type="button"
+          onclick={sidebarActions.startCapture}
+        >
+          {captureButtonLabel(session)}
+        </button>
+      {/if}
+    </section>
+  {/if}
+
+  <section class="sources">
+    {#if !$sidebarView.session || $sidebarView.session.candidates.length === 0}
+      {@const message = emptyMessage($sidebarView.session)}
+      <div class="empty">
+        <strong>{message.title}</strong>
+        <p>{message.detail}</p>
+      </div>
+      <Diagnostics session={$sidebarView.session} />
+    {:else}
+      {@const selected = $sidebarView.session.status === 'selected'}
+      {#each $sidebarView.session.candidates as candidate (candidate.url)}
+        <article
+          class:is-highlighted={$sidebarView.highlightedUrl === candidate.url}
+          class="source"
+          data-highlight-kind={candidate.kind}
+          data-highlight-source={candidate.url}
+          data-source-card="true"
+          data-source-url={candidate.url}
+          onblur={(event) => {
+            if (!(event.currentTarget instanceof HTMLElement) || event.currentTarget.contains(event.relatedTarget as Node | null)) {
+              return;
+            }
+            sidebarActions.clearHighlight();
+          }}
+          onfocus={() => sidebarActions.highlight(candidate.url)}
+          onmouseout={(event) => {
+            if (!(event.currentTarget instanceof HTMLElement) || event.currentTarget.contains(event.relatedTarget as Node | null)) {
+              return;
+            }
+            sidebarActions.clearHighlight();
+          }}
+          onmouseover={() => sidebarActions.highlight(candidate.url)}
+        >
+          <div class="source-top">
+            <strong>{candidate.kind}</strong>
+            <span>{Math.round(candidate.confidence * 100)}%</span>
+          </div>
+          <p>{candidateType(candidate)}</p>
+          <code>{candidate.url}</code>
+          <button
+            disabled={selected || $sidebarView.selectingUrls.includes(candidate.url)}
+            type="button"
+            onclick={() => sidebarActions.selectSource(candidate.url)}
+          >
+            {buttonLabel(candidate, selected, $sidebarView.selectingUrls)}
+          </button>
+        </article>
+      {/each}
+      <Diagnostics session={$sidebarView.session} />
+    {/if}
+  </section>
+</aside>

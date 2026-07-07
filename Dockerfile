@@ -18,7 +18,7 @@ RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
 RUN npx playwright install --with-deps chromium
 
 # Keep build inputs explicit so docs/tests changes do not invalidate the image build cache.
-COPY tsconfig.json tsconfig.server.json vite.config.ts ./
+COPY tsconfig.json tsconfig.server.json vite.config.ts vite.extension.config.ts ./
 COPY src ./src
 COPY extension ./extension
 RUN npm run build

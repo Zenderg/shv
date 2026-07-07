@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "shv Source Helper",
-  "version": "1.0.22",
+  "version": "1.0.23",
   "description": "Opens source pages in Chromium browsers and captures media candidates for shv.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvqHAzC8s2K9edGvz9/UsG/c02eQu0OeYMWPxGBoSwEltPU+9lLSr5CkD9dgA2XeUw3TfpGGFIN2S83VWblwD6SWViJ9gxWbanN4c13QD3ZQkppptcDZuR1wS+sdZI+01dmBjuNI/4mx9NaXwCSaI9hTb+i0qBYeVxQTQX+D2k/urYg8PO7W/Q1lEAiW4rNi94vfhNVfBzIs095uuoDF4AvclwkD5tJz64pL6Vw7XW8ILoME7+PwvQQs6uqmhFr7uiHmJ549Aj5332f8N6KU7Z2DTdaXkoc03IgMMbiMxvUJ0oMldF3BZA6ZxpBL5WnTLCk8cAxtjUg1tluvO+793kwIDAQAB",
   "action": {

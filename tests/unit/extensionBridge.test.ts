@@ -51,7 +51,7 @@ describe('extension bridge', () => {
 
   test('sends runtime messages to the local dev extension id from localhost', async () => {
     const sendMessage = vi.fn((_extensionId: string, _message: unknown, callback: (response: unknown) => void) => {
-      callback({ installed: true, protocolVersion: 1, version: '1.0.22' });
+      callback({ installed: true, protocolVersion: 1, version: '1.0.23' });
     });
 
     globalThis.window = {
@@ -73,7 +73,7 @@ describe('extension bridge', () => {
       setTimeout: globalThis.setTimeout.bind(globalThis)
     } as unknown as Window & typeof globalThis;
 
-    await expect(checkSourceExtension()).resolves.toEqual({ kind: 'ready', version: '1.0.22' });
+    await expect(checkSourceExtension()).resolves.toEqual({ kind: 'ready', version: '1.0.23' });
 
     expect(sendMessage).toHaveBeenCalledWith(
       DEV_SOURCE_EXTENSION_ID,
@@ -158,11 +158,11 @@ describe('extension bridge', () => {
         channel: 'SHV_SOURCE_HELPER_RESPONSE',
         extensionId: DEV_SOURCE_EXTENSION_ID,
         requestId: payload.requestId,
-        response: { installed: true, protocolVersion: 1, version: '1.0.22' }
+        response: { installed: true, protocolVersion: 1, version: '1.0.23' }
       },
       source: window
     } as unknown as MessageEvent);
 
-    await expect(statusPromise).resolves.toEqual({ kind: 'ready', version: '1.0.22' });
+    await expect(statusPromise).resolves.toEqual({ kind: 'ready', version: '1.0.23' });
   });
 });
