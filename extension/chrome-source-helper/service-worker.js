@@ -205,7 +205,7 @@ async function resolveAppTabId(sender) {
   if (!isAppUrl(sender?.url)) {
     return null;
   }
-  const tabs = await chrome.tabs.query({ url: ['http://127.0.0.1:8080/*', 'http://localhost:8080/*'] }).catch(() => []);
+  const tabs = await chrome.tabs.query({ url: [`${APP_ORIGIN}/*`] }).catch(() => []);
   const exact = tabs.find((tab) => tab.url === sender.url);
   return exact?.id ?? tabs.find((tab) => tab.active)?.id ?? tabs[0]?.id ?? null;
 }
@@ -216,10 +216,7 @@ function isAppUrl(url) {
   }
   try {
     const parsed = new URL(url);
-    return (
-      (parsed.hostname === '127.0.0.1' || parsed.hostname === 'localhost') &&
-      parsed.port === new URL(APP_ORIGIN).port
-    );
+    return parsed.origin === APP_ORIGIN;
   } catch {
     return false;
   }

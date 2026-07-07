@@ -106,13 +106,15 @@ export function createRouter(services: RouteServices): Router {
     response.json(services.jobs.snapshot());
   });
 
-  router.get('/extension/shv-source-helper.zip', (_request, response) => {
+  router.get('/extension/shv-source-helper.zip', (request, response) => {
     const extensionRoot = path.resolve(process.cwd(), 'extension/chrome-source-helper');
     if (!fs.existsSync(extensionRoot)) {
       response.status(404).json({ error: 'extension_artifact_not_found' });
       return;
     }
-    const archive = buildZipArchive(listZipEntries(extensionRoot, 'shv-source-helper'));
+    const archive = buildZipArchive(
+      extensionZipEntries(extensionRoot, 'shv-source-helper', appOriginForExtension(request, services.config))
+    );
     response.setHeader('Cache-Control', 'no-store');
     response.setHeader('Content-Disposition', 'attachment; filename="shv-source-helper.zip"');
     response.type('zip').send(archive);
@@ -260,6 +262,82 @@ function listZipEntries(root: string, prefix: string): ZipEntryInput[] {
   };
   visit(root);
   return entries;
+}
+
+export function extensionZipEntries(root: string, prefix: string, appOrigin: string): ZipEntryInput[] {
+  return listZipEntries(root, prefix).map((entry) => {
+    if (entry.name === `${prefix}/manifest.json`) {
+      const manifest = JSON.parse(entry.data.toString('utf8')) as {
+        externally_connectable?: { matches?: string[] };
+        host_permissions?: string[];
+      };
+      manifest.externally_connectable = {
+        ...manifest.externally_connectable,
+        matches: uniqueStrings([...(manifest.externally_connectable?.matches ?? []), `${appOrigin}/*`])
+      };
+      manifest.host_permissions = uniqueStrings([...(manifest.host_permissions ?? []), `${appOrigin}/*`]);
+      return { ...entry, data: Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`) };
+    }
+    if (entry.name === `${prefix}/shared.js`) {
+      const source = entry.data.toString('utf8').replace(
+        /^export const APP_ORIGIN = '[^']+';/m,
+        `export const APP_ORIGIN = '${appOrigin}';`
+      );
+      return { ...entry, data: Buffer.from(source) };
+    }
+    return entry;
+  });
+}
+
+function appOriginForExtension(request: Request, config: AppConfig): string {
+  if (config.publicOrigin) {
+    return config.publicOrigin;
+  }
+
+  const requestHost = firstHeaderValue(request.get('host'));
+  const forwardedHost = firstHeaderValue(request.get('x-forwarded-host'));
+  const candidateHosts = new Set([requestHost, forwardedHost].filter(Boolean));
+  const refererOrigin = trustedHeaderOrigin(request.get('referer'), candidateHosts);
+  if (refererOrigin) {
+    return refererOrigin;
+  }
+  const originHeader = trustedHeaderOrigin(request.get('origin'), candidateHosts);
+  if (originHeader) {
+    return originHeader;
+  }
+
+  const protocol = firstHeaderValue(request.get('x-forwarded-proto')) ?? request.protocol;
+  const host = forwardedHost ?? requestHost ?? `127.0.0.1:${config.port}`;
+  return normalizeHttpOrigin(`${protocol}://${host}`);
+}
+
+function trustedHeaderOrigin(value: string | undefined, trustedHosts: Set<string | undefined>): string | null {
+  if (!value) {
+    return null;
+  }
+  try {
+    const origin = normalizeHttpOrigin(value);
+    const host = new URL(origin).host;
+    return trustedHosts.has(host) ? origin : null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeHttpOrigin(value: string): string {
+  const parsed = new URL(value);
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error('extension app origin must use http or https');
+  }
+  return parsed.origin;
+}
+
+function firstHeaderValue(value: string | undefined): string | undefined {
+  return value?.split(',')[0]?.trim() || undefined;
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values)];
 }
 
 function candidateDraftSchema(): z.ZodType<CandidateDraft> {

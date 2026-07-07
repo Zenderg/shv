@@ -8,6 +8,11 @@ The current extension package is served by the running app:
 http://127.0.0.1:8080/extension/shv-source-helper.zip
 ```
 
+The downloaded package is tailored to the app origin that served it. In production, download it from the same URL where
+the app is open so the extension manifest allows that origin and the service worker posts candidates back to that
+origin. If the app runs behind a reverse proxy that hides the public scheme or host from Node, set `PUBLIC_APP_ORIGIN`
+to the browser-visible origin, for example `https://videos.example.com`.
+
 ## Install or Update
 
 1. Download the zip from the running app.
@@ -50,7 +55,9 @@ Capture now should show a short Listening state. If the list stays empty, keep p
 
 ## Cookies and Request Context
 
-Some sites require an authenticated browser session. When `Use source` is clicked, the Chrome extension collects cookies for the source page and selected media URLs, sends only those cookies to the local app at `127.0.0.1:8080`, and adds a `Cookie` header to matching media candidates.
+Some sites require an authenticated browser session. When `Use source` is clicked, the Chrome extension collects cookies
+for the source page and selected media URLs, sends only those cookies to the app origin embedded in the downloaded
+extension package, and adds a `Cookie` header to matching media candidates.
 
 The backend merges uploaded cookies into the Netscape-format file at `./data/app/youtube-cookies.txt` on the host so `yt-dlp` can use them for YouTube and other site-specific extractors. Set `YTDLP_COOKIES_FILE` only when the container should use a different mounted cookie-file path. The extension does not upload the whole browser cookie jar.
 

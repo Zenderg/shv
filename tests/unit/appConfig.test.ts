@@ -27,4 +27,13 @@ describe('loadAppConfig', () => {
 
     expect(config.ytDlpCookiesPath).toBe('/cookies/youtube.txt');
   });
+
+  test('normalizes the public app origin override', () => {
+    const config = loadAppConfig({
+      APP_DATA_ROOT: '/data/app',
+      PUBLIC_APP_ORIGIN: 'https://prod.example.test/app'
+    } as NodeJS.ProcessEnv);
+
+    expect(config.publicOrigin).toBe('https://prod.example.test');
+  });
 });

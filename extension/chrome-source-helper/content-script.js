@@ -81,7 +81,7 @@ if (IS_TOP_FRAME) {
     if (event.source !== window || event.data?.channel !== 'SHV_SOURCE_HELPER') {
       return;
     }
-    chrome.runtime.sendMessage(event.data.message, (response) => {
+    sendRuntimeMessage(event.data.message, (response) => {
       window.postMessage(
         {
           channel: 'SHV_SOURCE_HELPER_RESPONSE',
@@ -211,7 +211,7 @@ function stopRenderTimer() {
 async function renderSidebar() {
   ensureSidebar();
   const sequence = ++renderSequence;
-  const response = await chrome.runtime.sendMessage({ type: 'SHV_GET_PANEL_STATE' });
+  const response = await sendRuntimeMessage({ type: 'SHV_GET_PANEL_STATE' });
   if (sequence !== renderSequence) {
     return;
   }
@@ -361,7 +361,7 @@ async function selectSource(url, button) {
   button.disabled = true;
   button.textContent = 'Selecting...';
   try {
-    const result = await chrome.runtime.sendMessage({
+    const result = await sendRuntimeMessage({
       tabId: sidebarTabId,
       type: 'SHV_SELECT_SOURCE',
       url
@@ -383,7 +383,7 @@ async function startManualCapture(button) {
   button.disabled = true;
   button.textContent = 'Capturing...';
   try {
-    const result = await chrome.runtime.sendMessage({
+    const result = await sendRuntimeMessage({
       tabId: sidebarTabId,
       type: 'SHV_START_CAPTURE'
     });
@@ -649,7 +649,7 @@ function collectAndSendCandidates() {
   lastPlaybackSignalAt = now;
 
   const candidates = activeVideoCandidates(activeVideo);
-  chrome.runtime.sendMessage({
+  void sendRuntimeMessage({
     candidates,
     currentSrc: activeVideo.currentSrc || activeVideo.src || null,
     protocolVersion: PROTOCOL_VERSION,
@@ -663,11 +663,25 @@ function sendPlaybackDiagnostics() {
     return;
   }
   lastDiagnosticSignalAt = now;
-  Promise.resolve(chrome.runtime.sendMessage({
+  void sendRuntimeMessage({
     diagnostic: playbackDiagnostic(),
     protocolVersion: PROTOCOL_VERSION,
     type: 'SHV_PLAYBACK_DIAGNOSTIC'
-  })).catch(() => undefined);
+  });
+}
+
+function sendRuntimeMessage(message, callback) {
+  try {
+    if (typeof chrome === 'undefined' || !chrome.runtime?.id) {
+      callback?.(null);
+      return Promise.resolve(null);
+    }
+    const result = chrome.runtime.sendMessage(message, callback);
+    return callback ? Promise.resolve(null) : Promise.resolve(result).catch(() => null);
+  } catch {
+    callback?.(null);
+    return Promise.resolve(null);
+  }
 }
 
 function playbackDiagnostic() {

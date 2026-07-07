@@ -110,11 +110,11 @@ describe('extension bridge', () => {
       data: {
         channel: 'SHV_SOURCE_HELPER_RESPONSE',
         requestId: payload.requestId,
-        response: { installed: true, protocolVersion: 1, version: '1.0.21' }
+        response: { installed: true, protocolVersion: 1, version: '1.0.22' }
       },
       source: window
     } as unknown as MessageEvent);
 
-    await expect(statusPromise).resolves.toEqual({ kind: 'ready', version: '1.0.21' });
+    await expect(statusPromise).resolves.toEqual({ kind: 'ready', version: '1.0.22' });
   });
 });

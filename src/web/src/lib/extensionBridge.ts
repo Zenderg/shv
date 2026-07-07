@@ -1,5 +1,5 @@
 export const SOURCE_EXTENSION_ID = 'ncgeehcdlbbdgojleaoefhhdinmdhcaf';
-export const SOURCE_EXTENSION_REQUIRED_VERSION = '1.0.21';
+export const SOURCE_EXTENSION_REQUIRED_VERSION = '1.0.22';
 export const SOURCE_EXTENSION_PROTOCOL_VERSION = 1;
 export const SOURCE_EXTENSION_DOWNLOAD_PATH = '/extension/shv-source-helper.zip';
 
