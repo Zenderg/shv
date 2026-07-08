@@ -19,7 +19,7 @@ export function sidebarCss() {
       border-left: 1px solid rgba(23, 33, 29, 0.12);
       box-shadow: -14px 0 32px rgba(15, 23, 42, 0.18);
       display: grid;
-      grid-template-rows: auto auto 1fr;
+      grid-template-rows: auto auto minmax(0, 1fr);
       height: 100vh;
       overflow: hidden;
       width: min(100vw, ${SIDEBAR_WIDTH}px);
@@ -118,6 +118,10 @@ export function sidebarCss() {
       margin-top: 18px;
     }
 
+    .session-meta {
+      min-width: 0;
+    }
+
     .job {
       background: #ffffff;
       border-top: 1px solid rgba(23, 33, 29, 0.08);
@@ -153,8 +157,10 @@ export function sidebarCss() {
     }
 
     .sources {
+      align-content: start;
       display: grid;
       gap: 10px;
+      min-height: 0;
       overflow: auto;
       padding: 12px;
     }
@@ -206,8 +212,6 @@ export function sidebarCss() {
       display: block;
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
       font-size: 12px;
-      max-height: 82px;
-      overflow: auto;
       overflow-wrap: anywhere;
     }
 

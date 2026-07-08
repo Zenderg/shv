@@ -103,28 +103,30 @@
       </div>
     </header>
 
-    {#if $sidebarView.session}
-      {@const session = $sidebarView.session}
-      <section class="job">
-        <strong>{session.titleHint || hostname(session.sourceUrl)}</strong>
-        <span>{session.sourceUrl}</span>
-        {#if session.status !== 'selected'}
-          <button
-            class:capturing={$sidebarView.capturePending}
-            class="capture-button"
-            disabled={$sidebarView.capturePending || captureSecondsRemaining(session) > 0}
-            type="button"
-            onclick={sidebarActions.startCapture}
-          >
-            {captureButtonLabel(session)}
-          </button>
-        {/if}
-      </section>
-    {/if}
+    <div class="session-meta">
+      {#if $sidebarView.session}
+        {@const session = $sidebarView.session}
+        <section class="job">
+          <strong>{session.titleHint || hostname(session.sourceUrl)}</strong>
+          <span>{session.sourceUrl}</span>
+          {#if session.status !== 'selected'}
+            <button
+              class:capturing={$sidebarView.capturePending}
+              class="capture-button"
+              disabled={$sidebarView.capturePending || captureSecondsRemaining(session) > 0}
+              type="button"
+              onclick={sidebarActions.startCapture}
+            >
+              {captureButtonLabel(session)}
+            </button>
+          {/if}
+        </section>
+      {/if}
 
-    {#if $sidebarView.selectionError}
-      <p class="selection-error" role="alert">{$sidebarView.selectionError}</p>
-    {/if}
+      {#if $sidebarView.selectionError}
+        <p class="selection-error" role="alert">{$sidebarView.selectionError}</p>
+      {/if}
+    </div>
 
     <section class="sources">
       {#if !$sidebarView.session || $sidebarView.session.candidates.length === 0}

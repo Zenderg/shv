@@ -1,5 +1,5 @@
 export const PROTOCOL_VERSION = 1;
-export const EXTENSION_VERSION = '1.0.29';
+export const EXTENSION_VERSION = '1.0.30';
 export const APP_ORIGIN = 'http://127.0.0.1:8080';
 
 const VIDEO_EXTENSIONS = ['.mp4', '.webm', '.mov', '.m4v', '.mkv'];

@@ -5,6 +5,13 @@ import { describe, expect, test } from 'vitest';
 const sourceSidebarSource = readFileSync(resolve(process.cwd(), 'src/extension/source-helper/SourceSidebar.svelte'), 'utf8');
 const contentScriptSource = readFileSync(resolve(process.cwd(), 'src/extension/source-helper/contentScript.ts'), 'utf8');
 const diagnosticsSource = readFileSync(resolve(process.cwd(), 'src/extension/source-helper/Diagnostics.svelte'), 'utf8');
+const sidebarStylesSource = readFileSync(resolve(process.cwd(), 'src/extension/source-helper/sidebarStyles.ts'), 'utf8');
+
+function cssBlock(selector: string) {
+  const pattern = new RegExp(`${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} \\{([\\s\\S]*?)\\n    \\}`);
+  const match = sidebarStylesSource.match(pattern);
+  return match?.[1] ?? '';
+}
 
 describe('source helper sidebar source', () => {
   test('exposes a single control that collapses and expands the sidebar', () => {
@@ -66,5 +73,16 @@ describe('source helper sidebar source', () => {
     expect(sourceSidebarSource).toContain('<ChevronRightIcon />');
     expect(sourceSidebarSource).toContain('<CloseIcon />');
     expect(sourceSidebarSource).toContain('class:capturing={$sidebarView.capturePending}');
+  });
+
+  test('keeps the candidate list as the only vertical scroll container', () => {
+    const sourcesBlock = cssBlock('.sources');
+    const codeBlock = cssBlock('.source code');
+
+    expect(sidebarStylesSource).toContain('grid-template-rows: auto auto minmax(0, 1fr);');
+    expect(sourcesBlock).toContain('min-height: 0;');
+    expect(sourcesBlock).toContain('overflow: auto;');
+    expect(codeBlock).not.toContain('overflow: auto;');
+    expect(codeBlock).not.toContain('max-height:');
   });
 });
