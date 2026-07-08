@@ -6,6 +6,7 @@ const sourceSidebarSource = readFileSync(resolve(process.cwd(), 'src/extension/s
 const contentScriptSource = readFileSync(resolve(process.cwd(), 'src/extension/source-helper/contentScript.ts'), 'utf8');
 const diagnosticsSource = readFileSync(resolve(process.cwd(), 'src/extension/source-helper/Diagnostics.svelte'), 'utf8');
 const sidebarStylesSource = readFileSync(resolve(process.cwd(), 'src/extension/source-helper/sidebarStyles.ts'), 'utf8');
+const appSource = readFileSync(resolve(process.cwd(), 'src/web/src/App.tsx'), 'utf8');
 
 function cssBlock(selector: string) {
   const pattern = new RegExp(`${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} \\{([\\s\\S]*?)\\n    \\}`);
@@ -34,7 +35,7 @@ describe('source helper sidebar source', () => {
 
   test('labels only the chosen candidate as selected after source selection', () => {
     expect(sourceSidebarSource).toContain('selectedUrl');
-    expect(sourceSidebarSource).toContain("return selectedUrl === candidate.url ? 'Selected' : 'Locked'");
+    expect(sourceSidebarSource).toContain('sourceSelectionButtonLabel');
   });
 
   test('shows source selection failures in the sidebar', () => {
@@ -95,5 +96,10 @@ describe('source helper sidebar source', () => {
     expect(sourcesBlock).toContain('overflow: auto;');
     expect(codeBlock).not.toContain('overflow: auto;');
     expect(codeBlock).not.toContain('max-height:');
+  });
+
+  test('does not surface backend candidate counts in the main choose-source action', () => {
+    expect(appSource).toContain('Choose source');
+    expect(appSource).not.toContain('Choose source (');
   });
 });

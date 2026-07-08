@@ -15,6 +15,12 @@ export type Candidate = {
 
 export type SourceSession = {
   activeCaptureUntil: number | null;
+  activePlaybackUntil?: number | null;
+  activePlaybackMetadata?: {
+    currentSrc: string | null;
+    durationSeconds: number | null;
+    resolution: string | null;
+  } | null;
   candidates: Candidate[];
   currentUrl?: string | null;
   diagnostics?: {
@@ -22,6 +28,7 @@ export type SourceSession = {
     playback?: Record<string, unknown> | null;
   };
   jobId: string;
+  playbackState?: 'active' | 'inactive' | null;
   selectedUrl?: string | null;
   sourceUrl: string;
   status: string;

@@ -1,9 +1,11 @@
 <script lang="ts">
   import Diagnostics from './Diagnostics.svelte';
+  import { visibleSidebarCandidates } from './candidateDisplay';
   import ChevronLeftIcon from './ChevronLeftIcon.svelte';
   import ChevronRightIcon from './ChevronRightIcon.svelte';
   import CloseIcon from './CloseIcon.svelte';
   import { sidebarActions, sidebarView, type Candidate, type SourceSession } from './sidebarStore';
+  import { sourceSelectionButtonLabel, sourceSelectionDisabledReason } from './sourceSelection';
 
   function hostname(url: string) {
     try {
@@ -46,13 +48,6 @@
       parts.push('resolution unavailable');
     }
     return parts.join(' / ');
-  }
-
-  function buttonLabel(candidate: Candidate, sourceSelected: boolean, selectingUrls: string[], selectedUrl: string | null | undefined) {
-    if (sourceSelected) {
-      return selectedUrl === candidate.url ? 'Selected' : 'Locked';
-    }
-    return selectingUrls.includes(candidate.url) ? 'Selecting...' : 'Use source';
   }
 
   function collapseButtonLabel(collapsed: boolean) {
@@ -137,7 +132,7 @@
     </div>
 
     <section class="sources">
-      {#if !$sidebarView.session || $sidebarView.session.candidates.length === 0}
+      {#if !$sidebarView.session || visibleSidebarCandidates($sidebarView.session).length === 0}
         {@const message = emptyMessage($sidebarView.session)}
         <div class="empty">
           <strong>{message.title}</strong>
@@ -146,7 +141,8 @@
         <Diagnostics session={$sidebarView.session} />
       {:else}
         {@const sourceSelected = $sidebarView.session.status === 'selected'}
-        {#each $sidebarView.session.candidates as candidate (candidate.url)}
+        {@const disabledReason = sourceSelectionDisabledReason($sidebarView.session)}
+        {#each visibleSidebarCandidates($sidebarView.session) as candidate (candidate.url)}
           {@const candidateSelected = sourceSelected && $sidebarView.session.selectedUrl === candidate.url}
           <article
             class:is-highlighted={$sidebarView.highlightedUrl === candidate.url}
@@ -185,11 +181,11 @@
             <p>{candidateType(candidate, $sidebarView.probingResolutionUrls, $sidebarView.resolutionUnavailableUrls)}</p>
             <code>{candidate.url}</code>
             <button
-              disabled={sourceSelected || $sidebarView.selectingUrls.includes(candidate.url)}
+              disabled={sourceSelected || Boolean(disabledReason) || $sidebarView.selectingUrls.includes(candidate.url)}
               type="button"
               onclick={() => sidebarActions.selectSource(candidate.url)}
             >
-              {buttonLabel(candidate, sourceSelected, $sidebarView.selectingUrls, $sidebarView.session.selectedUrl)}
+              {sourceSelectionButtonLabel(candidate, $sidebarView.session, $sidebarView.selectingUrls)}
             </button>
           </article>
         {/each}

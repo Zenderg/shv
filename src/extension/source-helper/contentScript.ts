@@ -1,5 +1,6 @@
 import { mount } from 'svelte';
 import { APP_ORIGIN, candidateFromUrl, candidateFromVerifiedVideoUrl, PROTOCOL_VERSION } from '../../../extension/chrome-source-helper/shared.js';
+import { visibleSidebarCandidates } from './candidateDisplay';
 import SourceSidebar from './SourceSidebar.svelte';
 import { HIGHLIGHT_PADDING, SIDEBAR_COLLAPSED_WIDTH, SIDEBAR_WIDTH, sidebarCss } from './sidebarStyles';
 import { setSidebarActions, sidebarView, type Candidate, type SourceSession } from './sidebarStore';
@@ -230,6 +231,7 @@ async function renderSidebar() {
 }
 
 function updateSidebarView(session: SourceSession | null) {
+  const visibleCandidateCount = visibleSidebarCandidates(session).length;
   sidebarView.set({
     capturePending,
     collapsed: sidebarCollapsed,
@@ -239,7 +241,7 @@ function updateSidebarView(session: SourceSession | null) {
     selectingUrls: [...selectingSourceUrls],
     selectionError,
     session,
-    status: session ? `${session.candidates.length} active / ${sessionDisplayStatus(session)}` : 'Open a source from shv'
+    status: session ? `${visibleCandidateCount} active / ${sessionDisplayStatus(session)}` : 'Open a source from shv'
   });
 }
 
@@ -549,7 +551,7 @@ function registerVideoPlaybackListeners() {
         eventName,
         () => {
           if (activeVideoElement === video) {
-            collectAndSendCandidates();
+            handleVideoInactive(video);
           }
         },
         { passive: true }
@@ -568,6 +570,17 @@ function handleVideoActivity(video: HTMLVideoElement) {
 
 function isActivePlaybackVideo(video: HTMLVideoElement) {
   return video instanceof HTMLVideoElement && !video.paused && !video.ended && dominantVideoElement() === video;
+}
+
+function handleVideoInactive(video: HTMLVideoElement) {
+  activeVideoElement = null;
+  lastPlaybackSignalAt = 0;
+  void sendRuntimeMessage({
+    currentSrc: video.currentSrc || video.src || null,
+    playbackMetadata: videoElementMetadata(video),
+    protocolVersion: PROTOCOL_VERSION,
+    type: 'SHV_PLAYBACK_INACTIVE'
+  });
 }
 
 function collectAndSendCandidates() {

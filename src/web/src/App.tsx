@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { SourceExtensionKind } from '../../shared/sourceExtension';
-import { api, type Category, type DownloadJob, type MediaCandidate, type MediaItem, type QueueSnapshot } from './lib/api';
+import { api, type Category, type DownloadJob, type MediaItem, type QueueSnapshot } from './lib/api';
 import {
   SOURCE_EXTENSION_PROTOCOL_VERSION,
   SOURCE_EXTENSION_REQUIRED_VERSION,
@@ -331,7 +331,6 @@ export function App() {
         ) : (
           <QueuePanel
             busyJobIds={queueActionJobIds}
-            candidatesByJobId={queue.candidatesByJobId}
             jobs={queue.jobs}
             onCancel={(job) =>
               runQueueAction(job, 'Canceling', async () => {
@@ -624,7 +623,6 @@ function LibraryGrid({
 
 function QueuePanel({
   busyJobIds,
-  candidatesByJobId,
   jobs,
   onCancel,
   onDelete,
@@ -632,7 +630,6 @@ function QueuePanel({
   onRetry
 }: {
   busyJobIds: Record<string, string>;
-  candidatesByJobId: Record<string, MediaCandidate[]>;
   jobs: DownloadJob[];
   onCancel: (job: DownloadJob) => void;
   onDelete: (job: DownloadJob) => void;
@@ -662,7 +659,7 @@ function QueuePanel({
             <div className="jobActions">
               {job.status === 'needs_manual_selection' || job.status === 'failed' ? (
                 <button disabled={actionBusy} onClick={() => onManual(job)} type="button">
-                  {actionLabel ?? `Choose source (${candidatesByJobId[job.id]?.length ?? 0})`}
+                  {actionLabel ?? 'Choose source'}
                 </button>
               ) : null}
               {canRetry ? (

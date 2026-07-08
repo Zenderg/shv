@@ -100,7 +100,7 @@ YouTube page URLs are handled by the backend `yt-dlp` source extractor. Do not r
 
 ## Embedded Players
 
-The extension statically loads the content script only on the app origin so the app-page bridge can work. Source pages are injected programmatically when the app opens a source tab or the user toggles the extension action. That source-page injection targets all existing frames, and the service worker also observes new child-frame navigations with `webNavigation` so embedded players created after the sidebar opens, such as VK video inside a Yandex page, can report active playback. Only the top frame owns the visible Sources sidebar and the app bridge.
+The extension statically loads the content script only on the app origin so the app-page bridge can work. Source pages are injected programmatically when the app opens a source tab or the user toggles the extension action. That source-page injection targets all existing frames. The service worker also observes source-tab navigation with `webNavigation`: top-frame commits must restore the visible Sources sidebar after redirects or SPA document swaps, while child-frame commits get content-script injection so embedded players created after the sidebar opens, such as VK video inside a Yandex page, can report active playback. Only the top frame owns the visible Sources sidebar and the app bridge.
 
 Some embedded players do not expose a usable DOM `<video>` to extension content scripts while still streaming media requests. For those cases, start playback and click Capture now in the Sources sidebar; this opens the same short active capture window manually without returning to whole-page passive collection.
 
@@ -126,6 +126,10 @@ Captured network candidates keep a limited downloader header allowlist such as `
 When a user explicitly clicks Use source in the extension, treat the posted candidates as the current source-session snapshot rather than merging them forever with older captures; stale signed HLS URLs can otherwise survive in the queue and race with the selected candidate.
 
 If both master and media HLS playlists are shown, prefer the concrete media playlist such as `index-v1-a1.m3u8`; `master.m3u8` is only a variant playlist and adds an extra signed-manifest fetch before ffmpeg can start reading segments.
+
+The sidebar's visible source list is a presentation layer over the full source-session snapshot. Keep the complete `session.candidates` set available for cookie collection, backend candidate replacement, selection lookup, and debugging, while rendering only the candidates that are actionable for the active playback when the extension has enough player or manifest evidence. For HLS, prefer a concrete media playlist that matches the active playback resolution and hide related master or other-resolution playlists from the ordinary list.
+
+When the active visible player emits `pause` or `ended`, the content script marks the session playback as inactive. Keep the existing candidate snapshot visible for diagnosis, but disable source selection until playback resumes; the service worker must also reject stale `SHV_SELECT_SOURCE` messages so an old sidebar render cannot start a download from a paused player URL. Manual Capture now sessions without visible playback remain selectable while their capture window is active, because some embedded players do not expose a usable DOM `<video>`.
 
 Hovering or focusing a candidate should visually highlight the related media area only when the extension can make a credible match. Direct DOM candidates highlight their matching element; network-only candidates highlight a dominant visible video/player when one is obvious. They intentionally avoid highlighting small preview videos or recommendation tiles, because those URLs often are not present as DOM attributes and a false highlight is worse than no page overlay.
 

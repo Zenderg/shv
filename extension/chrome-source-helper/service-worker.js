@@ -10,6 +10,7 @@ import {
 } from './shared.js';
 
 const ACTIVE_CAPTURE_WINDOW_MS = 30000;
+const ACTIVE_PLAYBACK_WINDOW_MS = 5000;
 const PENDING_NETWORK_BUFFER_MS = 15000;
 const pendingNetworkCandidatesByTab = new Map();
 const hlsMetadataByTab = new Map();
@@ -88,6 +89,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         tabId: sender.tab?.id ?? null
       }).catch(() => undefined);
     }).catch((error) => {
+      sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) });
+    });
+    return true;
+  }
+  if (message?.type === 'SHV_PLAYBACK_INACTIVE' && sender.tab?.id != null) {
+    deactivatePlaybackCapture(sender.tab.id, message.currentSrc).then(sendResponse).catch((error) => {
       sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) });
     });
     return true;
@@ -194,6 +201,7 @@ async function openSourceTab(message, sender) {
       currentUrl: message.sourceUrl,
       diagnostics: emptyDiagnostics(),
       jobId: message.jobId,
+      playbackState: null,
       selectedUrl: null,
       sourceUrl: message.sourceUrl,
       status: 'waiting for playback',
@@ -221,9 +229,11 @@ async function startManualCapture(tabId) {
 async function openCaptureWindow(tabId, candidates, playbackMetadata = null, currentSrc = null) {
   const now = Date.now();
   const activeCaptureUntil = now + ACTIVE_CAPTURE_WINDOW_MS;
+  const activePlaybackUntil = now + ACTIVE_PLAYBACK_WINDOW_MS;
   const pendingCandidates = takePendingNetworkCandidates(tabId, now);
   let session = null;
   const normalizedPlaybackMetadata = normalizePlaybackMetadata(playbackMetadata, currentSrc);
+  const hasPlaybackSignal = playbackMetadata != null || currentSrc != null;
 
   await upsertState((state) => {
     session = state.sessions[String(tabId)];
@@ -231,6 +241,13 @@ async function openCaptureWindow(tabId, candidates, playbackMetadata = null, cur
       return;
     }
     session.activeCaptureUntil = activeCaptureUntil;
+    if (hasPlaybackSignal) {
+      session.activePlaybackUntil = activePlaybackUntil;
+      session.playbackState = 'active';
+    } else if (session.playbackState !== 'inactive') {
+      session.activePlaybackUntil = null;
+      session.playbackState = null;
+    }
     if (normalizedPlaybackMetadata) {
       session.activePlaybackMetadata = normalizedPlaybackMetadata;
     }
@@ -245,6 +262,31 @@ async function openCaptureWindow(tabId, candidates, playbackMetadata = null, cur
   await mergeTabCandidates(tabId, [...pendingCandidates, ...candidates], { requireActive: false });
   notifyPanel(tabId);
   return { captured: pendingCandidates.length + candidates.length, ok: true };
+}
+
+async function deactivatePlaybackCapture(tabId, currentSrc = null) {
+  const normalizedCurrentSrc = normalizedHttpUrl(currentSrc);
+  let changed = false;
+  await upsertState((state) => {
+    const session = state.sessions[String(tabId)];
+    if (!session || session.status === 'selected') {
+      return;
+    }
+    const activeCurrentSrc = session.activePlaybackMetadata?.currentSrc ?? null;
+    if (normalizedCurrentSrc && activeCurrentSrc && !sameUrl(normalizedCurrentSrc, activeCurrentSrc)) {
+      return;
+    }
+    session.activeCaptureUntil = null;
+    session.activePlaybackUntil = null;
+    session.playbackState = 'inactive';
+    session.status = 'waiting for playback';
+    session.updatedAt = new Date().toISOString();
+    changed = true;
+  });
+  if (changed) {
+    notifyPanel(tabId);
+  }
+  return { ok: true };
 }
 
 async function resolveAppTabId(sender) {
@@ -307,6 +349,19 @@ async function injectContentScriptIntoCommittedFrame(details) {
   if (!state.sessions[String(details.tabId)]) {
     return;
   }
+  if (details.frameId === 0) {
+    await upsertState((nextState) => {
+      const session = nextState.sessions[String(details.tabId)];
+      if (!session) {
+        return;
+      }
+      session.currentUrl = details.url;
+      session.updatedAt = new Date().toISOString();
+    });
+    await showSidebarInTab(details.tabId).catch(() => undefined);
+    notifyPanel(details.tabId);
+    return;
+  }
   await chrome.scripting.executeScript({
     files: ['content-script.js'],
     target: { frameIds: [details.frameId], tabId: details.tabId }
@@ -314,7 +369,7 @@ async function injectContentScriptIntoCommittedFrame(details) {
 }
 
 function isInjectableSourceFrameNavigation(details) {
-  if (!Number.isInteger(details?.tabId) || details.tabId < 0 || !Number.isInteger(details?.frameId) || details.frameId <= 0) {
+  if (!Number.isInteger(details?.tabId) || details.tabId < 0 || !Number.isInteger(details?.frameId) || details.frameId < 0) {
     return false;
   }
   return isHttpUrl(details.url);
@@ -804,6 +859,10 @@ async function selectSource(tabId, url) {
   if (!session) {
     throw new Error('No active source session');
   }
+  const blockedReason = sourceSelectionBlockedReason(session);
+  if (blockedReason) {
+    throw new Error(blockedReason);
+  }
   const cookieSnapshot = await cookieSnapshotForSession(session, url);
   if (cookieSnapshot.cookies.length > 0) {
     await postCookies(session.jobId, cookieSnapshot.cookies);
@@ -831,6 +890,16 @@ async function selectSource(tabId, url) {
   await notifyAppSelection(session.appTabId, session.jobId);
   await focusAppTab(session.appTabId);
   return { ok: true };
+}
+
+function sourceSelectionBlockedReason(session) {
+  if (session.playbackState === 'inactive') {
+    return 'Resume playback before using this source';
+  }
+  if (typeof session.activePlaybackUntil === 'number' && session.activePlaybackUntil <= Date.now()) {
+    return 'Resume playback before using this source';
+  }
+  return null;
 }
 
 async function cookieSnapshotForSession(session, selectedUrl) {

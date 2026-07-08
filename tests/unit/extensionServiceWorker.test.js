@@ -504,6 +504,125 @@ index-v1-a1.m3u8`
     expect(JSON.parse(cookieCall[1].body).cookies.map((cookie) => cookie.name).sort()).toEqual(['SID', 'media_session']);
   });
 
+  test('rejects selecting a stale source after active playback pauses', async () => {
+    storage.sourceState.sessions[42] = {
+      ...storage.sourceState.sessions[42],
+      activeCaptureUntil: Date.now() + 30_000,
+      activePlaybackUntil: Date.now() + 5_000,
+      activePlaybackMetadata: {
+        currentSrc: 'https://media.example.test/video.mp4',
+        durationSeconds: 120,
+        resolution: '1920x1080'
+      },
+      candidates: [
+        {
+          bitrate: null,
+          confidence: 0.86,
+          contentType: 'video/mp4',
+          durationSeconds: null,
+          headers: {},
+          kind: 'html-video',
+          manifestType: null,
+          resolution: '1920x1080',
+          sizeBytes: null,
+          url: 'https://media.example.test/video.mp4'
+        }
+      ],
+      playbackState: 'active',
+      status: 'listening'
+    };
+    globalThis.fetch = vi.fn(async () => ({ ok: true, status: 200 }));
+    const inactiveResponse = vi.fn();
+    const selectResponse = vi.fn();
+    await import('../../extension/chrome-source-helper/service-worker.js');
+
+    listeners.runtimeMessage(
+      {
+        currentSrc: 'https://media.example.test/video.mp4',
+        type: 'SHV_PLAYBACK_INACTIVE'
+      },
+      { tab: { id: 42 } },
+      inactiveResponse
+    );
+
+    await vi.waitFor(() => expect(inactiveResponse).toHaveBeenCalledWith({ ok: true }));
+    expect(storage.sourceState.sessions[42]).toMatchObject({
+      activeCaptureUntil: null,
+      activePlaybackUntil: null,
+      playbackState: 'inactive',
+      status: 'waiting for playback'
+    });
+
+    listeners.runtimeMessage(
+      { tabId: 42, type: 'SHV_SELECT_SOURCE', url: 'https://media.example.test/video.mp4' },
+      { tab: { id: 42 } },
+      selectResponse
+    );
+
+    await vi.waitFor(() => expect(selectResponse).toHaveBeenCalledWith(expect.objectContaining({ ok: false })));
+    expect(selectResponse.mock.calls[0][0].error).toMatch(/resume playback/i);
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  test('keeps manual capture selectable when playback visibility becomes unknown', async () => {
+    storage.sourceState.sessions[42] = {
+      ...storage.sourceState.sessions[42],
+      activeCaptureUntil: null,
+      activePlaybackUntil: Date.now() - 1_000,
+      candidates: [
+        {
+          bitrate: null,
+          confidence: 0.86,
+          contentType: 'video/mp4',
+          durationSeconds: null,
+          headers: {},
+          kind: 'browser-request',
+          manifestType: null,
+          resolution: null,
+          sizeBytes: null,
+          url: 'https://media.example.test/video.mp4'
+        }
+      ],
+      playbackState: 'active',
+      status: 'waiting for playback'
+    };
+    globalThis.fetch = vi.fn(async (url, options) => {
+      const body = options?.body ? JSON.parse(options.body) : {};
+      if (String(url).endsWith('/extension-candidates')) {
+        return {
+          json: async () => body.candidates.map((candidate, index) => ({ ...candidate, id: `candidate-${index}` })),
+          ok: true,
+          status: 200
+        };
+      }
+      return {
+        json: async () => ({ ok: true }),
+        ok: true,
+        status: 200
+      };
+    });
+    const captureResponse = vi.fn();
+    const selectResponse = vi.fn();
+    await import('../../extension/chrome-source-helper/service-worker.js');
+
+    listeners.runtimeMessage({ tabId: 42, type: 'SHV_START_CAPTURE' }, { tab: { id: 42 } }, captureResponse);
+
+    await vi.waitFor(() => expect(captureResponse).toHaveBeenCalledWith({ captured: 0, ok: true }));
+    expect(storage.sourceState.sessions[42]).toMatchObject({
+      activePlaybackUntil: null,
+      playbackState: null,
+      status: 'listening'
+    });
+
+    listeners.runtimeMessage(
+      { tabId: 42, type: 'SHV_SELECT_SOURCE', url: 'https://media.example.test/video.mp4' },
+      { tab: { id: 42 } },
+      selectResponse
+    );
+
+    await vi.waitFor(() => expect(selectResponse).toHaveBeenCalledWith({ ok: true }));
+  });
+
   test('does not let a source tab select a different tab session by spoofing tabId', async () => {
     storage.sourceState.sessions[43] = {
       ...storage.sourceState.sessions[42],
@@ -639,5 +758,29 @@ index-v1-a1.m3u8`
         target: { frameIds: [12], tabId: 42 }
       })
     );
+  });
+
+  test('restores the visible sidebar after a source tab top-frame navigation', async () => {
+    await import('../../extension/chrome-source-helper/service-worker.js');
+
+    listeners.navigationCommitted({
+      frameId: 0,
+      tabId: 42,
+      url: 'https://www.youtube.com/watch?v=next'
+    });
+
+    await vi.waitFor(() =>
+      expect(globalThis.chrome.scripting.executeScript).toHaveBeenCalledWith({
+        files: ['content-script.js'],
+        target: { allFrames: true, tabId: 42 }
+      })
+    );
+    await vi.waitFor(() =>
+      expect(globalThis.chrome.tabs.sendMessage).toHaveBeenCalledWith(42, {
+        tabId: 42,
+        type: 'SHV_SHOW_SIDEBAR'
+      })
+    );
+    expect(storage.sourceState.sessions[42].currentUrl).toBe('https://www.youtube.com/watch?v=next');
   });
 });
