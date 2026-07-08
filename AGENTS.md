@@ -2,11 +2,13 @@
 
 - Work only on the main branch.
 - Do not create or switch to new branches unless the user explicitly asks for a new branch.
+- Exception: when the user provides a GitHub issue URL or issue number and asks to fix it, follow [docs/agent-github-workflows.md](docs/agent-github-workflows.md). That workflow allows creating a dedicated PR branch, pushing it, and opening a pull request without separate branch permission. It does not allow merging.
 - Use subagents at your discretion whenever they are useful.
 - Use conventional commit prefixes for commit messages so releases can be summarized cleanly: `feat:`, `fix:`, `docs:`, `chore:`, `refactor:`, `test:`, or `build:`.
 - Do not write tests for everything by default. Write only genuinely useful tests; the goal is verification, not testing for its own sake or covering everything. Before adding a test, first ask whether that location truly needs one.
 - Implement fallback mechanics only with explicit user permission. Avoid fallbacks when possible because they make debugging harder. If a fallback would be a clear future advantage rather than a likely maintenance problem, stop and ask the user before adding it.
 - When the user says they found a bug, first investigate and identify the exact problem, then implement a fix only after the user approves it. It is acceptable to ask the user to do something manually or inspect something when you cannot do it yourself.
+- When working from a GitHub issue, validate that the issue describes a real, current problem before fixing it. If the issue is invalid, already fixed, unreproducible, or outside project scope, comment on the issue with the finding and close it instead of opening a PR.
 - Record newly discovered project knowledge where future agents can find it. Use README files, focused docs, or concise code comments when appropriate. If the knowledge does not fit an existing document's stated purpose, create a new focused document instead of diluting an unrelated one.
 - Use Docker Compose to run the application. Do not start the project locally outside Docker Compose. Local commands are fine for tests, checks, scripts, and other tasks that are not application startup.
 
