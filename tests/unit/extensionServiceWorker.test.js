@@ -67,6 +67,19 @@ describe('extension service worker', () => {
               }
             ];
           }
+          if (url === 'https://cdn.example.test/alternate.mp4') {
+            return [
+              {
+                domain: 'cdn.example.test',
+                expirationDate: 1893456000,
+                httpOnly: false,
+                name: 'cdn_session',
+                path: '/',
+                secure: true,
+                value: 'cdn-value'
+              }
+            ];
+          }
           return [];
         })
       },
@@ -457,7 +470,7 @@ index-v1-a1.m3u8`
     });
   });
 
-  test('sends relevant browser cookies when a source is selected', async () => {
+  test('sends source and candidate browser cookies when a source is selected', async () => {
     storage.sourceState.sessions[42].candidates = [
       {
         bitrate: null,
@@ -470,6 +483,18 @@ index-v1-a1.m3u8`
         resolution: null,
         sizeBytes: null,
         url: 'https://media.example.test/video.mp4'
+      },
+      {
+        bitrate: null,
+        confidence: 0.7,
+        contentType: 'video/mp4',
+        durationSeconds: null,
+        headers: {},
+        kind: 'browser-request',
+        manifestType: null,
+        resolution: null,
+        sizeBytes: null,
+        url: 'https://cdn.example.test/alternate.mp4'
       }
     ];
     globalThis.fetch = vi.fn(async (url, options) => {
@@ -501,7 +526,12 @@ index-v1-a1.m3u8`
     const candidateCall = globalThis.fetch.mock.calls.find(([url]) => String(url).endsWith('/extension-candidates'));
     const cookieCall = globalThis.fetch.mock.calls.find(([url]) => String(url).endsWith('/cookies'));
     expect(JSON.parse(candidateCall[1].body).candidates[0].headers.Cookie).toBe('media_session=media-value');
-    expect(JSON.parse(cookieCall[1].body).cookies.map((cookie) => cookie.name).sort()).toEqual(['SID', 'media_session']);
+    expect(JSON.parse(candidateCall[1].body).candidates[1].headers.Cookie).toBe('cdn_session=cdn-value');
+    expect(JSON.parse(cookieCall[1].body).cookies.map((cookie) => cookie.name).sort()).toEqual([
+      'SID',
+      'cdn_session',
+      'media_session'
+    ]);
   });
 
   test('rejects selecting a stale source after active playback pauses', async () => {
