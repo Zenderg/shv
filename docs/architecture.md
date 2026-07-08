@@ -2,7 +2,7 @@
 
 `shv` is a Dockerized TypeScript modular monolith. One Express process serves JSON APIs, static frontend assets, video streams, thumbnails, extension packages, and a single-worker download queue.
 
-The product contract lives in [docs/product.md](product.md). This document describes how the current implementation is organized.
+The product contract lives in [docs/product.md](product.md). This document is the source of truth for current implementation structure, module boundaries, storage ownership, and runtime contracts. Put product scope in [docs/product.md](product.md), durable rationale in [docs/decisions.md](decisions.md), and local workflow notes in [docs/development.md](development.md).
 
 ## Runtime Paths
 

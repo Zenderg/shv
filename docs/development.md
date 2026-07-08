@@ -1,5 +1,7 @@
 # Development Notes
 
+This document is the source of truth for local development workflows, checks, seed data, sandbox notes, and repeatable maintenance commands. Put product behavior in [docs/product.md](product.md), implementation contracts in [docs/architecture.md](architecture.md), and release procedure in [docs/releases.md](releases.md).
+
 This project is designed to start through Docker Compose. Local commands are fine for tests, checks, scripts, and other tasks that are not application startup.
 
 ## Docker Compose

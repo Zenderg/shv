@@ -1,8 +1,6 @@
 # Decision Log
 
-This file keeps durable rationale: what we chose, what we rejected, and why. It is not an implementation plan.
-
-Current product behavior lives in [docs/product.md](product.md). Current module contracts live in [docs/architecture.md](architecture.md).
+This file keeps durable rationale: what we chose, what we rejected, and why. It is not an implementation plan, product checklist, changelog, or scratchpad. Put current product behavior in [docs/product.md](product.md), current module contracts in [docs/architecture.md](architecture.md), and local workflow notes in [docs/development.md](development.md).
 
 ## Personal LAN/VPN App, Not A Public Service
 

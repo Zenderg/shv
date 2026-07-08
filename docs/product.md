@@ -2,7 +2,7 @@
 
 `shv` is a personal, self-hosted video library and downloader for a trusted home LAN or VPN.
 
-This document is the product source of truth. Historical implementation plans and one-off design notes should not be used as product specifications after their work has shipped.
+This document is the product source of truth: supported scope, non-goals, user-facing behavior, and deployment assumptions. Put implementation structure in [docs/architecture.md](architecture.md), release procedure in [docs/releases.md](releases.md), and durable rationale in [docs/decisions.md](decisions.md). Historical implementation plans and one-off design notes should not be used as product specifications after their work has shipped.
 
 ## Scope
 

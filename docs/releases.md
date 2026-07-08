@@ -1,5 +1,7 @@
 # Release Workflow
 
+This document is the source of truth for cutting releases, publishing images, and writing final release notes. Put normal development commands in [docs/development.md](development.md), product scope in [docs/product.md](product.md), and durable technical rationale in [docs/decisions.md](decisions.md).
+
 `shv` publishes release images to GitHub Container Registry (GHCR). The release artifact users should deploy is the Docker image, not a source checkout.
 
 ## Release Contract

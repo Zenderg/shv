@@ -1,5 +1,7 @@
 # Browser Extension
 
+This document is the source of truth for the Chromium helper extension's packaging, installation, runtime behavior, and development workflow. Put broad product behavior in [docs/product.md](product.md), backend/frontend module ownership in [docs/architecture.md](architecture.md), and release procedure in [docs/releases.md](releases.md).
+
 Manual source selection uses a local Chromium browser extension so source pages open as normal browser tabs with a live Sources sidebar embedded directly into the page.
 
 The extension packages are served by the running app:
