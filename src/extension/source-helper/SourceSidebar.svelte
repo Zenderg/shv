@@ -147,6 +147,13 @@
               sidebarActions.clearHighlight();
             }}
             onfocus={() => sidebarActions.highlight(candidate.url)}
+            onfocusin={() => sidebarActions.highlight(candidate.url)}
+            onfocusout={(event) => {
+              if (!(event.currentTarget instanceof HTMLElement) || event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                return;
+              }
+              sidebarActions.clearHighlight();
+            }}
             onmouseout={(event) => {
               if (!(event.currentTarget instanceof HTMLElement) || event.currentTarget.contains(event.relatedTarget as Node | null)) {
                 return;

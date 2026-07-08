@@ -149,6 +149,19 @@ describe('extension service worker', () => {
     expect(storage.sourceState.sessions[42].diagnostics.network.lastHeaderKeys).toBe('Referer, User-Agent');
   });
 
+  test('reports missing when the app origin does not match the packaged helper origin', async () => {
+    const sendResponse = vi.fn();
+    await import('../../extension/chrome-source-helper/service-worker.js');
+
+    listeners.runtimeMessageExternal(
+      { protocolVersion: 1, type: 'SHV_HELLO' },
+      { url: 'http://localhost:8080/' },
+      sendResponse
+    );
+
+    expect(sendResponse).toHaveBeenCalledWith(expect.objectContaining({ installed: false }));
+  });
+
   test('serializes concurrent state updates so burst network candidates are not lost', async () => {
     globalThis.chrome.storage.local.get = vi.fn(async () => structuredClone(storage));
     globalThis.chrome.storage.local.set = vi.fn(async (next) => {

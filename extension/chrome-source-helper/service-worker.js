@@ -30,7 +30,11 @@ chrome.action.onClicked.addListener(() => {
 
 chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => {
   if (message?.type === 'SHV_HELLO') {
-    sendResponse({ installed: true, protocolVersion: PROTOCOL_VERSION, version: EXTENSION_VERSION });
+    if (!isAppUrl(sender?.url)) {
+      sendResponse({ appOrigin: APP_ORIGIN, installed: false });
+      return false;
+    }
+    sendResponse({ appOrigin: APP_ORIGIN, installed: true, protocolVersion: PROTOCOL_VERSION, version: EXTENSION_VERSION });
     return false;
   }
 

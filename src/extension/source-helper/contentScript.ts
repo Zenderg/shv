@@ -285,10 +285,14 @@ async function startManualCapture() {
     const result = (await sendRuntimeMessage({
       tabId: sidebarTabId,
       type: 'SHV_START_CAPTURE'
-    })) as { ok?: boolean } | null;
+    })) as { error?: string; ok?: boolean } | null;
     if (result?.ok) {
       void renderSidebar();
+      return;
     }
+    selectionError = result?.error ?? 'Could not start capture. Try closing and reopening the Sources sidebar from shv.';
+  } catch {
+    selectionError = 'Could not start capture. Try closing and reopening the Sources sidebar from shv.';
   } finally {
     capturePending = false;
     updateSidebarView(currentSidebarSession());

@@ -4,6 +4,7 @@ import { describe, expect, test } from 'vitest';
 
 const sourceSidebarSource = readFileSync(resolve(process.cwd(), 'src/extension/source-helper/SourceSidebar.svelte'), 'utf8');
 const contentScriptSource = readFileSync(resolve(process.cwd(), 'src/extension/source-helper/contentScript.ts'), 'utf8');
+const diagnosticsSource = readFileSync(resolve(process.cwd(), 'src/extension/source-helper/Diagnostics.svelte'), 'utf8');
 
 describe('source helper sidebar source', () => {
   test('exposes a single control that collapses and expands the sidebar', () => {
@@ -33,6 +34,21 @@ describe('source helper sidebar source', () => {
     expect(sourceSidebarSource).toContain('role="alert"');
     expect(sourceSidebarSource).toContain('selectionError');
     expect(contentScriptSource).toContain('selectionError =');
+  });
+
+  test('shows manual capture failures in the sidebar', () => {
+    expect(contentScriptSource).toContain('Could not start capture');
+  });
+
+  test('highlights candidates when keyboard focus enters a source card', () => {
+    expect(sourceSidebarSource).toContain('onfocusin=');
+    expect(sourceSidebarSource).toContain('onfocusout=');
+  });
+
+  test('labels request type separately from response content type in diagnostics', () => {
+    expect(diagnosticsSource).toContain("'content type'");
+    expect(diagnosticsSource).toContain("'status/request'");
+    expect(diagnosticsSource).not.toContain("'status/type'");
   });
 
   test('keeps diagnostics out of the normal candidate list', () => {

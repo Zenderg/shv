@@ -26,7 +26,8 @@
       ['reject', network.lastRejectReason ?? 'none'],
       ['last host', network.lastHost ?? 'none'],
       ['request headers', network.lastHeaderKeys ?? 'none'],
-      ['status/type', network.lastStatusCode != null ? `${network.lastStatusCode} / ${network.lastType ?? 'unknown'}` : 'none'],
+      ['content type', network.lastContentType ?? 'none'],
+      ['status/request', network.lastStatusCode != null ? `${network.lastStatusCode} / ${network.lastType ?? 'unknown'}` : 'none'],
       ['path', network.lastPath ?? 'none'],
       ['query keys', network.lastQueryKeys ?? 'none']
     ];
