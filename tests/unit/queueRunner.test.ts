@@ -86,6 +86,73 @@ describe('QueueRunner', () => {
     expect(failed.errorMessage).toContain('Download stalled');
   });
 
+  test('keeps a download alive when progress advances in tiny increments', async () => {
+    const { categories, config, jobs } = createServices();
+    config.downloadStallTimeoutMs = 20;
+    const category = categories.create('test');
+    const job = jobs.create('https://example.test/video', category.id);
+    jobs.saveCandidates(job.id, [candidate('https://media.example.test/video.mp4')]);
+    jobs.selectCandidate(job.id, jobs.listCandidates(job.id)[0].id);
+
+    const downloader = {
+      download: async (_candidate, outputPath, onProgress, signal?: AbortSignal) => {
+        for (const progress of [0.0005, 0.001, 0.0015, 0.002, 0.0025]) {
+          await delay(10);
+          if (signal?.aborted) {
+            throw new JobCanceledError();
+          }
+          onProgress(progress);
+        }
+        fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+        fs.writeFileSync(outputPath, 'source-video');
+        return { bytesWritten: 12, filePath: outputPath };
+      }
+    } satisfies Pick<DownloadEngine, 'download'>;
+    const processor = {
+      normalize: async (_inputPath, outputPath, thumbnailPath) => {
+        fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+        fs.mkdirSync(path.dirname(thumbnailPath), { recursive: true });
+        fs.writeFileSync(outputPath, 'normalized');
+        return {
+          audioCodec: 'aac',
+          browserFriendly: true,
+          container: 'mov,mp4,m4a,3gp,3g2,mj2',
+          durationSeconds: 1,
+          height: 1080,
+          outputPath,
+          processingStrategy: 'transcoded',
+          sizeBytes: 10,
+          thumbnailPath: null,
+          videoCodec: 'h264',
+          width: 1920
+        };
+      }
+    } satisfies Pick<MediaProcessor, 'normalize'>;
+    const mediaFiles = {
+      finalVideoPath: () => path.join(config.libraryRoot, 'test', 'video.mp4'),
+      thumbnailPath: () => path.join(config.thumbnailsRoot, `${job.id}.jpg`)
+    } satisfies Pick<MediaFiles, 'finalVideoPath' | 'thumbnailPath'>;
+    const mediaLibrary = {
+      create: () => mediaItem(category.id, job.id, job.sourceUrl)
+    } satisfies Pick<MediaLibraryService, 'create'>;
+    const runner = new QueueRunner(
+      config,
+      jobs,
+      {} as BrowserAnalyzer,
+      downloader as unknown as DownloadEngine,
+      processor as unknown as MediaProcessor,
+      categories,
+      mediaFiles as unknown as MediaFiles,
+      mediaLibrary as unknown as MediaLibraryService
+    );
+
+    await runner.tick();
+
+    const completed = jobs.requireJob(job.id);
+    expect(completed.status).toBe('completed');
+    expect(completed.errorMessage).toBeNull();
+  });
+
   test('deletes a queued job and removes job-owned artifacts', () => {
     const { categories, config, jobs } = createServices();
     const category = categories.create('test');

@@ -284,7 +284,7 @@ export class QueueRunner {
       });
       const onProgress = (progress: number) => {
         const nextProgress = clamp01(progress);
-        const advanced = nextProgress > lastProgress + 0.001;
+        const advanced = nextProgress > lastProgress;
         lastProgress = Math.max(lastProgress, nextProgress);
         const overallProgress = 0.22 + lastProgress * 0.55;
         this.transitionIfRunning(jobId, 'downloading', overallProgress, {}, parentSignal);
