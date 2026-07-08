@@ -114,8 +114,9 @@ as unmapped instead.
 ## Cookies and Request Context
 
 Some sites require an authenticated browser session. When `Use source` is clicked, the Chrome extension collects cookies
-for the source page and selected media URLs, sends only those cookies to the app origin embedded in the downloaded
-extension package, and adds a `Cookie` header to matching media candidates.
+for the source page, the current page URL, the selected media URL, and all media candidate URLs in the current source
+session. It sends only those matching URL cookies to the app origin embedded in the downloaded extension package and
+adds a `Cookie` header to matching media candidates.
 
 The backend merges uploaded cookies into the Netscape-format file at `./data/app/youtube-cookies.txt` on the host so `yt-dlp` can use them for YouTube and other site-specific extractors. Set `YTDLP_COOKIES_FILE` only when the container should use a different mounted cookie-file path. The extension does not upload the whole browser cookie jar.
 

@@ -98,7 +98,7 @@ Network candidates keep a downloader header allowlist such as `Referer`, `User-A
 
 HLS manifest metadata fetches inside the service worker intentionally use fewer headers: currently `Accept` and `Accept-Language` only, plus `credentials: 'include'`. Do not pass captured headers such as `User-Agent`, `Referer`, `sec-*`, or `Origin` into normal extension `fetch` without checking browser restrictions; several of them are forbidden or fragile in service-worker fetch.
 
-When `Use source` is clicked, the extension collects cookies for the source page and selected media/candidate URLs and sends only those cookies to the app. It does not upload the whole browser cookie jar.
+When `Use source` is clicked, the extension collects cookies for the source page, current page URL, selected media URL, and all media candidate URLs in the current source session, then sends only those matching URL cookies to the app. It does not upload the whole browser cookie jar.
 
 ## Embedded Player Notes
 
