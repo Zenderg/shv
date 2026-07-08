@@ -33,6 +33,8 @@ export type SidebarView = {
   capturePending: boolean;
   collapsed: boolean;
   highlightedUrl: string | null;
+  probingResolutionUrls: string[];
+  resolutionUnavailableUrls: string[];
   selectingUrls: string[];
   selectionError: string | null;
   session: SourceSession | null;
@@ -43,6 +45,8 @@ export const sidebarView = writable<SidebarView>({
   capturePending: false,
   collapsed: false,
   highlightedUrl: null,
+  probingResolutionUrls: [],
+  resolutionUnavailableUrls: [],
   selectingUrls: [],
   selectionError: null,
   session: null,

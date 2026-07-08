@@ -99,6 +99,9 @@ describe('extension service worker', () => {
         onErrorOccurred: chromeEvent(listeners, 'errorOccurred'),
         onHeadersReceived: chromeEvent(listeners, 'headersReceived')
       },
+      webNavigation: {
+        onCommitted: chromeEvent(listeners, 'navigationCommitted')
+      },
       windows: {
         update: vi.fn(async () => ({}))
       }
@@ -195,6 +198,263 @@ describe('extension service worker', () => {
         'https://media.example.test/video-b.mp4'
       ])
     );
+  });
+
+  test('accepts verified candidate metadata from the source tab', async () => {
+    storage.sourceState.sessions[42].candidates = [
+      {
+        bitrate: null,
+        confidence: 0.86,
+        contentType: 'video/mp4',
+        durationSeconds: null,
+        headers: { Referer: 'https://www.youtube.com/watch?v=test' },
+        kind: 'browser-request',
+        manifestType: null,
+        resolution: null,
+        sizeBytes: null,
+        url: 'https://media.example.test/video.mp4'
+      }
+    ];
+    const sendResponse = vi.fn();
+    await import('../../extension/chrome-source-helper/service-worker.js');
+
+    listeners.runtimeMessage(
+      {
+        candidates: [
+          {
+            bitrate: null,
+            confidence: 0.86,
+            contentType: 'video/mp4',
+            durationSeconds: 18.2,
+            headers: {},
+            kind: 'browser-request',
+            manifestType: null,
+            resolution: '1280x720',
+            sizeBytes: null,
+            url: 'https://media.example.test/video.mp4'
+          }
+        ],
+        type: 'SHV_CANDIDATE_METADATA'
+      },
+      { tab: { id: 42 } },
+      sendResponse
+    );
+
+    await vi.waitFor(() => expect(sendResponse).toHaveBeenCalledWith({ ok: true }));
+
+    expect(storage.sourceState.sessions[42].candidates[0]).toMatchObject({
+      durationSeconds: 18.2,
+      headers: { Referer: 'https://www.youtube.com/watch?v=test' },
+      resolution: '1280x720'
+    });
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      'http://127.0.0.1:8080/api/jobs/job-id/extension-candidates',
+      expect.objectContaining({
+        body: expect.stringContaining('"resolution":"1280x720"')
+      })
+    );
+  });
+
+  test('posts extension debug events from content scripts to the app backend', async () => {
+    const sendResponse = vi.fn();
+    await import('../../extension/chrome-source-helper/service-worker.js');
+
+    listeners.runtimeMessage(
+      {
+        event: {
+          candidateUrl: 'https://vkv531.okcdn.ru/?sig=test',
+          eventType: 'metadata-probe',
+          frameUrl: 'https://vk.example.test/embed',
+          reason: 'video-error',
+          status: 'unavailable'
+        },
+        type: 'SHV_DEBUG_EVENT'
+      },
+      { tab: { id: 42 } },
+      sendResponse
+    );
+
+    await vi.waitFor(() =>
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        'http://127.0.0.1:8080/api/debug/extension/events',
+        expect.objectContaining({
+          body: expect.stringContaining('"eventType":"metadata-probe"'),
+          method: 'POST'
+        })
+      )
+    );
+    await vi.waitFor(() => expect(sendResponse).toHaveBeenCalledWith({ ok: true }));
+  });
+
+  test('applies active playback metadata to browser request candidates captured in the same tab', async () => {
+    const activeResponse = vi.fn();
+    const mediaUrl = 'https://vkv531.okcdn.ru/?expires=1783762251943&type=3&sig=test';
+    await import('../../extension/chrome-source-helper/service-worker.js');
+
+    listeners.runtimeMessage(
+      {
+        candidates: [],
+        currentSrc: mediaUrl,
+        playbackMetadata: {
+          durationSeconds: 73.25,
+          resolution: '1920x1080'
+        },
+        type: 'SHV_ACTIVE_PLAYBACK'
+      },
+      { tab: { id: 42 } },
+      activeResponse
+    );
+
+    await vi.waitFor(() => expect(activeResponse).toHaveBeenCalledWith({ captured: 0, ok: true }));
+
+    listeners.headersReceived({
+      initiator: 'https://vkvideo.example.test',
+      requestId: 'request-okcdn',
+      responseHeaders: [{ name: 'content-type', value: 'video/mp4' }],
+      statusCode: 206,
+      tabId: 42,
+      type: 'media',
+      url: mediaUrl
+    });
+
+    await vi.waitFor(() =>
+      expect(storage.sourceState.sessions[42].candidates[0]).toMatchObject({
+        durationSeconds: 73.25,
+        resolution: '1920x1080',
+        url: mediaUrl
+      })
+    );
+    const candidatePost = globalThis.fetch.mock.calls.find(([url]) => String(url).endsWith('/extension-candidates'));
+    expect(JSON.parse(candidatePost[1].body).candidates[0]).toMatchObject({
+      durationSeconds: 73.25,
+      resolution: '1920x1080'
+    });
+  });
+
+  test('updates pending network candidates only from matching active playback currentSrc metadata', async () => {
+    const highUrl = 'https://vkvd531.okcdn.ru/?expires=1783762251943&type=3&sig=high';
+    const lowUrl = 'https://vkvd531.okcdn.ru/?expires=1783762251943&type=0&sig=low';
+    await import('../../extension/chrome-source-helper/service-worker.js');
+
+    listeners.runtimeMessage(
+      {
+        candidates: [],
+        currentSrc: highUrl,
+        playbackMetadata: {
+          durationSeconds: 1159.83,
+          resolution: '1280x720'
+        },
+        type: 'SHV_ACTIVE_PLAYBACK'
+      },
+      { tab: { id: 42 } },
+      vi.fn()
+    );
+
+    await vi.waitFor(() =>
+      expect(storage.sourceState.sessions[42].activePlaybackMetadata).toMatchObject({
+        currentSrc: highUrl,
+        resolution: '1280x720'
+      })
+    );
+
+    listeners.headersReceived({
+      initiator: 'https://nmcorp.video',
+      requestId: 'request-low',
+      responseHeaders: [{ name: 'content-type', value: 'video/mp4' }],
+      statusCode: 200,
+      tabId: 42,
+      type: 'media',
+      url: lowUrl
+    });
+
+    await vi.waitFor(() =>
+      expect(storage.sourceState.sessions[42].candidates.find((candidate) => candidate.url === lowUrl)).toMatchObject({
+        resolution: null
+      })
+    );
+
+    listeners.runtimeMessage(
+      {
+        candidates: [],
+        currentSrc: lowUrl,
+        playbackMetadata: {
+          durationSeconds: 1159.83,
+          resolution: '426x240'
+        },
+        type: 'SHV_ACTIVE_PLAYBACK'
+      },
+      { tab: { id: 42 } },
+      vi.fn()
+    );
+
+    await vi.waitFor(() =>
+      expect(storage.sourceState.sessions[42].candidates.find((candidate) => candidate.url === lowUrl)).toMatchObject({
+        durationSeconds: 1159.83,
+        resolution: '426x240',
+        url: lowUrl
+      })
+    );
+  });
+
+  test('fills HLS media playlist resolution from the matching master playlist variant', async () => {
+    const masterUrl = 'https://iv-h.phncdn.com/videos/202411/19/460719291/1080P_4000K_460719291.mp4/master.m3u8';
+    const mediaUrl = 'https://iv-h.phncdn.com/videos/202411/19/460719291/1080P_4000K_460719291.mp4/index-v1-a1.m3u8';
+    globalThis.fetch = vi.fn(async (url, options = {}) => {
+      if (String(url).endsWith('/extension-candidates')) {
+        const body = JSON.parse(options.body);
+        return {
+          json: async () => body.candidates.map((candidate, index) => ({ ...candidate, id: `candidate-${index}` })),
+          ok: true,
+          status: 200
+        };
+      }
+      if (String(url).endsWith('/debug/extension/events')) {
+        return { ok: true, status: 200 };
+      }
+      if (String(url) === masterUrl) {
+        return {
+          ok: true,
+          status: 200,
+          text: async () => `#EXTM3U
+#EXT-X-STREAM-INF:BANDWIDTH=4000000,RESOLUTION=1080x1920
+index-v1-a1.m3u8`
+        };
+      }
+      throw new Error(`Unexpected fetch ${String(url)}`);
+    });
+    await import('../../extension/chrome-source-helper/service-worker.js');
+
+    listeners.headersReceived({
+      initiator: 'https://rt.pornhub.com',
+      requestId: 'hls-media',
+      responseHeaders: [{ name: 'content-type', value: 'application/vnd.apple.mpegurl' }],
+      statusCode: 200,
+      tabId: 42,
+      type: 'xmlhttprequest',
+      url: mediaUrl
+    });
+
+    await vi.waitFor(() =>
+      expect(storage.sourceState.sessions[42].candidates.find((candidate) => candidate.url === mediaUrl)).toMatchObject({
+        resolution: null
+      })
+    );
+
+    listeners.headersReceived({
+      initiator: 'https://rt.pornhub.com',
+      requestId: 'hls-master',
+      responseHeaders: [{ name: 'content-type', value: 'application/vnd.apple.mpegurl' }],
+      statusCode: 200,
+      tabId: 42,
+      type: 'xmlhttprequest',
+      url: masterUrl
+    });
+
+    await vi.waitFor(() => {
+      const candidates = storage.sourceState.sessions[42].candidates;
+      expect(candidates.find((candidate) => candidate.url === masterUrl)).toMatchObject({ resolution: '1080x1920' });
+      expect(candidates.find((candidate) => candidate.url === mediaUrl)).toMatchObject({ resolution: '1080x1920' });
+    });
   });
 
   test('sends relevant browser cookies when a source is selected', async () => {
@@ -362,5 +622,22 @@ describe('extension service worker', () => {
       files: ['content-script.js'],
       target: { allFrames: true, tabId: 99 }
     });
+  });
+
+  test('injects the content script into newly committed child frames for active source tabs', async () => {
+    await import('../../extension/chrome-source-helper/service-worker.js');
+
+    listeners.navigationCommitted({
+      frameId: 12,
+      tabId: 42,
+      url: 'https://nmcorp.video/embed/player'
+    });
+
+    await vi.waitFor(() =>
+      expect(globalThis.chrome.scripting.executeScript).toHaveBeenCalledWith({
+        files: ['content-script.js'],
+        target: { frameIds: [12], tabId: 42 }
+      })
+    );
   });
 });

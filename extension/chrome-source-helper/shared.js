@@ -1,5 +1,5 @@
 export const PROTOCOL_VERSION = 1;
-export const EXTENSION_VERSION = '1.0.30';
+export const EXTENSION_VERSION = '1.0.36';
 export const APP_ORIGIN = 'http://127.0.0.1:8080';
 
 const VIDEO_EXTENSIONS = ['.mp4', '.webm', '.mov', '.m4v', '.mkv'];
@@ -33,6 +33,23 @@ export function candidateFromUrl(url, contentType = null, kindOverride = null, b
     return candidate(kindOverride ?? 'browser-request', parsed.href, normalizedContentType, null, 0.76);
   }
   return null;
+}
+
+export function candidateFromVerifiedVideoUrl(url, kindOverride = 'html-video', baseUrl = undefined) {
+  const classified = candidateFromUrl(url, null, kindOverride, baseUrl);
+  if (classified) {
+    return classified;
+  }
+  let parsed;
+  try {
+    parsed = new URL(url, baseUrl);
+  } catch {
+    return null;
+  }
+  if (!isServerDownloadableUrl(parsed) || isYoutubeSabrTransport(parsed, null)) {
+    return null;
+  }
+  return candidate(kindOverride, parsed.href, normalizedContentTypeFor(parsed, null), null, 0.91);
 }
 
 export function candidateRejectionReason(url, contentType = null) {
@@ -71,6 +88,115 @@ export function candidateRejectionReason(url, contentType = null) {
   return 'no video content-type, extension, or mime query hint';
 }
 
+export function parseHlsManifestMetadata(manifest, baseUrl) {
+  const variants = parseHlsVariants(manifest, baseUrl);
+  return {
+    resolution: variants[0]?.resolution ?? null,
+    variants
+  };
+}
+
+function parseHlsVariants(manifest, baseUrl) {
+  if (typeof manifest !== 'string' || typeof baseUrl !== 'string') {
+    return [];
+  }
+  const lines = manifest.split(/\r?\n/).map((line) => line.trim());
+  const variants = [];
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (!line.startsWith('#EXT-X-STREAM-INF:')) {
+      continue;
+    }
+    const attributes = parseHlsAttributes(line.slice('#EXT-X-STREAM-INF:'.length));
+    const nextUri = lines.slice(index + 1).find((candidate) => candidate && !candidate.startsWith('#'));
+    const resolution = normalizeResolution(attributes.RESOLUTION);
+    if (!nextUri || !resolution) {
+      continue;
+    }
+    try {
+      variants.push({
+        bandwidth: Number(attributes.BANDWIDTH ?? 0) || 0,
+        resolution,
+        url: new URL(nextUri, baseUrl).href
+      });
+    } catch {
+      // Ignore malformed variant URLs; a bad line should not discard the rest of the manifest.
+    }
+  }
+
+  return variants.sort(compareHlsVariants);
+}
+
+function parseHlsAttributes(input) {
+  const attributes = {};
+  let key = '';
+  let value = '';
+  let readingValue = false;
+  let quoted = false;
+
+  const commit = () => {
+    const normalizedKey = key.trim().toUpperCase();
+    if (normalizedKey) {
+      attributes[normalizedKey] = value.trim().replace(/^"|"$/g, '');
+    }
+    key = '';
+    value = '';
+    readingValue = false;
+    quoted = false;
+  };
+
+  for (const character of `${input},`) {
+    if (!readingValue) {
+      if (character === '=') {
+        readingValue = true;
+      } else if (character !== ',') {
+        key += character;
+      }
+      continue;
+    }
+    if (character === '"') {
+      quoted = !quoted;
+      value += character;
+      continue;
+    }
+    if (character === ',' && !quoted) {
+      commit();
+      continue;
+    }
+    value += character;
+  }
+
+  return attributes;
+}
+
+function compareHlsVariants(left, right) {
+  const bandwidthDelta = right.bandwidth - left.bandwidth;
+  if (bandwidthDelta !== 0) {
+    return bandwidthDelta;
+  }
+  return resolutionArea(right.resolution) - resolutionArea(left.resolution);
+}
+
+function resolutionArea(resolution) {
+  const match = /^(\d+)x(\d+)$/.exec(resolution ?? '');
+  if (!match) {
+    return 0;
+  }
+  return Number(match[1]) * Number(match[2]);
+}
+
+function normalizeResolution(value) {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const match = /^(\d{2,5})x(\d{2,5})$/i.exec(value.trim());
+  if (!match) {
+    return null;
+  }
+  return `${Number(match[1])}x${Number(match[2])}`;
+}
+
 function normalizedContentTypeFor(parsed, contentType) {
   const queryMime = normalizeContentType(parsed.searchParams.get('mime'));
   if (queryMime?.startsWith('video/') || queryMime?.startsWith('audio/') || queryMime?.includes('mpegurl')) {
@@ -106,11 +232,32 @@ export function mergeCandidates(existing, incoming) {
   const byUrl = new Map(existing.map((candidate) => [candidate.url, candidate]));
   for (const candidate of incoming) {
     const current = byUrl.get(candidate.url);
-    if (!current || candidate.confidence > current.confidence) {
-      byUrl.set(candidate.url, { ...current, ...candidate, confidence: Math.max(current?.confidence ?? 0, candidate.confidence) });
+    if (!current) {
+      byUrl.set(candidate.url, candidate);
+    } else {
+      byUrl.set(candidate.url, mergeCandidate(current, candidate));
     }
   }
   return [...byUrl.values()].sort((left, right) => right.confidence - left.confidence);
+}
+
+function mergeCandidate(current, incoming) {
+  const preferIncoming = incoming.confidence > current.confidence;
+  const primary = preferIncoming ? incoming : current;
+  const secondary = preferIncoming ? current : incoming;
+  return {
+    ...secondary,
+    ...primary,
+    bitrate: primary.bitrate ?? secondary.bitrate ?? null,
+    confidence: Math.max(current.confidence ?? 0, incoming.confidence ?? 0),
+    contentType: primary.contentType ?? secondary.contentType ?? null,
+    durationSeconds: primary.durationSeconds ?? secondary.durationSeconds ?? null,
+    headers: { ...(current.headers ?? {}), ...(incoming.headers ?? {}) },
+    manifestType: primary.manifestType ?? secondary.manifestType ?? null,
+    resolution: primary.resolution ?? secondary.resolution ?? null,
+    sizeBytes: primary.sizeBytes ?? secondary.sizeBytes ?? null,
+    url: current.url
+  };
 }
 
 export function sessionTabIdsForRequest(details, state) {

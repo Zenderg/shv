@@ -18,4 +18,20 @@ declare module '*extension/chrome-source-helper/shared.js' {
     sizeBytes: number | null;
     url: string;
   } | null;
+  export function candidateFromVerifiedVideoUrl(
+    url: string,
+    kindOverride?: string,
+    baseUrl?: string
+  ): {
+    bitrate: number | null;
+    confidence: number;
+    contentType: string | null;
+    durationSeconds: number | null;
+    headers: Record<string, string>;
+    kind: string;
+    manifestType: string | null;
+    resolution: string | null;
+    sizeBytes: number | null;
+    url: string;
+  } | null;
 }

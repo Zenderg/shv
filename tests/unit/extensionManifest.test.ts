@@ -39,6 +39,10 @@ describe('chrome source helper manifest', () => {
     expect(manifest.host_permissions ?? []).toContain('<all_urls>');
   });
 
+  it('can observe embedded player frame navigations for source tabs', () => {
+    expect(manifest.permissions ?? []).toContain('webNavigation');
+  });
+
   it('keeps the packaged extension version aligned with the app requirement', () => {
     expect(manifest.version).toBe(sharedVersion);
     expect(manifest.version).toBe(SOURCE_EXTENSION_REQUIRED_VERSION);

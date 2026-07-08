@@ -1,7 +1,10 @@
 import { describe, expect, test } from 'vitest';
 import {
+  candidateFromVerifiedVideoUrl,
   candidateFromUrl,
   candidateRejectionReason,
+  mergeCandidates,
+  parseHlsManifestMetadata,
   sessionTabIdsForRequest
 } from '../../extension/chrome-source-helper/shared.js';
 
@@ -16,6 +19,26 @@ describe('extension shared candidate detection', () => {
     expect(candidateFromUrl('https://media.example.test/video.mp4', 'video/mp4')?.kind).toBe('browser-request');
   });
 
+  test('merges candidate metadata updates without discarding request context', () => {
+    const existing = candidateFromUrl('https://media.example.test/video.mp4', 'video/mp4');
+    existing.headers = { Referer: 'https://source.example.test/watch' };
+    const metadataUpdate = {
+      ...existing,
+      durationSeconds: 42.4,
+      headers: {},
+      resolution: '1920x1080'
+    };
+
+    expect(mergeCandidates([existing], [metadataUpdate])).toEqual([
+      expect.objectContaining({
+        durationSeconds: 42.4,
+        headers: { Referer: 'https://source.example.test/watch' },
+        resolution: '1920x1080',
+        url: 'https://media.example.test/video.mp4'
+      })
+    ]);
+  });
+
   test('accepts relative DOM media URLs against the page URL', () => {
     const candidate = candidateFromUrl('/media/video.mp4', null, 'html-video', 'https://source.example.test/watch');
 
@@ -28,6 +51,55 @@ describe('extension shared candidate detection', () => {
 
     expect(candidate?.kind).toBe('browser-request');
     expect(candidate?.contentType).toBe('video/mp4');
+  });
+
+  test('accepts verified video element currentSrc URLs without extension or mime hints', () => {
+    const url = 'https://vkvd531.okcdn.ru/?expires=1783762251943&type=0&sig=test';
+
+    expect(candidateFromUrl(url)).toBeNull();
+    expect(candidateFromVerifiedVideoUrl(url)).toMatchObject({
+      confidence: 0.91,
+      contentType: null,
+      kind: 'html-video',
+      manifestType: null,
+      url
+    });
+  });
+
+  test('reads HLS variant resolutions from master playlists', () => {
+    const manifest = `#EXTM3U
+#EXT-X-STREAM-INF:BANDWIDTH=1200000,RESOLUTION=720x1280
+low/index.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=4000000,RESOLUTION=1080x1920
+index-v1-a1.m3u8`;
+
+    expect(parseHlsManifestMetadata(manifest, 'https://iv-h.phncdn.com/videos/1080P/master.m3u8')).toEqual({
+      resolution: '1080x1920',
+      variants: [
+        {
+          bandwidth: 4000000,
+          resolution: '1080x1920',
+          url: 'https://iv-h.phncdn.com/videos/1080P/index-v1-a1.m3u8'
+        },
+        {
+          bandwidth: 1200000,
+          resolution: '720x1280',
+          url: 'https://iv-h.phncdn.com/videos/1080P/low/index.m3u8'
+        }
+      ]
+    });
+  });
+
+  test('does not infer HLS resolution from playlist URL names', () => {
+    const manifest = `#EXTM3U
+#EXT-X-TARGETDURATION:4
+#EXTINF:4,
+segment-1.ts`;
+
+    expect(parseHlsManifestMetadata(manifest, 'https://iv-h.phncdn.com/videos/1080P/index-v1-a1.m3u8')).toEqual({
+      resolution: null,
+      variants: []
+    });
   });
 
   test('accepts googlevideo videoplayback URLs when the mime query beats a misleading content-type header', () => {

@@ -30,6 +30,8 @@
     capturePending: false,
     collapsed: false,
     highlightedUrl: null,
+    probingResolutionUrls: [],
+    resolutionUnavailableUrls: [],
     selectingUrls: [],
     selectionError: null,
     session: null,
@@ -143,6 +145,8 @@
         capturePending: false,
         collapsed,
         highlightedUrl: null,
+        probingResolutionUrls: [],
+        resolutionUnavailableUrls: [],
         selectingUrls: [],
         selectionError: null,
         session: null,
@@ -156,6 +160,8 @@
       capturePending: id === 'capture-pending',
       collapsed,
       highlightedUrl: null,
+      probingResolutionUrls: id === 'candidates' ? [checkingVideoCandidate.url] : [],
+      resolutionUnavailableUrls: id === 'long-url' ? [longUrlCandidate.url] : [],
       selectingUrls: id === 'capture-pending' ? [directVideoCandidate.url] : [],
       selectionError: null,
       session,
@@ -167,7 +173,7 @@
   function scenarioSession(id: Exclude<ScenarioId, 'no-job'>): SourceSession {
     const base = {
       activeCaptureUntil: null,
-      candidates: [hlsCandidate, directVideoCandidate, dashCandidate],
+      candidates: [hlsCandidate, directVideoCandidate, checkingVideoCandidate, dashCandidate],
       currentUrl: 'https://video.example.test/watch/late-night-archive',
       diagnostics: diagnostics(),
       jobId: 'preview-job',
@@ -271,6 +277,8 @@
     null,
     0.86
   );
+  directVideoCandidate.resolution = '1920x1080';
+  directVideoCandidate.durationSeconds = 2964.2;
   const dashCandidate = candidate(
     'dash',
     'https://stream.video.example.test/dash/manifest.mpd?profile=main',
@@ -278,11 +286,18 @@
     'dash',
     0.9
   );
+  const checkingVideoCandidate = candidate(
+    'browser-request',
+    'https://cdn.video.example.test/files/late-night-archive-mobile.mp4?token=preview',
+    'video/mp4',
+    null,
+    0.8
+  );
   const longUrlCandidate = candidate(
     'browser-request',
-    'https://media-cdn-with-a-very-long-hostname.example.test/video/playback/session/6fe75d9d-26bc-4b31-88ec-visual-preview-only/segment/index-v1-a1.m3u8?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiKiJ9XX0&Signature=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789&Key-Pair-Id=KPREVIEW1234567890',
-    'application/vnd.apple.mpegurl',
-    'hls',
+    'https://media-cdn-with-a-very-long-hostname.example.test/video/playback/session/6fe75d9d-26bc-4b31-88ec-visual-preview-only?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiKiJ9XX0&Signature=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789&Key-Pair-Id=KPREVIEW1234567890',
+    'video/mp4',
+    null,
     0.78
   );
 </script>

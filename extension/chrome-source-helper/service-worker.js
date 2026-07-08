@@ -5,12 +5,15 @@ import {
   candidateFromUrl,
   candidateRejectionReason,
   mergeCandidates,
+  parseHlsManifestMetadata,
   sessionTabIdsForRequest
 } from './shared.js';
 
 const ACTIVE_CAPTURE_WINDOW_MS = 30000;
 const PENDING_NETWORK_BUFFER_MS = 15000;
 const pendingNetworkCandidatesByTab = new Map();
+const hlsMetadataByTab = new Map();
+const hlsManifestFetches = new Set();
 const requestHeadersByRequestId = new Map();
 let stateWriteChain = Promise.resolve();
 const DOWNLOAD_HEADER_NAMES = new Set([
@@ -23,6 +26,7 @@ const DOWNLOAD_HEADER_NAMES = new Set([
   'sec-ch-ua-platform',
   'user-agent'
 ]);
+const HLS_MANIFEST_FETCH_HEADER_NAMES = new Set(['accept', 'accept-language']);
 
 chrome.action.onClicked.addListener(() => {
   void toggleActiveTabSidebar();
@@ -70,13 +74,40 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
   if (message?.type === 'SHV_ACTIVE_PLAYBACK' && sender.tab?.id != null) {
-    activatePlaybackCapture(sender.tab.id, message.candidates ?? []).then(sendResponse).catch((error) => {
+    activatePlaybackCapture(sender.tab.id, message.candidates ?? [], message.playbackMetadata, message.currentSrc).then((result) => {
+      sendResponse(result);
+      void postExtensionDebugEvent({
+        details: {
+          candidateCount: message.candidates?.length ?? 0,
+          currentSrc: message.currentSrc ?? null,
+          playbackMetadata: normalizePlaybackMetadata(message.playbackMetadata, message.currentSrc)
+        },
+        eventType: 'active-playback',
+        reason: message.playbackMetadata?.resolution ? null : 'missing-active-video-resolution',
+        status: message.playbackMetadata?.resolution ? 'available' : 'unavailable',
+        tabId: sender.tab?.id ?? null
+      }).catch(() => undefined);
+    }).catch((error) => {
       sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) });
     });
     return true;
   }
   if (message?.type === 'SHV_PLAYBACK_DIAGNOSTIC' && sender.tab?.id != null) {
     updatePlaybackDiagnostics(sender.tab.id, message.diagnostic).then(sendResponse).catch((error) => {
+      sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) });
+    });
+    return true;
+  }
+  if (message?.type === 'SHV_CANDIDATE_METADATA' && sender.tab?.id != null) {
+    mergeTabCandidates(sender.tab.id, message.candidates ?? [], { requireActive: false }).then(sendResponse).catch((error) => {
+      sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) });
+    });
+    return true;
+  }
+  if (message?.type === 'SHV_DEBUG_EVENT') {
+    postExtensionDebugEvent({ ...(message.event ?? {}), tabId: sender.tab?.id ?? message.event?.tabId ?? null }).then(() => {
+      sendResponse({ ok: true });
+    }).catch((error) => {
       sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) });
     });
     return true;
@@ -138,6 +169,10 @@ chrome.webRequest.onErrorOccurred.addListener(
   { urls: ['<all_urls>'] }
 );
 
+chrome.webNavigation?.onCommitted.addListener((details) => {
+  void injectContentScriptIntoCommittedFrame(details);
+});
+
 chrome.tabs.onRemoved.addListener((tabId) => {
   void removeTabSession(tabId);
 });
@@ -172,8 +207,8 @@ async function openSourceTab(message, sender) {
   return { ok: true, tabId: tab.id };
 }
 
-async function activatePlaybackCapture(tabId, candidates) {
-  return openCaptureWindow(tabId, candidates);
+async function activatePlaybackCapture(tabId, candidates, playbackMetadata = null, currentSrc = null) {
+  return openCaptureWindow(tabId, candidates, playbackMetadata, currentSrc);
 }
 
 async function startManualCapture(tabId) {
@@ -183,11 +218,12 @@ async function startManualCapture(tabId) {
   return openCaptureWindow(tabId, []);
 }
 
-async function openCaptureWindow(tabId, candidates) {
+async function openCaptureWindow(tabId, candidates, playbackMetadata = null, currentSrc = null) {
   const now = Date.now();
   const activeCaptureUntil = now + ACTIVE_CAPTURE_WINDOW_MS;
   const pendingCandidates = takePendingNetworkCandidates(tabId, now);
   let session = null;
+  const normalizedPlaybackMetadata = normalizePlaybackMetadata(playbackMetadata, currentSrc);
 
   await upsertState((state) => {
     session = state.sessions[String(tabId)];
@@ -195,6 +231,9 @@ async function openCaptureWindow(tabId, candidates) {
       return;
     }
     session.activeCaptureUntil = activeCaptureUntil;
+    if (normalizedPlaybackMetadata) {
+      session.activePlaybackMetadata = normalizedPlaybackMetadata;
+    }
     session.status = 'listening';
     session.updatedAt = new Date().toISOString();
   });
@@ -260,6 +299,36 @@ async function showSidebarInTab(tabId) {
   await retryTabMessage(tabId, { tabId, type: 'SHV_SHOW_SIDEBAR' });
 }
 
+async function injectContentScriptIntoCommittedFrame(details) {
+  if (!isInjectableSourceFrameNavigation(details)) {
+    return;
+  }
+  const state = await getState();
+  if (!state.sessions[String(details.tabId)]) {
+    return;
+  }
+  await chrome.scripting.executeScript({
+    files: ['content-script.js'],
+    target: { frameIds: [details.frameId], tabId: details.tabId }
+  }).catch(() => undefined);
+}
+
+function isInjectableSourceFrameNavigation(details) {
+  if (!Number.isInteger(details?.tabId) || details.tabId < 0 || !Number.isInteger(details?.frameId) || details.frameId <= 0) {
+    return false;
+  }
+  return isHttpUrl(details.url);
+}
+
+function isHttpUrl(url) {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
 async function ensureContentScriptInTab(tabId) {
   const existing = await sendTabMessage(tabId, { type: 'SHV_SOURCE_HELPER_PING' }).catch(() => null);
   if (existing?.ok) {
@@ -322,7 +391,23 @@ async function recordNetworkDetails(details, requestHeaders = {}) {
   }
   candidate.headers = requestHeaders;
   for (const tabId of tabIds) {
-    await recordNetworkCandidate(tabId, candidate);
+    const candidateForTab = enrichCandidateWithKnownHlsMetadata(tabId, candidate);
+    await recordNetworkCandidate(tabId, candidateForTab);
+    void inspectHlsManifestCandidate(tabId, candidateForTab).catch(() => undefined);
+    void postExtensionDebugEvent({
+      candidateUrl: candidateForTab.url,
+      details: {
+        contentType,
+        headerKeys: Object.keys(requestHeaders).sort(),
+        initiator: details.initiator ?? details.documentUrl ?? null,
+        requestType: details.type ?? 'unknown',
+        statusCode: details.statusCode ?? null
+      },
+      eventType: 'network-candidate',
+      reason: null,
+      status: 'captured',
+      tabId
+    }).catch(() => undefined);
   }
 }
 
@@ -488,7 +573,11 @@ async function mergeTabCandidates(tabId, candidates, options = {}) {
     if (options.requireActive && !isSessionCaptureActive(session)) {
       return;
     }
-    session.candidates = mergeCandidates(session.candidates, normalized);
+    const withKnownHlsMetadata = normalized.map((candidate) => enrichCandidateWithKnownHlsMetadata(tabId, candidate));
+    session.candidates = mergeCandidates(
+      session.candidates,
+      enrichCandidatesWithPlaybackMetadata(withKnownHlsMetadata, session.activePlaybackMetadata)
+    );
     session.updatedAt = new Date().toISOString();
   });
 
@@ -516,8 +605,196 @@ function takePendingNetworkCandidates(tabId, now = Date.now()) {
   return fresh;
 }
 
+async function inspectHlsManifestCandidate(tabId, candidate) {
+  if (candidate?.manifestType !== 'hls' || !candidate.url) {
+    return;
+  }
+  const fetchKey = `${tabId}\n${normalizeUrlKey(candidate.url)}`;
+  if (hlsManifestFetches.has(fetchKey)) {
+    return;
+  }
+  hlsManifestFetches.add(fetchKey);
+
+  try {
+    const response = await fetch(candidate.url, {
+      credentials: 'include',
+      headers: manifestFetchHeaders(candidate.headers ?? {})
+    });
+    if (!response.ok) {
+      await postHlsManifestDebugEvent(tabId, candidate, 'unavailable', `http-${response.status}`, {});
+      return;
+    }
+    const manifest = await response.text();
+    const metadata = parseHlsManifestMetadata(manifest, candidate.url);
+    rememberHlsManifestMetadata(tabId, candidate.url, metadata);
+    await applyKnownHlsMetadataToSession(tabId);
+    await postHlsManifestDebugEvent(tabId, candidate, metadata.resolution ? 'available' : 'unavailable', metadata.resolution ? null : 'no-variant-resolution', {
+      resolution: metadata.resolution,
+      variantCount: metadata.variants.length
+    });
+  } catch (error) {
+    await postHlsManifestDebugEvent(tabId, candidate, 'unavailable', 'manifest-fetch-failed', {
+      message: error instanceof Error ? error.message : String(error)
+    });
+  }
+}
+
+function rememberHlsManifestMetadata(tabId, manifestUrl, metadata) {
+  if (!metadata?.resolution && metadata?.variants?.length === 0) {
+    return;
+  }
+  const byUrl = hlsMetadataByTab.get(tabId) ?? new Map();
+  if (metadata.resolution) {
+    byUrl.set(normalizeUrlKey(manifestUrl), { resolution: metadata.resolution });
+  }
+  for (const variant of metadata.variants ?? []) {
+    if (variant.resolution) {
+      byUrl.set(normalizeUrlKey(variant.url), { resolution: variant.resolution });
+    }
+  }
+  hlsMetadataByTab.set(tabId, byUrl);
+}
+
+async function applyKnownHlsMetadataToSession(tabId) {
+  let session = null;
+  let changed = false;
+  await upsertState((state) => {
+    session = state.sessions[String(tabId)];
+    if (!session) {
+      return;
+    }
+    const enriched = session.candidates.map((candidate) => enrichCandidateWithKnownHlsMetadata(tabId, candidate));
+    changed = enriched.some((candidate, index) => candidate !== session.candidates[index]);
+    if (!changed) {
+      return;
+    }
+    session.candidates = enriched;
+    session.updatedAt = new Date().toISOString();
+  });
+
+  if (session && changed) {
+    await postCandidates(session.jobId, session.candidates);
+    notifyPanel(tabId);
+  }
+}
+
+function enrichCandidateWithKnownHlsMetadata(tabId, candidate) {
+  if (candidate?.manifestType !== 'hls' || candidate.resolution) {
+    return candidate;
+  }
+  const metadata = hlsMetadataByTab.get(tabId)?.get(normalizeUrlKey(candidate.url));
+  if (!metadata?.resolution) {
+    return candidate;
+  }
+  return { ...candidate, resolution: metadata.resolution };
+}
+
+function normalizeUrlKey(url) {
+  try {
+    return new URL(url).href;
+  } catch {
+    return String(url ?? '');
+  }
+}
+
+function manifestFetchHeaders(headers) {
+  const result = {};
+  for (const [name, value] of Object.entries(headers)) {
+    if (HLS_MANIFEST_FETCH_HEADER_NAMES.has(name.toLowerCase()) && value) {
+      result[name] = value;
+    }
+  }
+  if (!Object.keys(result).some((name) => name.toLowerCase() === 'accept')) {
+    result.Accept = 'application/vnd.apple.mpegurl, application/x-mpegURL, */*';
+  }
+  return result;
+}
+
+async function postHlsManifestDebugEvent(tabId, candidate, status, reason, details) {
+  await postExtensionDebugEvent({
+    candidateUrl: candidate.url,
+    details: {
+      contentType: candidate.contentType,
+      ...details
+    },
+    eventType: 'hls-manifest',
+    reason,
+    status,
+    tabId
+  }).catch(() => undefined);
+}
+
 function isSessionCaptureActive(session) {
   return typeof session.activeCaptureUntil === 'number' && session.activeCaptureUntil >= Date.now();
+}
+
+function enrichCandidatesWithPlaybackMetadata(candidates, playbackMetadata) {
+  const metadata = normalizePlaybackMetadata(playbackMetadata);
+  if (!metadata?.resolution) {
+    return candidates;
+  }
+  return candidates.map((candidate) => {
+    if (!shouldApplyPlaybackMetadata(candidate, metadata)) {
+      return candidate;
+    }
+    return {
+      ...candidate,
+      durationSeconds: candidate.durationSeconds ?? metadata.durationSeconds ?? null,
+      resolution: candidate.resolution ?? metadata.resolution
+    };
+  });
+}
+
+function shouldApplyPlaybackMetadata(candidate, metadata) {
+  if (candidate.resolution || candidate.manifestType) {
+    return false;
+  }
+  const contentType = normalizedContentType(candidate.contentType);
+  if (contentType?.startsWith('audio/')) {
+    return false;
+  }
+  if (metadata.currentSrc) {
+    return sameUrl(candidate.url, metadata.currentSrc);
+  }
+  return Boolean(contentType?.startsWith('video/'));
+}
+
+function normalizePlaybackMetadata(value, currentSrc = null) {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+  return {
+    currentSrc: normalizedHttpUrl(currentSrc ?? value.currentSrc ?? null),
+    durationSeconds: Number.isFinite(value.durationSeconds) ? value.durationSeconds : null,
+    resolution: typeof value.resolution === 'string' && /^\d+x\d+$/.test(value.resolution) ? value.resolution : null
+  };
+}
+
+function normalizedHttpUrl(value) {
+  if (!value || typeof value !== 'string') {
+    return null;
+  }
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.href : null;
+  } catch {
+    return null;
+  }
+}
+
+function sameUrl(left, right) {
+  if (!left || !right) {
+    return false;
+  }
+  try {
+    return new URL(left).href === new URL(right).href;
+  } catch {
+    return left === right;
+  }
+}
+
+function normalizedContentType(value) {
+  return value?.split(';')[0].trim().toLowerCase() ?? null;
 }
 
 async function selectSource(tabId, url) {
@@ -679,6 +956,18 @@ async function postCookies(jobId, cookies) {
   }).then(ensureOk);
 }
 
+async function postExtensionDebugEvent(event) {
+  return fetch(`${APP_ORIGIN}/api/debug/extension/events`, {
+    body: JSON.stringify(event),
+    headers: { 'Content-Type': 'application/json' },
+    method: 'POST'
+  }).then((response) => {
+    if (!response.ok && response.status !== 404) {
+      throw new Error('Could not record extension debug event');
+    }
+  });
+}
+
 async function ensureOk(response) {
   if (!response.ok) {
     throw new Error(await response.text());
@@ -693,6 +982,12 @@ async function panelState() {
 
 async function removeTabSession(tabId) {
   pendingNetworkCandidatesByTab.delete(tabId);
+  hlsMetadataByTab.delete(tabId);
+  for (const key of [...hlsManifestFetches]) {
+    if (key.startsWith(`${tabId}\n`)) {
+      hlsManifestFetches.delete(key);
+    }
+  }
   await upsertState((state) => {
     delete state.sessions[String(tabId)];
     if (state.activeTabId === tabId) {

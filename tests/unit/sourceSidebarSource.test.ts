@@ -64,6 +64,17 @@ describe('source helper sidebar source', () => {
     expect(diagnosticsRenderCount).toBe(1);
   });
 
+  test('shows verified, in-progress, and unavailable candidate resolution states', () => {
+    expect(sourceSidebarSource).toContain('candidate.resolution');
+    expect(sourceSidebarSource).toContain('checking resolution');
+    expect(sourceSidebarSource).toContain('resolution unavailable');
+    expect(contentScriptSource).toContain("preload = 'metadata'");
+    expect(contentScriptSource).toContain('playbackMetadata: videoElementMetadata(activeVideo)');
+    expect(contentScriptSource).toContain('candidateFromVerifiedVideoUrl');
+    expect(contentScriptSource).toContain("type: 'SHV_DEBUG_EVENT'");
+    expect(contentScriptSource).toContain('SHV_CANDIDATE_METADATA');
+  });
+
   test('does not show the latest unrelated source session when a tab has no session', () => {
     expect(contentScriptSource).not.toContain('?? latestSession(state.sessions)');
   });

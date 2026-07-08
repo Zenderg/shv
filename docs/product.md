@@ -115,6 +115,7 @@ Private-network SSRF protections are desirable before any future public or semi-
 - [docs/decisions.md](decisions.md): durable rationale, rejected alternatives, and historical context.
 - [docs/architecture.md](architecture.md): runtime architecture, module ownership, and cross-module contracts.
 - [docs/browser-extension.md](browser-extension.md): extension installation, behavior, and diagnostics.
+- [docs/browser-extension-debugging.md](browser-extension-debugging.md): agent-facing extension capture debugging playbook, evidence rules, and rejected approaches.
 - [docs/development.md](development.md): local checks, seed data, screenshot workflow, and operational notes for contributors/agents.
 - [docs/releases.md](releases.md): release and deployment workflow.
 

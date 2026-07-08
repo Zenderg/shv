@@ -9,6 +9,7 @@ import { CategoryConflictError, type CategoryService } from '../categories/categ
 import type { JobService } from '../jobs/jobService.js';
 import type { QueueRunner } from '../jobs/queueRunner.js';
 import type { LiveBrowserService } from '../browser-live/liveBrowserService.js';
+import type { ExtensionDebugService } from '../extension-debug/extensionDebugService.js';
 import type { MediaFiles } from '../media-library/mediaFiles.js';
 import type { MediaLibraryService } from '../media-library/mediaLibraryService.js';
 import { buildZipArchive, type ZipEntryInput } from '../utils/zipArchive.js';
@@ -26,6 +27,7 @@ const DEFAULT_EXTENSION_APP_ORIGIN = 'http://127.0.0.1:8080';
 export interface RouteServices {
   config: AppConfig;
   categories: CategoryService;
+  extensionDebug: ExtensionDebugService;
   jobs: JobService;
   queueRunner: QueueRunner;
   liveBrowser: LiveBrowserService;
@@ -42,6 +44,24 @@ export function createRouter(services: RouteServices): Router {
 
   router.get('/api/runtime-config', (_request, response) => {
     response.json({ sourceExtensionProfile: services.config.sourceExtensionProfile });
+  });
+
+  router.get('/api/debug/extension/events', (request, response) => {
+    if (!extensionDebugEnabled(services)) {
+      response.status(404).json({ error: 'debug_not_enabled' });
+      return;
+    }
+    const limit = typeof request.query.limit === 'string' ? Number(request.query.limit) : undefined;
+    response.json({ events: services.extensionDebug.list(limit) });
+  });
+
+  router.post('/api/debug/extension/events', (request, response) => {
+    if (!extensionDebugEnabled(services)) {
+      response.status(404).json({ error: 'debug_not_enabled' });
+      return;
+    }
+    services.extensionDebug.record(extensionDebugEventSchema().parse(request.body));
+    response.status(204).end();
   });
 
   router.get('/api/categories', (_request, response) => {
@@ -390,6 +410,23 @@ function firstHeaderValue(value: string | undefined): string | undefined {
 
 function uniqueStrings(values: string[]): string[] {
   return [...new Set(values)];
+}
+
+function extensionDebugEnabled(services: RouteServices): boolean {
+  return services.config.sourceExtensionProfile === 'dev';
+}
+
+function extensionDebugEventSchema() {
+  return z.object({
+    candidateUrl: z.string().url().nullable().optional(),
+    details: z.record(z.string(), z.unknown()).optional(),
+    eventType: z.string().min(1).max(80),
+    frameUrl: z.string().url().nullable().optional(),
+    jobId: z.string().min(1).max(200).nullable().optional(),
+    reason: z.string().min(1).max(200).nullable().optional(),
+    status: z.string().min(1).max(80).nullable().optional(),
+    tabId: z.number().int().nonnegative().nullable().optional()
+  });
 }
 
 function candidateDraftSchema(): z.ZodType<CandidateDraft> {

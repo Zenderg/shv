@@ -36,8 +36,16 @@
     return remainingSeconds > 0 ? `listening ${remainingSeconds}s` : 'waiting for playback';
   }
 
-  function candidateType(candidate: Candidate) {
-    return candidate.contentType ?? candidate.manifestType ?? 'unknown type';
+  function candidateType(candidate: Candidate, probingResolutionUrls: string[], resolutionUnavailableUrls: string[]) {
+    const parts = [candidate.contentType ?? candidate.manifestType ?? 'unknown type'];
+    if (candidate.resolution) {
+      parts.push(candidate.resolution);
+    } else if (probingResolutionUrls.includes(candidate.url)) {
+      parts.push('checking resolution');
+    } else if (resolutionUnavailableUrls.includes(candidate.url)) {
+      parts.push('resolution unavailable');
+    }
+    return parts.join(' / ');
   }
 
   function buttonLabel(candidate: Candidate, sourceSelected: boolean, selectingUrls: string[], selectedUrl: string | null | undefined) {
@@ -174,7 +182,7 @@
               <strong>{candidate.kind}</strong>
               <span>{Math.round(candidate.confidence * 100)}%</span>
             </div>
-            <p>{candidateType(candidate)}</p>
+            <p>{candidateType(candidate, $sidebarView.probingResolutionUrls, $sidebarView.resolutionUnavailableUrls)}</p>
             <code>{candidate.url}</code>
             <button
               disabled={sourceSelected || $sidebarView.selectingUrls.includes(candidate.url)}

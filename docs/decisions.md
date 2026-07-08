@@ -158,6 +158,25 @@ YouTube currently uses `yt-dlp` through `src/server/source-extractors/sourceExtr
 - Depending on Chrome's native `sidePanel` API or Yandex-specific side panel flags.
 - Listing every media-looking request on a noisy page.
 
+## Evidence-Based Extension Resolution
+
+**Decision:** Extension source cards show resolution only when it comes from real player or manifest metadata.
+
+**Why:**
+
+- Direct browser-request videos can be labeled from the active `<video>` element's `videoWidth/videoHeight` or from a hidden metadata probe.
+- HLS playlists can be labeled from master-playlist `#EXT-X-STREAM-INF` `RESOLUTION` attributes, including applying a parsed variant resolution back to the matching media-playlist candidate.
+- Embedded players can expose `blob:` player URLs while streaming HTTP(S) manifests, so exact currentSrc matching cannot solve every HLS case.
+- Incorrect resolution is worse than missing resolution because the user may choose a lower-quality source believing it is higher quality.
+
+**Rejected alternatives:**
+
+- Guessing resolution from URL fragments such as `1080P`, bitrate-looking names, CDN query fields, response size, or segment URLs.
+- Applying the active player resolution globally to every candidate in the active capture window.
+- Adding a custom MCP/API control plane for extension debugging before the current dev debug feed proves insufficient.
+
+Future extension debugging details live in [docs/browser-extension-debugging.md](browser-extension-debugging.md).
+
 The older Playwright live-browser screenshot endpoints remain useful diagnostics and fallback infrastructure, but they are not the target UX.
 
 ## Active Playback Capture

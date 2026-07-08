@@ -6,6 +6,7 @@ import request from 'supertest';
 import { describe, expect, test } from 'vitest';
 import { createRouter, errorHandler } from '../../src/server/api/routes.js';
 import type { AppConfig } from '../../src/server/config/appConfig.js';
+import { ExtensionDebugService } from '../../src/server/extension-debug/extensionDebugService.js';
 import { JobService } from '../../src/server/jobs/jobService.js';
 import { openDatabase } from '../../src/server/storage/database.js';
 
@@ -54,6 +55,7 @@ function createAppWithJob() {
   app.use(createRouter({
     categories: {} as never,
     config: tempConfig(root),
+    extensionDebug: new ExtensionDebugService(),
     jobs,
     liveBrowser: {} as never,
     mediaFiles: {} as never,

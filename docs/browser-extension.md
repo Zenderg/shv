@@ -1,6 +1,6 @@
 # Browser Extension
 
-This document is the source of truth for the Chromium helper extension's packaging, installation, runtime behavior, and development workflow. Put broad product behavior in [docs/product.md](product.md), backend/frontend module ownership in [docs/architecture.md](architecture.md), and release procedure in [docs/releases.md](releases.md).
+This document is the source of truth for the Chromium helper extension's packaging, installation, runtime behavior, and development workflow. Put broad product behavior in [docs/product.md](product.md), backend/frontend module ownership in [docs/architecture.md](architecture.md), deep capture debugging notes in [docs/browser-extension-debugging.md](browser-extension-debugging.md), and release procedure in [docs/releases.md](releases.md).
 
 Manual source selection uses a local Chromium browser extension so source pages open as normal browser tabs with a live Sources sidebar embedded directly into the page.
 
@@ -84,6 +84,12 @@ The sidebar can be collapsed into a narrow right-edge handle with its arrow butt
 
 The Sources sidebar captures candidates around active playback instead of listing every media-looking request on the page. Start the main video first; the content script reports playback from one visible dominant `<video>`, and the service worker accepts recent network candidates only during a short rolling active window. Byte-range URLs such as `?bytes=0-6402` are ignored because they are chunks, not standalone downloadable sources.
 
+When the sidebar is open, content scripts report concrete `videoWidth` and `videoHeight` from the active playback element so direct `video/*` browser-request candidates can inherit the player's verified resolution even when the media URL came from an embedded frame. That playback metadata is tied to the active element's exact `currentSrc`; do not apply it globally to every video request in the active capture window, because quality switches can emit the new network request a fraction of a second before the player reports the new resolution. If a matching network request is already pending, the service worker reprocesses it when the matching `currentSrc` playback signal arrives. The top-frame sidebar may also probe direct video candidates with a hidden `<video preload="metadata">` element. A failed probe should show `resolution unavailable` and emit a debug event rather than inferring resolution from URL parameters, response size, or CDN-specific query fields.
+
+HLS resolution should come from real manifest metadata or the active player state, not from media segment URLs. The service worker may fetch captured `.m3u8` manifests with browser cookies and parse `#EXT-X-STREAM-INF` `RESOLUTION` attributes; when a master playlist references a media playlist, the matching media playlist candidate inherits that variant resolution. Media playlists without variant metadata must remain unresolved instead of guessing from names such as `1080P` in the path.
+
+In the development extension profile, metadata probe failures and other extension diagnostics are posted to the app's in-memory debug feed. Use `GET /api/debug/extension/events` to inspect recent events, or `GET /api/debug/extension/events?limit=25` for a shorter window. These routes intentionally return 404 outside the development extension profile.
+
 Extensionless media request URLs with an explicit `mime=video/...` query hint are treated like direct video responses; large video platforms commonly use that shape for playable media while response headers may be hidden from ordinary extension header observation.
 
 YouTube/Chromium can expose `*.googlevideo.com/videoplayback` requests without a visible video `Content-Type` or `mime` query parameter. Those request URLs are accepted as browser-request candidates unless they carry explicit `bytes` or `range` query parameters, which indicate a chunk rather than a standalone source.
@@ -94,7 +100,7 @@ YouTube page URLs are handled by the backend `yt-dlp` source extractor. Do not r
 
 ## Embedded Players
 
-The extension statically loads the content script only on the app origin so the app-page bridge can work. Source pages are injected programmatically when the app opens a source tab or the user toggles the extension action. That source-page injection targets all frames so embedded players, such as VK video inside a Yandex page, can report active playback. Only the top frame owns the visible Sources sidebar and the app bridge.
+The extension statically loads the content script only on the app origin so the app-page bridge can work. Source pages are injected programmatically when the app opens a source tab or the user toggles the extension action. That source-page injection targets all existing frames, and the service worker also observes new child-frame navigations with `webNavigation` so embedded players created after the sidebar opens, such as VK video inside a Yandex page, can report active playback. Only the top frame owns the visible Sources sidebar and the app bridge.
 
 Some embedded players do not expose a usable DOM `<video>` to extension content scripts while still streaming media requests. For those cases, start playback and click Capture now in the Sources sidebar; this opens the same short active capture window manually without returning to whole-page passive collection.
 
@@ -126,3 +132,5 @@ Hovering or focusing a candidate should visually highlight the related media are
 ## Diagnostics
 
 When capture stays empty, the Sources sidebar shows a Diagnostics block with DOM video counts, active-playback status, and media-like network/classifier counters. Use that block first to determine whether the break is in page playback detection, network observation, tab/session mapping, or URL classification.
+
+For future-agent debugging playbooks, resolution evidence rules, and rejected extension-capture approaches, see [docs/browser-extension-debugging.md](browser-extension-debugging.md).

@@ -6,6 +6,7 @@ import request from 'supertest';
 import { describe, expect, test } from 'vitest';
 import { createRouter, errorHandler } from '../../src/server/api/routes.js';
 import type { AppConfig } from '../../src/server/config/appConfig.js';
+import { ExtensionDebugService } from '../../src/server/extension-debug/extensionDebugService.js';
 
 describe('cookie route', () => {
   test('stores uploaded browser cookies as a Netscape cookies file', async () => {
@@ -16,6 +17,7 @@ describe('cookie route', () => {
     app.use(createRouter({
       categories: {} as never,
       config: tempConfig(root, cookiesPath),
+      extensionDebug: new ExtensionDebugService(),
       jobs: {} as never,
       liveBrowser: {} as never,
       mediaFiles: {} as never,
@@ -59,6 +61,7 @@ describe('cookie route', () => {
     app.use(createRouter({
       categories: {} as never,
       config: tempConfig(root, cookiesPath),
+      extensionDebug: new ExtensionDebugService(),
       jobs: {} as never,
       liveBrowser: {} as never,
       mediaFiles: {} as never,

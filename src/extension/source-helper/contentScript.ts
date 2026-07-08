@@ -1,11 +1,14 @@
 import { mount } from 'svelte';
-import { APP_ORIGIN, candidateFromUrl, PROTOCOL_VERSION } from '../../../extension/chrome-source-helper/shared.js';
+import { APP_ORIGIN, candidateFromUrl, candidateFromVerifiedVideoUrl, PROTOCOL_VERSION } from '../../../extension/chrome-source-helper/shared.js';
 import SourceSidebar from './SourceSidebar.svelte';
 import { HIGHLIGHT_PADDING, SIDEBAR_COLLAPSED_WIDTH, SIDEBAR_WIDTH, sidebarCss } from './sidebarStyles';
-import { setSidebarActions, sidebarView, type SourceSession } from './sidebarStore';
+import { setSidebarActions, sidebarView, type Candidate, type SourceSession } from './sidebarStore';
 
 const PLAYBACK_SIGNAL_INTERVAL_MS = 1200;
 const DIAGNOSTIC_SIGNAL_INTERVAL_MS = 1500;
+const VIDEO_METADATA_TIMEOUT_MS = 8000;
+const MAX_METADATA_PROBES_PER_SESSION = 6;
+const VIDEO_METADATA_EXTENSIONS = ['.mp4', '.webm', '.mov', '.m4v'];
 const IS_TOP_FRAME = window.top === window;
 
 type RuntimeMessage = Record<string, any>;
@@ -40,6 +43,8 @@ let capturePending = false;
 let selectionError: string | null = null;
 
 const observedVideos = new WeakSet<HTMLVideoElement>();
+const probingResolutionUrls = new Set<string>();
+const resolutionUnavailableUrls = new Set<string>();
 const selectingSourceUrls = new Set<string>();
 
 registerVideoPlaybackListeners();
@@ -221,6 +226,7 @@ async function renderSidebar() {
   if (highlightedCandidate) {
     updateHighlightOverlay();
   }
+  void probeSessionCandidateMetadata(session);
 }
 
 function updateSidebarView(session: SourceSession | null) {
@@ -228,6 +234,8 @@ function updateSidebarView(session: SourceSession | null) {
     capturePending,
     collapsed: sidebarCollapsed,
     highlightedUrl: highlightedCandidate?.url ?? null,
+    probingResolutionUrls: [...probingResolutionUrls],
+    resolutionUnavailableUrls: [...resolutionUnavailableUrls],
     selectingUrls: [...selectingSourceUrls],
     selectionError,
     session,
@@ -577,6 +585,7 @@ function collectAndSendCandidates() {
   void sendRuntimeMessage({
     candidates,
     currentSrc: activeVideo.currentSrc || activeVideo.src || null,
+    playbackMetadata: videoElementMetadata(activeVideo),
     protocolVersion: PROTOCOL_VERSION,
     type: 'SHV_ACTIVE_PLAYBACK'
   });
@@ -656,6 +665,7 @@ function urlKind(value: string) {
 function activeVideoCandidates(video: HTMLVideoElement) {
   const candidates = [];
   const urls = new Set<string>();
+  const metadata = videoElementMetadata(video);
   for (const rawUrl of [
     video.currentSrc,
     video.src,
@@ -665,12 +675,181 @@ function activeVideoCandidates(video: HTMLVideoElement) {
       continue;
     }
     urls.add(rawUrl);
-    const candidate = candidateFromUrl(rawUrl, null, 'html-video', window.location.href);
+    const candidate =
+      candidateFromUrl(rawUrl, null, 'html-video', window.location.href) ??
+      (metadata.resolution ? candidateFromVerifiedVideoUrl(rawUrl, 'html-video', window.location.href) : null);
     if (candidate) {
+      candidate.durationSeconds = metadata.durationSeconds;
+      candidate.resolution = metadata.resolution;
       candidates.push(candidate);
     }
   }
   return candidates;
+}
+
+function probeSessionCandidateMetadata(session: SourceSession | null) {
+  if (!IS_TOP_FRAME || !session) {
+    return;
+  }
+  let started = 0;
+  for (const candidate of session.candidates) {
+    if (started >= MAX_METADATA_PROBES_PER_SESSION || probingResolutionUrls.size >= MAX_METADATA_PROBES_PER_SESSION) {
+      return;
+    }
+    if (!shouldProbeCandidateResolution(candidate)) {
+      continue;
+    }
+    started += 1;
+    void probeCandidateResolution(candidate);
+  }
+}
+
+function shouldProbeCandidateResolution(candidate: Candidate) {
+  if (
+    candidate.resolution ||
+    candidate.manifestType ||
+    probingResolutionUrls.has(candidate.url) ||
+    resolutionUnavailableUrls.has(candidate.url)
+  ) {
+    return false;
+  }
+  const contentType = normalizedContentType(candidate.contentType);
+  if (contentType?.startsWith('audio/')) {
+    return false;
+  }
+  if (contentType?.startsWith('video/')) {
+    return true;
+  }
+  if (candidate.kind !== 'browser-request' && candidate.kind !== 'html-video') {
+    return false;
+  }
+  return hasVideoUrlHint(candidate.url);
+}
+
+async function probeCandidateResolution(candidate: Candidate) {
+  probingResolutionUrls.add(candidate.url);
+  resolutionUnavailableUrls.delete(candidate.url);
+  updateSidebarView(currentSidebarSession());
+  const probe = await loadVideoMetadata(candidate.url);
+  probingResolutionUrls.delete(candidate.url);
+  if (!probe.resolution) {
+    resolutionUnavailableUrls.add(candidate.url);
+    sendDebugEvent(candidate, {
+      details: {
+        contentType: candidate.contentType,
+        kind: candidate.kind,
+        mediaErrorCode: probe.mediaErrorCode,
+        manifestType: candidate.manifestType
+      },
+      eventType: 'metadata-probe',
+      reason: probe.reason,
+      status: 'unavailable'
+    });
+    updateSidebarView(currentSidebarSession());
+    return;
+  }
+  resolutionUnavailableUrls.delete(candidate.url);
+  const result = (await sendRuntimeMessage({
+    candidates: [
+      {
+        ...candidate,
+        durationSeconds: probe.durationSeconds ?? candidate.durationSeconds,
+        resolution: probe.resolution
+      }
+    ],
+    type: 'SHV_CANDIDATE_METADATA'
+  })) as { ok?: boolean } | null;
+  if (!result?.ok) {
+    resolutionUnavailableUrls.add(candidate.url);
+  }
+  sendDebugEvent(candidate, {
+    details: {
+      contentType: candidate.contentType,
+      durationSeconds: probe.durationSeconds,
+      kind: candidate.kind,
+      manifestType: candidate.manifestType,
+      resolution: probe.resolution
+    },
+    eventType: 'metadata-probe',
+    reason: result?.ok ? null : 'metadata-post-failed',
+    status: result?.ok ? 'available' : 'unavailable'
+  });
+  updateSidebarView(currentSidebarSession());
+}
+
+function loadVideoMetadata(url: string) {
+  return new Promise<{ durationSeconds: number | null; mediaErrorCode: number | null; reason: string; resolution: string | null }>((resolve) => {
+    const video = document.createElement('video');
+    let settled = false;
+    const finish = (metadata: { durationSeconds: number | null; mediaErrorCode: number | null; reason: string; resolution: string | null }) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      window.clearTimeout(timeout);
+      video.removeAttribute('src');
+      video.load();
+      video.remove();
+      resolve(metadata);
+    };
+    const timeout = window.setTimeout(() => finish({ durationSeconds: null, mediaErrorCode: null, reason: 'metadata-timeout', resolution: null }), VIDEO_METADATA_TIMEOUT_MS);
+    video.addEventListener('loadedmetadata', () => finish({ ...videoElementMetadata(video), mediaErrorCode: null, reason: 'loadedmetadata' }), { once: true });
+    video.addEventListener('error', () => finish({ durationSeconds: null, mediaErrorCode: video.error?.code ?? null, reason: 'video-error', resolution: null }), { once: true });
+    video.muted = true;
+    video.playsInline = true;
+    video.preload = 'metadata';
+    video.style.cssText = 'height:1px;left:-9999px;opacity:0;pointer-events:none;position:fixed;top:-9999px;width:1px;';
+    document.documentElement.append(video);
+    video.src = url;
+    video.load();
+  });
+}
+
+function sendDebugEvent(candidate: Candidate, event: { details?: Record<string, unknown>; eventType: string; reason: string | null; status: string }) {
+  const session = currentSidebarSession();
+  void sendRuntimeMessage({
+    event: {
+      candidateUrl: candidate.url,
+      details: {
+        frameUrl: window.location.href,
+        isTopFrame: IS_TOP_FRAME,
+        ...(event.details ?? {})
+      },
+      eventType: event.eventType,
+      frameUrl: window.location.href,
+      jobId: session?.jobId ?? null,
+      reason: event.reason,
+      status: event.status
+    },
+    type: 'SHV_DEBUG_EVENT'
+  });
+}
+
+function videoElementMetadata(video: HTMLVideoElement) {
+  const width = Math.round(video.videoWidth);
+  const height = Math.round(video.videoHeight);
+  return {
+    durationSeconds: Number.isFinite(video.duration) ? Number(video.duration.toFixed(3)) : null,
+    resolution: width > 0 && height > 0 ? `${width}x${height}` : null
+  };
+}
+
+function normalizedContentType(value: string | null) {
+  return value?.split(';')[0].trim().toLowerCase() ?? null;
+}
+
+function hasVideoUrlHint(url: string) {
+  try {
+    const parsed = new URL(url, window.location.href);
+    const mime = normalizedContentType(parsed.searchParams.get('mime'));
+    return (
+      Boolean(mime?.startsWith('video/')) ||
+      VIDEO_METADATA_EXTENSIONS.some((extension) => parsed.pathname.toLowerCase().endsWith(extension)) ||
+      (parsed.hostname.endsWith('.googlevideo.com') && parsed.pathname.endsWith('/videoplayback'))
+    );
+  } catch {
+    return false;
+  }
 }
 
 function sidebarReservedWidth() {
