@@ -15,7 +15,7 @@ describe('source helper sidebar source', () => {
 
   test('keeps the injected host within narrow viewports', () => {
     expect(contentScriptSource).toContain('sidebarHost.style.width = sidebarHostWidth(false)');
-    expect(contentScriptSource).toContain('width: min(100vw, ${SIDEBAR_WIDTH}px);');
+    expect(contentScriptSource).toContain('return collapsed ? `${SIDEBAR_COLLAPSED_WIDTH}px` : `min(100vw, ${SIDEBAR_WIDTH}px)`');
   });
 
   test('accepts page bridge messages only on the packaged app origin', () => {

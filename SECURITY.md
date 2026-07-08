@@ -12,7 +12,7 @@ The extension is intended for local installation by the person running shv. Revi
 
 ## Cookies
 
-When the user explicitly clicks `Use source`, the extension collects cookies related to the source page and selected media URLs and sends them to the local shv backend at `127.0.0.1:8080`. The backend stores them in the configured app data folder so download tools can retry selected sources with the same browser context.
+When the user explicitly clicks `Use source`, the extension collects cookies related to the source page and selected media URLs and sends them to the shv app origin embedded in the downloaded extension package. The backend stores them in the configured app data folder so download tools can retry selected sources with the same browser context.
 
 Do not share `./data/app`, `youtube-cookies.txt`, exported logs, screenshots, or the SQLite database publicly.
 
