@@ -105,4 +105,11 @@ describe('source helper sidebar source', () => {
     expect(appSource).toContain('Choose source');
     expect(appSource).not.toContain('Choose source (');
   });
+
+  test('surfaces broad extension permissions in the install dialog', () => {
+    expect(appSource).toContain('<all_urls>');
+    expect(appSource).toContain('webRequest');
+    expect(appSource).toContain('cookies');
+    expect(appSource).toContain('Use source');
+  });
 });
