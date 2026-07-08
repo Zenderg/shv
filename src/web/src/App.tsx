@@ -908,6 +908,10 @@ function ExtensionInstallDialog({
             {' '}
             {isOutdated ? 'Your installed extension is too old for this app build.' : 'The extension was not detected.'}
           </p>
+          <p>
+            Chrome will ask for broad browser permissions (<code>{'<all_urls>'}</code>, <code>webRequest</code>, and <code>cookies</code>)
+            so shv can observe media requests and collect relevant cookies after you click <strong>Use source</strong>.
+          </p>
           <div className="extensionVersionBox">
             <span>Required extension</span>
             <strong>v{SOURCE_EXTENSION_REQUIRED_VERSION}</strong>
