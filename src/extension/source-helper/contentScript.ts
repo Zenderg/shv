@@ -3,6 +3,7 @@ import {
   APP_ORIGIN,
   candidateFromUrl,
   candidateFromVerifiedVideoUrl,
+  EXTENSION_VERSION,
   PROTOCOL_VERSION,
   subtitleTrackFromUrl
 } from '../../../extension/chrome-source-helper/shared.js';
@@ -17,8 +18,12 @@ const VIDEO_METADATA_TIMEOUT_MS = 8000;
 const MAX_METADATA_PROBES_PER_SESSION = 6;
 const VIDEO_METADATA_EXTENSIONS = ['.mp4', '.webm', '.mov', '.m4v'];
 const IS_TOP_FRAME = window.top === window;
+const CONTENT_SCRIPT_LOADED_KEY = '__shvSourceHelperContentScriptLoaded';
+const SIDEBAR_HOST_ID = 'shv-source-helper-sidebar';
+const HIGHLIGHT_OVERLAY_ID = 'shv-source-helper-highlight';
 
 type RuntimeMessage = Record<string, any>;
+type SourceHelperWindow = Window & typeof globalThis & { [CONTENT_SCRIPT_LOADED_KEY]?: { version: string } };
 
 declare const chrome:
   | undefined
@@ -54,85 +59,89 @@ const probingResolutionUrls = new Set<string>();
 const resolutionUnavailableUrls = new Set<string>();
 const selectingSourceUrls = new Set<string>();
 
-registerVideoPlaybackListeners();
-collectAndSendCandidates();
-window.setInterval(() => {
+const sourceHelperWindow = window as SourceHelperWindow;
+if (sourceHelperWindow[CONTENT_SCRIPT_LOADED_KEY]?.version !== EXTENSION_VERSION) {
+  sourceHelperWindow[CONTENT_SCRIPT_LOADED_KEY] = { version: EXTENSION_VERSION };
   registerVideoPlaybackListeners();
   collectAndSendCandidates();
-  sendPlaybackDiagnostics();
-}, 1800);
+  window.setInterval(() => {
+    registerVideoPlaybackListeners();
+    collectAndSendCandidates();
+    sendPlaybackDiagnostics();
+  }, 1800);
 
-const observer = new MutationObserver(() => {
-  registerVideoPlaybackListeners();
-  collectAndSendCandidates();
-});
-observer.observe(document.documentElement, { childList: true, subtree: true });
+  const observer = new MutationObserver(() => {
+    registerVideoPlaybackListeners();
+    collectAndSendCandidates();
+  });
+  observer.observe(document.documentElement, { childList: true, subtree: true });
 
-chrome?.runtime?.onMessage.addListener((message, _sender, sendResponse) => {
-  if (!IS_TOP_FRAME) {
-    return false;
-  }
-  if (message?.type === 'SHV_SOURCE_HELPER_PING') {
-    sendResponse({ ok: true });
-    return false;
-  }
-  if (message?.type === 'SHV_SHOW_SIDEBAR') {
-    sidebarTabId = message.tabId ?? sidebarTabId;
-    showSidebar();
-    sendResponse({ ok: true });
-    return false;
-  }
-  if (message?.type === 'SHV_TOGGLE_SIDEBAR') {
-    sidebarTabId = message.tabId ?? sidebarTabId;
-    if (sidebarVisible) {
-      hideSidebar();
-    } else {
+  chrome?.runtime?.onMessage.addListener((message, _sender, sendResponse) => {
+    if (!IS_TOP_FRAME) {
+      return false;
+    }
+    if (message?.type === 'SHV_SOURCE_HELPER_PING') {
+      sendResponse({ ok: true });
+      return false;
+    }
+    if (message?.type === 'SHV_SHOW_SIDEBAR') {
+      sidebarTabId = message.tabId ?? sidebarTabId;
       showSidebar();
+      sendResponse({ ok: true });
+      return false;
     }
-    sendResponse({ ok: true });
-    return false;
-  }
-  if (message?.type === 'SHV_SOURCE_STATE_CHANGED') {
-    sidebarTabId = message.tabId ?? sidebarTabId;
-    if (sidebarVisible) {
-      void renderSidebar();
+    if (message?.type === 'SHV_TOGGLE_SIDEBAR') {
+      sidebarTabId = message.tabId ?? sidebarTabId;
+      if (sidebarVisible) {
+        hideSidebar();
+      } else {
+        showSidebar();
+      }
+      sendResponse({ ok: true });
+      return false;
     }
-    return false;
-  }
-  if (message?.type === 'SHV_SOURCE_SELECTED') {
-    window.postMessage(
-      {
-        channel: 'SHV_SOURCE_HELPER_EVENT',
-        event: { jobId: message.jobId, type: 'source-selected' }
-      },
-      window.location.origin
-    );
-    sendResponse({ ok: true });
-    return false;
-  }
-  return false;
-});
-
-if (IS_TOP_FRAME) {
-  window.addEventListener('message', (event) => {
-    if (window.location.origin !== APP_ORIGIN || event.source !== window || event.data?.channel !== 'SHV_SOURCE_HELPER') {
-      return;
+    if (message?.type === 'SHV_SOURCE_STATE_CHANGED') {
+      sidebarTabId = message.tabId ?? sidebarTabId;
+      if (sidebarVisible) {
+        void renderSidebar();
+      }
+      return false;
     }
-    if (event.data.extensionId && event.data.extensionId !== chrome?.runtime?.id) {
-      return;
-    }
-    sendRuntimeMessage(event.data.message, (response) => {
+    if (message?.type === 'SHV_SOURCE_SELECTED') {
       window.postMessage(
         {
-          channel: 'SHV_SOURCE_HELPER_RESPONSE',
-          extensionId: chrome?.runtime?.id,
-          requestId: event.data.requestId,
-          response
+          channel: 'SHV_SOURCE_HELPER_EVENT',
+          event: { jobId: message.jobId, type: 'source-selected' }
         },
         window.location.origin
       );
-    });
+      sendResponse({ ok: true });
+      return false;
+    }
+    return false;
   });
+
+  if (IS_TOP_FRAME) {
+    window.addEventListener('message', (event) => {
+      if (window.location.origin !== APP_ORIGIN || event.source !== window || event.data?.channel !== 'SHV_SOURCE_HELPER') {
+        return;
+      }
+      if (event.data.extensionId && event.data.extensionId !== chrome?.runtime?.id) {
+        return;
+      }
+      sendRuntimeMessage(event.data.message, (response) => {
+        window.postMessage(
+          {
+            channel: 'SHV_SOURCE_HELPER_RESPONSE',
+            extensionId: chrome?.runtime?.id,
+            requestId: event.data.requestId,
+            response
+          },
+          window.location.origin
+        );
+      });
+    });
+  }
 }
 
 function showSidebar() {
@@ -157,12 +166,17 @@ function hideSidebar() {
 }
 
 function ensureSidebar() {
-  if (sidebarHost && sidebarShadow) {
+  if (sidebarHost && sidebarShadow && sidebarHost.isConnected) {
+    removeStaleSidebarHosts();
     return;
   }
 
+  sidebarHost = null;
+  sidebarShadow = null;
+  removeStaleSidebarHosts();
+
   sidebarHost = document.createElement('div');
-  sidebarHost.id = 'shv-source-helper-sidebar';
+  sidebarHost.id = SIDEBAR_HOST_ID;
   sidebarHost.style.position = 'fixed';
   sidebarHost.style.top = '0';
   sidebarHost.style.right = '0';
@@ -193,6 +207,14 @@ function ensureSidebar() {
   });
 
   document.documentElement.append(sidebarHost);
+}
+
+function removeStaleSidebarHosts() {
+  for (const element of document.querySelectorAll(`#${SIDEBAR_HOST_ID}`)) {
+    if (element !== sidebarHost) {
+      element.remove();
+    }
+  }
 }
 
 function startRenderTimer() {
@@ -381,11 +403,16 @@ function showHighlightOverlay(candidate: { kind: string; url: string }) {
 }
 
 function ensureHighlightOverlay() {
-  if (highlightOverlay) {
+  if (highlightOverlay?.isConnected) {
+    removeStaleHighlightOverlays();
     return;
   }
+
+  highlightOverlay = null;
+  removeStaleHighlightOverlays();
+
   highlightOverlay = document.createElement('div') as HTMLDivElement & { candidate?: { kind: string; url: string }; target?: Element };
-  highlightOverlay.id = 'shv-source-helper-highlight';
+  highlightOverlay.id = HIGHLIGHT_OVERLAY_ID;
   highlightOverlay.style.position = 'fixed';
   highlightOverlay.style.display = 'none';
   highlightOverlay.style.pointerEvents = 'none';
@@ -394,6 +421,14 @@ function ensureHighlightOverlay() {
   document.documentElement.append(highlightOverlay);
   window.addEventListener('scroll', updateHighlightOverlay, true);
   window.addEventListener('resize', updateHighlightOverlay);
+}
+
+function removeStaleHighlightOverlays() {
+  for (const element of document.querySelectorAll(`#${HIGHLIGHT_OVERLAY_ID}`)) {
+    if (element !== highlightOverlay) {
+      element.remove();
+    }
+  }
 }
 
 function updateHighlightOverlay() {
@@ -507,7 +542,7 @@ function preferredHighlightElement(element: Element) {
   let best = element instanceof HTMLSourceElement && element.parentElement ? element.parentElement : element;
   let current = best.parentElement;
   for (let depth = 0; current && depth < 5; depth += 1, current = current.parentElement) {
-    if (current === sidebarHost || current.id === 'shv-source-helper-highlight') {
+    if (current === sidebarHost || current.id === HIGHLIGHT_OVERLAY_ID) {
       break;
     }
     const bestRect = best.getBoundingClientRect();

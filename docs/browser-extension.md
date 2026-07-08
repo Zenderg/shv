@@ -107,6 +107,8 @@ YouTube page URLs are handled by the backend `yt-dlp` source extractor. Do not r
 
 The extension statically loads the content script only on the app origin so the app-page bridge can work. Source pages are injected programmatically when the app opens a source tab or the user toggles the extension action. That source-page injection targets all existing frames. The service worker also observes source-tab navigation with `webNavigation`: top-frame commits must restore the visible Sources sidebar after redirects or SPA document swaps, while child-frame commits get content-script injection so embedded players created after the sidebar opens, such as VK video inside a Yandex page, can report active playback. Only the top frame owns the visible Sources sidebar and the app bridge.
 
+Programmatic injection can be requested more than once for the same frame. The content script must stay idempotent: one runtime listener set per frame, one visible top-frame sidebar host, and no leftover duplicate `#shv-source-helper-sidebar` nodes from older injected copies.
+
 Some embedded players do not expose a usable DOM `<video>` to extension content scripts while still streaming media requests. For those cases, start playback and click Capture now in the Sources sidebar; this opens the same short active capture window manually without returning to whole-page passive collection.
 
 Capture now should show a short Listening state. If the list stays empty, keep playback running or seek so the player emits a fresh media request during that window.

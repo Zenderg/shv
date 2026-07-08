@@ -27,6 +27,15 @@ describe('source helper sidebar source', () => {
     expect(contentScriptSource).toContain('return collapsed ? `${SIDEBAR_COLLAPSED_WIDTH}px` : `min(100vw, ${SIDEBAR_WIDTH}px)`');
   });
 
+  test('prevents duplicate injected sidebar hosts after repeated programmatic injection', () => {
+    expect(contentScriptSource).toContain("const CONTENT_SCRIPT_LOADED_KEY = '__shvSourceHelperContentScriptLoaded'");
+    expect(contentScriptSource).toContain('?.version !== EXTENSION_VERSION');
+    expect(contentScriptSource).toContain('sourceHelperWindow[CONTENT_SCRIPT_LOADED_KEY] = { version: EXTENSION_VERSION };');
+    expect(contentScriptSource).toContain('removeStaleSidebarHosts();');
+    expect(contentScriptSource).toContain('document.querySelectorAll(`#${SIDEBAR_HOST_ID}`)');
+    expect(contentScriptSource).toContain('element !== sidebarHost');
+  });
+
   test('accepts page bridge messages only on the packaged app origin', () => {
     expect(contentScriptSource).toContain('APP_ORIGIN');
     expect(contentScriptSource).toContain('window.location.origin !== APP_ORIGIN');

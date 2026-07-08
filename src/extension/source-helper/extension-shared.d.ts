@@ -1,5 +1,6 @@
 declare module '*extension/chrome-source-helper/shared.js' {
   export const APP_ORIGIN: string;
+  export const EXTENSION_VERSION: string;
   export const PROTOCOL_VERSION: number;
   export function candidateFromUrl(
     url: string,
