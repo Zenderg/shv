@@ -553,7 +553,7 @@ function streamFile(request: Request, response: Response, filePath: string, file
   }
   const start = Number(match[1]);
   const end = match[2] ? Number(match[2]) : stat.size - 1;
-  if (start >= stat.size || end >= stat.size) {
+  if (start >= stat.size || end >= stat.size || end < start) {
     response.status(416).end();
     return;
   }
