@@ -283,7 +283,7 @@
 
 <main>
   <section class="previewControls" aria-label="Preview controls">
-    <div>
+    <div class="previewIntro">
       <h1>Source Helper Preview</h1>
       <p>Visual harness. No Docker, browser extension, cookies, or source capture runtime.</p>
     </div>

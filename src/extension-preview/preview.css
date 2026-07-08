@@ -27,11 +27,27 @@ main {
 .previewControls {
   align-items: start;
   display: grid;
-  gap: 14px;
-  grid-template-columns: minmax(220px, 1fr) auto auto;
+  column-gap: 14px;
+  grid-template-areas:
+    "intro toolbar"
+    "scenarios scenarios";
+  grid-template-columns: minmax(220px, 1fr) auto;
+  row-gap: 12px;
   margin-bottom: 18px;
   position: relative;
   z-index: 2;
+}
+
+.previewIntro {
+  grid-area: intro;
+}
+
+.scenarioButtons {
+  grid-area: scenarios;
+}
+
+.toolbar {
+  grid-area: toolbar;
 }
 
 .previewControls h1,
@@ -57,6 +73,13 @@ main {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.scenarioButtons {
+  justify-content: start;
+}
+
+.toolbar {
   justify-content: end;
 }
 
@@ -193,10 +216,23 @@ main {
   }
 
   .previewControls {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .scenarioButtons {
+    justify-content: start;
+  }
+}
+
+@media (max-width: 520px) {
+  .previewControls {
+    grid-template-areas:
+      "intro"
+      "scenarios"
+      "toolbar";
     grid-template-columns: 1fr;
   }
 
-  .scenarioButtons,
   .toolbar {
     justify-content: start;
   }

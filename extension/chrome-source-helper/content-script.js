@@ -24,8 +24,9 @@ var Kl=Object.defineProperty;var _s=M=>{throw TypeError(M)};var Yl=(M,R,V)=>R in
     .panel.collapsed {
       align-items: start;
       background: #ffffff;
-      grid-template-rows: auto 1fr;
+      grid-template-rows: auto auto 1fr;
       justify-items: center;
+      row-gap: 18px;
       width: ${Rr}px;
     }
 
@@ -33,10 +34,11 @@ var Kl=Object.defineProperty;var _s=M=>{throw TypeError(M)};var Yl=(M,R,V)=>R in
       color: #64716b;
       font-size: 12px;
       font-weight: 800;
-      margin-top: 12px;
-      transform: rotate(90deg);
-      transform-origin: center;
+      line-height: 1;
+      margin-top: 0;
+      text-orientation: mixed;
       white-space: nowrap;
+      writing-mode: vertical-rl;
     }
 
     header {
