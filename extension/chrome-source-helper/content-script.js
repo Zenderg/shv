@@ -163,10 +163,13 @@ ${e.resolution??"unknown"}`}function Tl(e){try{return new URL(e).origin}catch{re
     }
 
     .source {
+      align-content: start;
+      align-self: start;
       background: #ffffff;
       border-radius: 8px;
       display: grid;
       gap: 8px;
+      min-width: 0;
       padding: 12px;
       transition: box-shadow 120ms ease, transform 120ms ease;
     }
@@ -209,6 +212,9 @@ ${e.resolution??"unknown"}`}function Tl(e){try{return new URL(e).origin}catch{re
       display: block;
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
       font-size: 12px;
+      line-height: 1.35;
+      max-height: 92px;
+      overflow: auto;
       overflow-wrap: anywhere;
     }
 

@@ -87,15 +87,18 @@ describe('source helper sidebar source', () => {
     expect(sourceSidebarSource).toContain('class:capturing={$sidebarView.capturePending}');
   });
 
-  test('keeps the candidate list as the only vertical scroll container', () => {
+  test('keeps source cards compact while long URLs scroll inside the URL area', () => {
     const sourcesBlock = cssBlock('.sources');
+    const sourceBlock = cssBlock('.source');
     const codeBlock = cssBlock('.source code');
 
     expect(sidebarStylesSource).toContain('grid-template-rows: auto auto minmax(0, 1fr);');
     expect(sourcesBlock).toContain('min-height: 0;');
     expect(sourcesBlock).toContain('overflow: auto;');
-    expect(codeBlock).not.toContain('overflow: auto;');
-    expect(codeBlock).not.toContain('max-height:');
+    expect(sourceBlock).toContain('align-content: start;');
+    expect(sourceBlock).toContain('align-self: start;');
+    expect(codeBlock).toContain('max-height:');
+    expect(codeBlock).toContain('overflow: auto;');
   });
 
   test('does not surface backend candidate counts in the main choose-source action', () => {
