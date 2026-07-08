@@ -13,6 +13,7 @@ This document is the product source of truth: supported scope, non-goals, user-f
 - download direct video files, HLS streams, DASH streams, and selected browser-captured sources;
 - discover media from page URLs where the final playable source is not visible until analysis or playback;
 - use a Chromium helper extension when a page reveals playable media only during browser playback;
+- choose one detected subtitle track, or choose no subtitles, before downloading a source that exposes subtitles;
 - watch saved videos from the web UI;
 - rename, move, and delete saved videos;
 - inspect and recover queued, running, failed, canceled, and manual-selection jobs.
@@ -52,6 +53,7 @@ The default downloader is source-agnostic:
 - choose the highest reliable representation it can download;
 - resume direct file downloads when the server supports byte ranges;
 - preserve browser request headers and selected cookies when the user explicitly chooses a source;
+- preserve detected subtitle-track metadata through manual source selection and burn the user's chosen subtitle track into the saved video;
 - remux when possible and transcode only when needed for browser playback.
 
 Automatic download may proceed only when the submitted URL itself is a confident media source. Media candidates discovered inside a page through HTML inspection, Playwright network capture, or extension capture require manual source selection before download.
@@ -65,6 +67,11 @@ Unsupported sources should fail visibly or ask for manual source selection. Manu
 Manual source selection is extension-first. `Choose source` checks the expected local extension id, opens the source page in a normal browser tab, and injects an in-page Sources sidebar.
 
 The extension should capture sources tied to active playback, not every media-looking request on the page. It may use a manual `Capture now` action for embedded players that stream media without exposing a usable DOM video element.
+
+The extension reports detected subtitle tracks as source metadata. It does not try to decide which subtitle menu option
+is currently selected inside an arbitrary source-page player. After `Use source`, if the selected candidate has supported
+subtitle tracks, the main queue UI asks the user to choose one track or `No subtitles`. A chosen subtitle track is burned
+into the final video so it displays by default in the app's normal HTML5 playback path.
 
 The older Playwright live-browser screenshot endpoints remain backend diagnostics and fallback infrastructure. They are not the target production manual-selection UX.
 
@@ -90,7 +97,11 @@ The queue runs one active job at a time:
 pending -> analyzing -> downloading -> processing -> completed
 ```
 
-A job may also become `needs_manual_selection`, `failed`, or `canceled`.
+A job may also become `needs_manual_selection`, `needs_subtitle_selection`, `failed`, or `canceled`.
+
+`needs_subtitle_selection` is a normal user-input state, not an error. It appears after source selection when the chosen
+candidate has supported subtitle tracks. Continuing from that state either marks exactly one subtitle track selected or
+marks all tracks unselected.
 
 On server startup, interrupted active jobs are reset to `pending` so a Docker restart cannot leave work permanently stuck. Canceling or deleting a running job must abort the active browser analysis, direct download, ffmpeg process, thumbnail generation, and owned scratch files through the queue runner rather than only changing database state.
 

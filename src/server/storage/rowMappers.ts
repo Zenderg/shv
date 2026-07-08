@@ -1,4 +1,4 @@
-import type { Category, DownloadJob, JobStatus, MediaCandidate, MediaItem } from '../../shared/types.js';
+import type { Category, DownloadJob, JobStatus, MediaCandidate, MediaItem, SubtitleTrack } from '../../shared/types.js';
 import { parseJsonObject } from './database.js';
 
 type Row = Record<string, unknown>;
@@ -65,6 +65,37 @@ export function mapMediaCandidate(row: Row): MediaCandidate {
     sizeBytes: row.size_bytes === null ? null : Number(row.size_bytes),
     confidence: Number(row.confidence),
     headers: parseJsonObject(row.headers_json === null ? null : String(row.headers_json)),
+    subtitleTracks: parseSubtitleTracks(row.subtitle_tracks_json === null || row.subtitle_tracks_json === undefined ? null : String(row.subtitle_tracks_json)),
     discoveredAt: String(row.discovered_at)
   };
+}
+
+function parseSubtitleTracks(value: string | null): SubtitleTrack[] {
+  if (!value) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed.filter(isSubtitleTrack);
+  } catch {
+    return [];
+  }
+}
+
+function isSubtitleTrack(value: unknown): value is SubtitleTrack {
+  const track = value as Partial<SubtitleTrack> | null;
+  return Boolean(
+    track &&
+      typeof track.url === 'string' &&
+      (track.contentType === null || typeof track.contentType === 'string') &&
+      typeof track.format === 'string' &&
+      (track.language === null || typeof track.language === 'string') &&
+      (track.label === null || typeof track.label === 'string') &&
+      (track.isDefault === null || typeof track.isDefault === 'boolean') &&
+      (track.isSelected === null || typeof track.isSelected === 'boolean') &&
+      typeof track.source === 'string'
+  );
 }

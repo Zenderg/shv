@@ -84,6 +84,11 @@ The sidebar can be collapsed into a narrow right-edge handle with its arrow butt
 
 The Sources sidebar captures candidates around active playback instead of listing every media-looking request on the page. Start the main video first; the content script reports playback from one visible dominant `<video>`, and the service worker accepts recent network candidates only during a short rolling active window. Byte-range URLs such as `?bytes=0-6402` are ignored because they are chunks, not standalone downloadable sources.
 
+Subtitle tracks are captured as metadata for media candidates, not as standalone downloadable sources. The extension may
+detect them from browser network requests, DOM text tracks, or HLS manifest metadata, and the Sources sidebar should
+present them as detected subtitles. It should not claim they are already burned into the video or that a particular track
+will be used until the main queue UI records the user's subtitle choice.
+
 When the sidebar is open, content scripts report concrete `videoWidth` and `videoHeight` from the active playback element so direct `video/*` browser-request candidates can inherit the player's verified resolution even when the media URL came from an embedded frame. That playback metadata is tied to the active element's exact `currentSrc`; do not apply it globally to every video request in the active capture window, because quality switches can emit the new network request a fraction of a second before the player reports the new resolution. If a matching network request is already pending, the service worker reprocesses it when the matching `currentSrc` playback signal arrives. The top-frame sidebar may also probe direct video candidates with a hidden `<video preload="metadata">` element. A failed probe should show `resolution unavailable` and emit a debug event rather than inferring resolution from URL parameters, response size, or CDN-specific query fields.
 
 HLS resolution should come from real manifest metadata or the active player state, not from media segment URLs. The service worker may fetch captured `.m3u8` manifests with browser cookies and parse `#EXT-X-STREAM-INF` `RESOLUTION` attributes; when a master playlist references a media playlist, the matching media playlist candidate inherits that variant resolution. Media playlists without variant metadata must remain unresolved instead of guessing from names such as `1080P` in the path.
@@ -127,6 +132,11 @@ Captured network candidates keep a limited downloader header allowlist such as `
 When a user explicitly clicks Use source in the extension, treat the posted candidates as the current source-session snapshot rather than merging them forever with older captures; stale signed HLS URLs can otherwise survive in the queue and race with the selected candidate.
 
 If both master and media HLS playlists are shown, prefer the concrete media playlist such as `index-v1-a1.m3u8`; `master.m3u8` is only a variant playlist and adds an extra signed-manifest fetch before ffmpeg can start reading segments.
+
+If a selected source has supported subtitle tracks, `Use source` sends all detected tracks with that candidate and the
+job moves to the app's `needs_subtitle_selection` state. The extension does not choose one subtitle track from source
+page UI state. Custom player menus are too site-specific: a click on text such as `Russian`, `English`, or `Off` is not
+a stable cross-site signal, and hardcoding those labels would make the extension wrong on other players.
 
 The sidebar's visible source list is a presentation layer over the full source-session snapshot. Keep the complete `session.candidates` set available for cookie collection, backend candidate replacement, selection lookup, and debugging, while rendering only the candidates that are actionable for the active playback when the extension has enough player or manifest evidence. For HLS, prefer a concrete media playlist that matches the active playback resolution and hide related master or other-resolution playlists from the ordinary list.
 

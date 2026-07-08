@@ -197,6 +197,30 @@ The older Playwright live-browser screenshot endpoints remain useful diagnostics
 
 Network candidates must include enough request context for server retry: a limited allowlist of browser headers plus selected cookies on the explicit `Use source` action.
 
+## App-Owned Subtitle Selection
+
+**Decision:** The extension detects available subtitle tracks, but the main app queue UI owns the user's subtitle choice.
+If a selected candidate has supported subtitle tracks, the job pauses at `needs_subtitle_selection`; the user chooses one
+track or `No subtitles`; a chosen track is burned into the final saved video.
+
+**Why:**
+
+- Source-player subtitle menus are not a stable web API. The visible text, DOM structure, language labels, and timing of
+  network subtitle requests vary by player and site.
+- Hardcoding labels such as `Off`, `Russian`, or `English` would accidentally make one site define the extension's
+  behavior for every other site.
+- The app can present an explicit, recoverable choice from the detected track metadata, which is easier to debug than
+  trying to mirror arbitrary player state.
+- Burning the selected subtitle into the output makes saved playback predictable in the app's default HTML5 player and
+  avoids depending on browser-specific subtitle-track switching UI.
+
+**Rejected alternatives:**
+
+- Inferring the selected subtitle track from content-script click handlers on source-page menus.
+- Automatically choosing all detected subtitle tracks and expecting the app player to expose a switcher.
+- Saving subtitles only as sidecar metadata when the current product expectation is that selected subtitles display by
+  default in the downloaded video.
+
 ## Seed Data Is Explicit And Local
 
 **Decision:** Dev and showcase seed workflows are command-driven and never run during application startup.

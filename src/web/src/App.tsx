@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { SourceExtensionKind } from '../../shared/sourceExtension';
-import { api, type Category, type DownloadJob, type MediaItem, type QueueSnapshot } from './lib/api';
+import { api, type Category, type DownloadJob, type MediaCandidate, type MediaItem, type QueueSnapshot, type SubtitleTrack } from './lib/api';
 import {
   SOURCE_EXTENSION_PROTOCOL_VERSION,
   SOURCE_EXTENSION_REQUIRED_VERSION,
@@ -9,6 +9,7 @@ import {
   sourceExtensionTargetForOrigin,
   type ExtensionStatus
 } from './lib/extensionBridge';
+import { jobStageProgress } from './lib/jobProgress';
 
 type DialogState =
   | { kind: 'none' }
@@ -210,7 +211,7 @@ export function App() {
   }
 
   const activeProblems = useMemo(
-    () => queue.jobs.filter((job) => job.status === 'failed' || job.status === 'needs_manual_selection').length,
+    () => queue.jobs.filter((job) => ['failed', 'needs_manual_selection', 'needs_subtitle_selection'].includes(job.status)).length,
     [queue.jobs]
   );
   const queueBadgeCount = queue.jobs.length;
@@ -331,6 +332,7 @@ export function App() {
         ) : (
           <QueuePanel
             busyJobIds={queueActionJobIds}
+            candidatesByJobId={queue.candidatesByJobId}
             jobs={queue.jobs}
             onCancel={(job) =>
               runQueueAction(job, 'Canceling', async () => {
@@ -348,6 +350,12 @@ export function App() {
             onRetry={(job) =>
               runQueueAction(job, 'Retrying', async () => {
                 await api.retryJob(job.id);
+                setQueue(await api.queue());
+              })
+            }
+            onSubtitleNext={(job, subtitleTrackUrl) =>
+              runQueueAction(job, 'Continuing', async () => {
+                await api.selectSubtitleTrack(job.id, subtitleTrackUrl);
                 setQueue(await api.queue());
               })
             }
@@ -623,18 +631,22 @@ function LibraryGrid({
 
 function QueuePanel({
   busyJobIds,
+  candidatesByJobId,
   jobs,
   onCancel,
   onDelete,
   onManual,
-  onRetry
+  onRetry,
+  onSubtitleNext
 }: {
   busyJobIds: Record<string, string>;
+  candidatesByJobId: Record<string, MediaCandidate[]>;
   jobs: DownloadJob[];
   onCancel: (job: DownloadJob) => void;
   onDelete: (job: DownloadJob) => void;
   onManual: (job: DownloadJob) => void;
   onRetry: (job: DownloadJob) => void;
+  onSubtitleNext: (job: DownloadJob, subtitleTrackUrl: string | null) => void;
 }) {
   return (
     <section className="queueList" aria-label="Queue jobs">
@@ -645,6 +657,7 @@ function QueuePanel({
         const canRetry = job.status === 'failed' || job.status === 'canceled';
         const actionLabel = busyJobIds[job.id];
         const actionBusy = Boolean(actionLabel);
+        const selectedCandidate = (candidatesByJobId[job.id] ?? []).find((candidate) => candidate.id === job.selectedCandidateId) ?? null;
         return (
           <article className={`queueJob ${job.status}`} key={job.id}>
             <div className="jobHeader">
@@ -656,6 +669,14 @@ function QueuePanel({
               <ProgressRow label={stage.label} value={stage.value} />
             </div>
             {job.errorMessage ? <p>{job.errorMessage}</p> : null}
+            {job.status === 'needs_subtitle_selection' ? (
+              <SubtitleSelection
+                actionBusy={actionBusy}
+                actionLabel={actionLabel}
+                candidate={selectedCandidate}
+                onNext={(subtitleTrackUrl) => onSubtitleNext(job, subtitleTrackUrl)}
+              />
+            ) : null}
             <div className="jobActions">
               {job.status === 'needs_manual_selection' || job.status === 'failed' ? (
                 <button disabled={actionBusy} onClick={() => onManual(job)} type="button">
@@ -690,6 +711,44 @@ function QueuePanel({
   );
 }
 
+function SubtitleSelection({
+  actionBusy,
+  actionLabel,
+  candidate,
+  onNext
+}: {
+  actionBusy: boolean;
+  actionLabel?: string;
+  candidate: MediaCandidate | null;
+  onNext: (subtitleTrackUrl: string | null) => void;
+}) {
+  const tracks = useMemo(() => supportedSubtitleTracks(candidate), [candidate]);
+  const [choice, setChoice] = useState('none');
+
+  useEffect(() => {
+    setChoice('none');
+  }, [candidate?.id]);
+
+  return (
+    <section className="subtitleSelection" aria-label="Subtitle selection">
+      <label>
+        Subtitle track
+        <select disabled={actionBusy || tracks.length === 0} onChange={(event) => setChoice(event.target.value)} value={choice}>
+          <option value="none">No subtitles</option>
+          {tracks.map((track) => (
+            <option key={track.url} value={track.url}>
+              {subtitleTrackLabel(track)}
+            </option>
+          ))}
+        </select>
+      </label>
+      <button disabled={actionBusy || !candidate} onClick={() => onNext(choice === 'none' ? null : choice)} type="button">
+        {actionLabel ?? 'Next'}
+      </button>
+    </section>
+  );
+}
+
 function ProgressRow({ label, value }: { label: string; value: number }) {
   const normalized = clamp01(value);
   return (
@@ -703,24 +762,31 @@ function ProgressRow({ label, value }: { label: string; value: number }) {
   );
 }
 
-function jobStageProgress(job: DownloadJob): { label: string; value: number } {
-  switch (job.status) {
-    case 'pending':
-      return { label: 'Waiting', value: 0 };
-    case 'analyzing':
-      return { label: 'Analyzing', value: progressWithin(job.progress, 0.05, 0.2) };
-    case 'needs_manual_selection':
-      return { label: 'Manual selection', value: 1 };
-    case 'downloading':
-      return { label: 'Downloading', value: progressWithin(job.progress, 0.22, 0.77) };
-    case 'processing':
-      return { label: 'Processing', value: progressWithin(job.progress, 0.82, 0.98) };
-    case 'completed':
-      return { label: 'Completed', value: 1 };
-    case 'failed':
-      return { label: 'Failed', value: 0 };
-    case 'canceled':
-      return { label: 'Canceled', value: 0 };
+function supportedSubtitleTracks(candidate: MediaCandidate | null): SubtitleTrack[] {
+  return (candidate?.subtitleTracks ?? []).filter((track) => ['webvtt', 'srt', 'ass', 'hls'].includes(track.format));
+}
+
+function subtitleTrackLabel(track: SubtitleTrack): string {
+  const label = track.label ?? languageLabel(track.language) ?? subtitleFilenameLabel(track.url) ?? track.format;
+  return track.format === 'unknown' ? label : `${label} (${track.format.toUpperCase()})`;
+}
+
+function languageLabel(language: string | null): string | null {
+  if (language === 'ru' || language === 'rus') {
+    return 'Russian';
+  }
+  if (language === 'en' || language === 'eng') {
+    return 'English';
+  }
+  return language;
+}
+
+function subtitleFilenameLabel(url: string): string | null {
+  try {
+    const filename = decodeURIComponent(new URL(url).pathname.split('/').pop() ?? '');
+    return filename.replace(/\.[a-z0-9]+$/i, '') || null;
+  } catch {
+    return null;
   }
 }
 
@@ -990,13 +1056,6 @@ function formatResolution(item: Pick<MediaItem, 'height' | 'width'>): string {
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-function progressWithin(value: number, start: number, end: number): number {
-  if (end <= start) {
-    return 0;
-  }
-  return clamp01((value - start) / (end - start));
 }
 
 function formatProgressPercent(value: number): string {

@@ -10,6 +10,18 @@ export type Candidate = {
   manifestType: string | null;
   resolution: string | null;
   sizeBytes: number | null;
+  subtitleTracks?: SubtitleTrack[];
+  url: string;
+};
+
+export type SubtitleTrack = {
+  contentType: string | null;
+  format: 'webvtt' | 'srt' | 'ass' | 'hls' | 'unknown';
+  isDefault: boolean | null;
+  isSelected: boolean | null;
+  label: string | null;
+  language: string | null;
+  source: 'network' | 'text-track' | 'hls-manifest';
   url: string;
 };
 
@@ -32,6 +44,7 @@ export type SourceSession = {
   selectedUrl?: string | null;
   sourceUrl: string;
   status: string;
+  subtitleTracks?: SubtitleTrack[];
   titleHint?: string | null;
   updatedAt?: string;
 };

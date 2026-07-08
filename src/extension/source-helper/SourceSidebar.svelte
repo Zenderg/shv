@@ -50,6 +50,55 @@
     return parts.join(' / ');
   }
 
+  function subtitleStatus(candidate: Candidate) {
+    const tracks = candidate.subtitleTracks ?? [];
+    if (tracks.length === 0) {
+      return {
+        available: false,
+        text: 'Detected subtitles: none'
+      };
+    }
+    const labels = [...new Set(tracks.map((track) => subtitleTrackLabel(track)))];
+    const visibleLabels = labels.slice(0, 3);
+    const extraCount = labels.length - visibleLabels.length;
+    const suffix = extraCount > 0 ? `${visibleLabels.join(', ')} +${extraCount}` : visibleLabels.join(', ');
+    return {
+      available: true,
+      text: `Detected subtitles: ${suffix}`
+    };
+  }
+
+  function subtitleTrackLabel(track: NonNullable<Candidate['subtitleTracks']>[number]) {
+    return track.label ?? languageLabel(track.language) ?? subtitleFilenameLabel(track.url) ?? track.format;
+  }
+
+  function languageLabel(language: string | null) {
+    if (language === 'ru' || language === 'rus') {
+      return 'Russian';
+    }
+    if (language === 'en' || language === 'eng') {
+      return 'English';
+    }
+    return language;
+  }
+
+  function subtitleFilenameLabel(url: string) {
+    try {
+      const filename = decodeURIComponent(new URL(url).pathname.split('/').pop() ?? '');
+      const stem = filename.replace(/\.[a-z0-9]+$/i, '');
+      const tokens = stem.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+      if (tokens.includes('ru') || tokens.includes('rus') || tokens.includes('russian')) {
+        return 'Russian';
+      }
+      if (tokens.includes('en') || tokens.includes('eng') || tokens.includes('english')) {
+        return 'English';
+      }
+      return filename || null;
+    } catch {
+      return null;
+    }
+  }
+
   function collapseButtonLabel(collapsed: boolean) {
     return collapsed ? 'Expand sources' : 'Collapse sources';
   }
@@ -144,6 +193,7 @@
         {@const disabledReason = sourceSelectionDisabledReason($sidebarView.session)}
         {#each visibleSidebarCandidates($sidebarView.session) as candidate (candidate.url)}
           {@const candidateSelected = sourceSelected && $sidebarView.session.selectedUrl === candidate.url}
+          {@const subtitles = subtitleStatus(candidate)}
           <article
             class:is-highlighted={$sidebarView.highlightedUrl === candidate.url}
             class:is-selected={candidateSelected}
@@ -179,6 +229,7 @@
               <span>{Math.round(candidate.confidence * 100)}%</span>
             </div>
             <p>{candidateType(candidate, $sidebarView.probingResolutionUrls, $sidebarView.resolutionUnavailableUrls)}</p>
+            <div class:has-subtitles={subtitles.available} class="subtitle-status">{subtitles.text}</div>
             <code>{candidate.url}</code>
             <button
               disabled={sourceSelected || Boolean(disabledReason) || $sidebarView.selectingUrls.includes(candidate.url)}

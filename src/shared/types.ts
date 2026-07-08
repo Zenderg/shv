@@ -2,6 +2,7 @@ export type JobStatus =
   | 'pending'
   | 'analyzing'
   | 'needs_manual_selection'
+  | 'needs_subtitle_selection'
   | 'downloading'
   | 'processing'
   | 'completed'
@@ -50,6 +51,19 @@ export interface DownloadJob {
   completedAt: string | null;
 }
 
+export interface SubtitleTrack {
+  url: string;
+  contentType: string | null;
+  format: 'webvtt' | 'srt' | 'ass' | 'hls' | 'unknown';
+  language: string | null;
+  label: string | null;
+  isDefault: boolean | null;
+  isSelected: boolean | null;
+  source: 'network' | 'text-track' | 'hls-manifest';
+  headers?: Record<string, string>;
+  localPath?: string;
+}
+
 export interface MediaCandidate {
   id: string;
   jobId: string;
@@ -63,6 +77,7 @@ export interface MediaCandidate {
   sizeBytes: number | null;
   confidence: number;
   headers: Record<string, string>;
+  subtitleTracks: SubtitleTrack[];
   discoveredAt: string;
 }
 

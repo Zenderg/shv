@@ -216,6 +216,11 @@ export function createRouter(services: RouteServices): Router {
     response.json(services.jobs.selectCandidate(request.params.id, body.candidateId));
   });
 
+  router.post('/api/jobs/:id/select-subtitle-track', (request, response) => {
+    const body = z.object({ subtitleTrackUrl: z.string().url().nullable() }).parse(request.body);
+    response.json(services.jobs.selectSubtitleTrack(request.params.id, body.subtitleTrackUrl));
+  });
+
   router.post('/api/jobs/:id/replace-source', (request, response) => {
     const body = z.object({ sourceUrl: z.string().url() }).parse(request.body);
     response.json(services.jobs.replaceSource(request.params.id, body.sourceUrl));
@@ -440,6 +445,21 @@ function candidateDraftSchema(): z.ZodType<CandidateDraft> {
     manifestType: z.enum(['hls', 'dash']).nullable(),
     resolution: z.string().nullable(),
     sizeBytes: z.number().nullable(),
+    subtitleTracks: z.array(subtitleTrackSchema()).max(50).optional().default([]),
+    url: z.string().url()
+  });
+}
+
+function subtitleTrackSchema() {
+  return z.object({
+    contentType: z.string().nullable(),
+    format: z.enum(['webvtt', 'srt', 'ass', 'hls', 'unknown']),
+    headers: z.record(z.string(), z.string()).optional(),
+    isDefault: z.boolean().nullable(),
+    isSelected: z.boolean().nullable(),
+    label: z.string().nullable(),
+    language: z.string().nullable(),
+    source: z.enum(['network', 'text-track', 'hls-manifest']),
     url: z.string().url()
   });
 }

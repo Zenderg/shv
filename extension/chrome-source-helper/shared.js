@@ -1,8 +1,14 @@
 export const PROTOCOL_VERSION = 1;
-export const EXTENSION_VERSION = '1.0.39';
+export const EXTENSION_VERSION = '1.0.43';
 export const APP_ORIGIN = 'http://127.0.0.1:8080';
 
 const VIDEO_EXTENSIONS = ['.mp4', '.webm', '.mov', '.m4v', '.mkv'];
+const SUBTITLE_EXTENSIONS = new Map([
+  ['.vtt', { contentType: 'text/vtt', format: 'webvtt' }],
+  ['.srt', { contentType: 'application/x-subrip', format: 'srt' }],
+  ['.ass', { contentType: 'text/x-ssa', format: 'ass' }],
+  ['.ssa', { contentType: 'text/x-ssa', format: 'ass' }]
+]);
 
 export function candidateFromUrl(url, contentType = null, kindOverride = null, baseUrl = undefined) {
   let parsed;
@@ -90,8 +96,10 @@ export function candidateRejectionReason(url, contentType = null) {
 
 export function parseHlsManifestMetadata(manifest, baseUrl) {
   const variants = parseHlsVariants(manifest, baseUrl);
+  const subtitleTracks = parseHlsSubtitleTracks(manifest, baseUrl);
   return {
     resolution: variants[0]?.resolution ?? null,
+    subtitleTracks,
     variants
   };
 }
@@ -126,6 +134,122 @@ function parseHlsVariants(manifest, baseUrl) {
   }
 
   return variants.sort(compareHlsVariants);
+}
+
+function parseHlsSubtitleTracks(manifest, baseUrl) {
+  if (typeof manifest !== 'string' || typeof baseUrl !== 'string') {
+    return [];
+  }
+  const lines = manifest.split(/\r?\n/).map((line) => line.trim());
+  const tracks = [];
+
+  for (const line of lines) {
+    if (!line.startsWith('#EXT-X-MEDIA:')) {
+      continue;
+    }
+    const attributes = parseHlsAttributes(line.slice('#EXT-X-MEDIA:'.length));
+    if (attributes.TYPE !== 'SUBTITLES' || !attributes.URI) {
+      continue;
+    }
+    const track = subtitleTrackFromUrl(attributes.URI, null, 'hls-manifest', baseUrl);
+    if (!track) {
+      continue;
+    }
+    tracks.push({
+      ...track,
+      isDefault: hlsBoolean(attributes.DEFAULT),
+      label: attributes.NAME || track.label,
+      language: attributes.LANGUAGE || track.language
+    });
+  }
+
+  return dedupeSubtitleTracks(tracks);
+}
+
+export function subtitleTrackFromUrl(url, contentType = null, source = 'network', baseUrl = undefined) {
+  let parsed;
+  try {
+    parsed = new URL(url, baseUrl);
+  } catch {
+    return null;
+  }
+  if (!isServerDownloadableUrl(parsed)) {
+    return null;
+  }
+  const normalizedContentType = normalizeContentType(contentType);
+  const pathname = parsed.pathname.toLowerCase();
+  const extensionMatch = [...SUBTITLE_EXTENSIONS.entries()].find(([extension]) => pathname.endsWith(extension));
+  const extensionMetadata = extensionMatch?.[1] ?? null;
+  const format = subtitleFormatFor(normalizedContentType, extensionMetadata?.format ?? null, source);
+  if (!format) {
+    return null;
+  }
+  const inferredContentType =
+    normalizedContentType ??
+    extensionMetadata?.contentType ??
+    (format === 'hls' ? 'application/vnd.apple.mpegurl' : null);
+  const inferredLanguage = subtitleLanguageFromPath(parsed.pathname);
+  return {
+    contentType: inferredContentType,
+    format,
+    isDefault: null,
+    isSelected: null,
+    label: inferredLanguage?.label ?? null,
+    language: inferredLanguage?.language ?? null,
+    source,
+    url: parsed.href
+  };
+}
+
+function subtitleLanguageFromPath(pathname) {
+  const filename = decodeURIComponent(pathname.split('/').pop() ?? '').toLowerCase();
+  const stem = filename.replace(/\.[a-z0-9]+$/, '');
+  const tokens = stem.split(/[^a-zа-я0-9]+/i).filter(Boolean);
+  const languageByToken = new Map([
+    ['ru', { label: 'Russian', language: 'ru' }],
+    ['rus', { label: 'Russian', language: 'ru' }],
+    ['russian', { label: 'Russian', language: 'ru' }],
+    ['en', { label: 'English', language: 'en' }],
+    ['eng', { label: 'English', language: 'en' }],
+    ['english', { label: 'English', language: 'en' }]
+  ]);
+  for (const token of tokens) {
+    const language = languageByToken.get(token);
+    if (language) {
+      return language;
+    }
+  }
+  return null;
+}
+
+function subtitleFormatFor(contentType, extensionFormat, source) {
+  if (contentType === 'text/vtt' || contentType === 'text/webvtt') {
+    return 'webvtt';
+  }
+  if (contentType === 'application/x-subrip' || contentType === 'text/srt') {
+    return 'srt';
+  }
+  if (contentType === 'text/x-ssa' || contentType === 'text/ass' || contentType === 'application/x-ass') {
+    return 'ass';
+  }
+  if (source === 'hls-manifest' && (contentType?.includes('mpegurl') || extensionFormat === null)) {
+    return 'hls';
+  }
+  return extensionFormat;
+}
+
+function hlsBoolean(value) {
+  if (value === 'YES') {
+    return true;
+  }
+  if (value === 'NO') {
+    return false;
+  }
+  return null;
+}
+
+function dedupeSubtitleTracks(tracks) {
+  return [...new Map(tracks.map((track) => [track.url, track])).values()];
 }
 
 function parseHlsAttributes(input) {
@@ -256,8 +380,18 @@ function mergeCandidate(current, incoming) {
     manifestType: primary.manifestType ?? secondary.manifestType ?? null,
     resolution: primary.resolution ?? secondary.resolution ?? null,
     sizeBytes: primary.sizeBytes ?? secondary.sizeBytes ?? null,
+    subtitleTracks: mergeSubtitleTracks(current.subtitleTracks ?? [], incoming.subtitleTracks ?? []),
     url: current.url
   };
+}
+
+function mergeSubtitleTracks(existing, incoming) {
+  const byUrl = new Map(existing.map((track) => [track.url, track]));
+  for (const track of incoming) {
+    const current = byUrl.get(track.url);
+    byUrl.set(track.url, current ? { ...current, ...track, headers: { ...(current.headers ?? {}), ...(track.headers ?? {}) } } : track);
+  }
+  return [...byUrl.values()];
 }
 
 export function sessionTabIdsForRequest(details, state) {
@@ -315,6 +449,7 @@ export function candidate(kind, url, contentType, manifestType, confidence) {
     manifestType,
     resolution: null,
     sizeBytes: null,
+    subtitleTracks: [],
     url
   };
 }

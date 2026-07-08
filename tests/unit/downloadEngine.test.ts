@@ -110,6 +110,7 @@ describe('DownloadEngine ffmpeg helpers', () => {
       manifestType: null,
       resolution: null,
       sizeBytes: 1200,
+      subtitleTracks: [],
       url: 'https://media.example.test/video.mp4'
     };
     const progress: number[] = [];

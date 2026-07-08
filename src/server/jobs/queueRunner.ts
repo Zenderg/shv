@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { MediaCandidate } from '../../shared/types.js';
+import type { MediaCandidate, SubtitleTrack } from '../../shared/types.js';
 import type { AppConfig } from '../config/appConfig.js';
 import type { BrowserAnalyzer } from '../browser-analyzer/browserAnalyzer.js';
 import type { CategoryService } from '../categories/categoryService.js';
@@ -161,15 +161,23 @@ export class QueueRunner {
       const normalized = await this.processor.normalize(downloadPath, finalPath, thumbnailPath, (progress) => {
         this.transitionIfRunning(job.id, 'processing', 0.82 + progress * 0.16, { selectedCandidateId }, signal);
       }, signal);
+      const subtitleTracks = selected ? await this.downloadSubtitleTracks(selected, workDir, signal) : [];
+      const processed = subtitleTracks.length > 0
+        ? {
+            ...normalized,
+            ...(await this.processor.burnSubtitle(normalized.outputPath, subtitleTracks[0], signal))
+          }
+        : normalized;
       logJobEvent('info', 'processing-completed', {
-        audioCodec: normalized.audioCodec,
-        container: normalized.container,
-        durationSeconds: normalized.durationSeconds,
+        audioCodec: processed.audioCodec,
+        container: processed.container,
+        durationSeconds: processed.durationSeconds,
         jobId: job.id,
-        processingStrategy: normalized.processingStrategy,
-        remuxRejectionReason: normalized.remuxRejectionReason,
-        sizeBytes: normalized.sizeBytes,
-        videoCodec: normalized.videoCodec
+        processingStrategy: processed.processingStrategy,
+        remuxRejectionReason: processed.remuxRejectionReason,
+        sizeBytes: processed.sizeBytes,
+        subtitleTrackCount: subtitleTracks.length,
+        videoCodec: processed.videoCodec
       });
 
       this.throwIfCanceled(job.id, signal);
@@ -177,15 +185,15 @@ export class QueueRunner {
         categoryId: category.id,
         title,
         sourceUrl: job.sourceUrl,
-        finalFilePath: normalized.outputPath,
-        thumbnailPath: normalized.thumbnailPath,
-        durationSeconds: normalized.durationSeconds,
-        width: normalized.width,
-        height: normalized.height,
-        sizeBytes: normalized.sizeBytes,
-        container: normalized.container,
-        videoCodec: normalized.videoCodec,
-        audioCodec: normalized.audioCodec
+        finalFilePath: processed.outputPath,
+        thumbnailPath: processed.thumbnailPath,
+        durationSeconds: processed.durationSeconds,
+        width: processed.width,
+        height: processed.height,
+        sizeBytes: processed.sizeBytes,
+        container: processed.container,
+        videoCodec: processed.videoCodec,
+        audioCodec: processed.audioCodec
       });
 
       if (process.env.PRESERVE_WORK_DIR === '1') {
@@ -306,6 +314,38 @@ export class QueueRunner {
     });
   }
 
+  private async downloadSubtitleTracks(
+    candidate: MediaCandidate,
+    workDir: string,
+    signal: AbortSignal
+  ): Promise<Array<SubtitleTrack & { localPath: string }>> {
+    const tracks = subtitleTracksForDownload(candidate);
+    if (tracks.length === 0) {
+      return [];
+    }
+    const subtitleDir = path.join(workDir, 'subtitles');
+    fs.mkdirSync(subtitleDir, { recursive: true });
+    const downloaded: Array<SubtitleTrack & { localPath: string }> = [];
+    for (const [index, track] of tracks.entries()) {
+      this.throwIfCanceled(candidate.jobId, signal);
+      const localPath = path.join(subtitleDir, `subtitle-${index + 1}${subtitleExtension(track)}`);
+      if (track.format === 'hls') {
+        await downloadHlsSubtitleTrack(track, localPath, candidate.headers, signal);
+      } else {
+        await downloadSubtitleFile(track, localPath, candidate.headers, signal);
+      }
+      downloaded.push({ ...track, localPath });
+      logJobEvent('info', 'subtitle-downloaded', {
+        format: track.format,
+        jobId: candidate.jobId,
+        label: track.label,
+        language: track.language,
+        source: track.source
+      });
+    }
+    return downloaded;
+  }
+
   private throwIfCanceled(jobId: string, signal: AbortSignal): void {
     throwIfAborted(signal);
     const job = this.jobs.get(jobId);
@@ -339,8 +379,93 @@ function candidateLogFields(candidate: MediaCandidate): Record<string, unknown> 
     headerKeys: Object.keys(candidate.headers).filter((key) => key.toLowerCase() !== 'cookie').sort(),
     kind: candidate.kind,
     manifestType: candidate.manifestType,
+    subtitleTrackCount: candidate.subtitleTracks.length,
     url: safeUrlParts(candidate.url)
   };
+}
+
+export function subtitleTracksForDownload(candidate: MediaCandidate): SubtitleTrack[] {
+  const supported = candidate.subtitleTracks.filter((track) => ['webvtt', 'srt', 'ass', 'hls'].includes(track.format));
+  const selected = supported.find((track) => track.isSelected === true);
+  return selected ? [selected] : [];
+}
+
+function subtitleExtension(track: SubtitleTrack): string {
+  if (track.format === 'srt') {
+    return '.srt';
+  }
+  if (track.format === 'ass') {
+    return '.ass';
+  }
+  if (track.format === 'hls') {
+    return '.m3u8';
+  }
+  return '.vtt';
+}
+
+async function downloadSubtitleFile(
+  track: SubtitleTrack,
+  localPath: string,
+  candidateHeaders: Record<string, string>,
+  signal: AbortSignal
+): Promise<void> {
+  const body = await fetchBinary(track.url, subtitleDownloadHeaders(track, candidateHeaders), signal);
+  fs.writeFileSync(localPath, body);
+}
+
+async function downloadHlsSubtitleTrack(
+  track: SubtitleTrack,
+  localPath: string,
+  candidateHeaders: Record<string, string>,
+  signal: AbortSignal
+): Promise<void> {
+  const manifest = await fetchText(track.url, subtitleDownloadHeaders(track, candidateHeaders), signal);
+  const baseUrl = track.url;
+  const directory = path.dirname(localPath);
+  let segmentIndex = 0;
+  const rewrittenLines: string[] = [];
+  for (const line of manifest.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) {
+      rewrittenLines.push(line);
+      continue;
+    }
+    segmentIndex += 1;
+    const segmentUrl = new URL(trimmed, baseUrl).toString();
+    const segmentExtension = path.extname(new URL(segmentUrl).pathname) || '.vtt';
+    const segmentName = `subtitle-segment-${segmentIndex}${segmentExtension}`;
+    const segmentPath = path.join(directory, segmentName);
+    const body = await fetchBinary(segmentUrl, subtitleDownloadHeaders(track, candidateHeaders), signal);
+    fs.writeFileSync(segmentPath, body);
+    rewrittenLines.push(segmentName);
+  }
+  if (segmentIndex === 0) {
+    throw new Error(`Subtitle HLS playlist did not contain subtitle segments: ${safeUrlParts(track.url).host}${safeUrlParts(track.url).path}`);
+  }
+  fs.writeFileSync(localPath, `${rewrittenLines.join('\n')}\n`);
+}
+
+function subtitleDownloadHeaders(track: SubtitleTrack, candidateHeaders: Record<string, string>): Record<string, string> {
+  return {
+    ...candidateHeaders,
+    ...(track.headers ?? {})
+  };
+}
+
+async function fetchText(url: string, headers: Record<string, string>, signal: AbortSignal): Promise<string> {
+  const response = await fetch(url, { headers, signal });
+  if (!response.ok) {
+    throw new Error(`Subtitle request failed with HTTP ${response.status}: ${safeUrlParts(url).host}${safeUrlParts(url).path}`);
+  }
+  return response.text();
+}
+
+async function fetchBinary(url: string, headers: Record<string, string>, signal: AbortSignal): Promise<Buffer> {
+  const response = await fetch(url, { headers, signal });
+  if (!response.ok) {
+    throw new Error(`Subtitle request failed with HTTP ${response.status}: ${safeUrlParts(url).host}${safeUrlParts(url).path}`);
+  }
+  return Buffer.from(await response.arrayBuffer());
 }
 
 function clamp01(value: number): number {

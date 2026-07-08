@@ -6,13 +6,15 @@ import {
   candidateRejectionReason,
   mergeCandidates,
   parseHlsManifestMetadata,
-  sessionTabIdsForRequest
+  sessionTabIdsForRequest,
+  subtitleTrackFromUrl
 } from './shared.js';
 
 const ACTIVE_CAPTURE_WINDOW_MS = 30000;
 const ACTIVE_PLAYBACK_WINDOW_MS = 5000;
 const PENDING_NETWORK_BUFFER_MS = 15000;
 const pendingNetworkCandidatesByTab = new Map();
+const pendingSubtitleTracksByTab = new Map();
 const hlsMetadataByTab = new Map();
 const hlsManifestFetches = new Set();
 const requestHeadersByRequestId = new Map();
@@ -75,13 +77,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
   if (message?.type === 'SHV_ACTIVE_PLAYBACK' && sender.tab?.id != null) {
-    activatePlaybackCapture(sender.tab.id, message.candidates ?? [], message.playbackMetadata, message.currentSrc).then((result) => {
+    activatePlaybackCapture(sender.tab.id, message.candidates ?? [], message.playbackMetadata, message.currentSrc, message.subtitleTracks ?? []).then((result) => {
       sendResponse(result);
       void postExtensionDebugEvent({
         details: {
           candidateCount: message.candidates?.length ?? 0,
           currentSrc: message.currentSrc ?? null,
-          playbackMetadata: normalizePlaybackMetadata(message.playbackMetadata, message.currentSrc)
+          playbackMetadata: normalizePlaybackMetadata(message.playbackMetadata, message.currentSrc),
+          subtitleTrackCount: message.subtitleTracks?.length ?? 0
         },
         eventType: 'active-playback',
         reason: message.playbackMetadata?.resolution ? null : 'missing-active-video-resolution',
@@ -205,6 +208,7 @@ async function openSourceTab(message, sender) {
       selectedUrl: null,
       sourceUrl: message.sourceUrl,
       status: 'waiting for playback',
+      subtitleTracks: [],
       titleHint: message.titleHint ?? null,
       updatedAt: new Date().toISOString()
     };
@@ -215,8 +219,8 @@ async function openSourceTab(message, sender) {
   return { ok: true, tabId: tab.id };
 }
 
-async function activatePlaybackCapture(tabId, candidates, playbackMetadata = null, currentSrc = null) {
-  return openCaptureWindow(tabId, candidates, playbackMetadata, currentSrc);
+async function activatePlaybackCapture(tabId, candidates, playbackMetadata = null, currentSrc = null, subtitleTracks = []) {
+  return openCaptureWindow(tabId, candidates, playbackMetadata, currentSrc, subtitleTracks);
 }
 
 async function startManualCapture(tabId) {
@@ -226,11 +230,13 @@ async function startManualCapture(tabId) {
   return openCaptureWindow(tabId, []);
 }
 
-async function openCaptureWindow(tabId, candidates, playbackMetadata = null, currentSrc = null) {
+async function openCaptureWindow(tabId, candidates, playbackMetadata = null, currentSrc = null, subtitleTracks = []) {
   const now = Date.now();
   const activeCaptureUntil = now + ACTIVE_CAPTURE_WINDOW_MS;
   const activePlaybackUntil = now + ACTIVE_PLAYBACK_WINDOW_MS;
   const pendingCandidates = takePendingNetworkCandidates(tabId, now);
+  const pendingSubtitleTracks = takePendingSubtitleTracks(tabId, now);
+  const mergedSubtitleTracks = mergeSubtitleTracks(pendingSubtitleTracks, subtitleTracks);
   let session = null;
   const normalizedPlaybackMetadata = normalizePlaybackMetadata(playbackMetadata, currentSrc);
   const hasPlaybackSignal = playbackMetadata != null || currentSrc != null;
@@ -251,6 +257,7 @@ async function openCaptureWindow(tabId, candidates, playbackMetadata = null, cur
     if (normalizedPlaybackMetadata) {
       session.activePlaybackMetadata = normalizedPlaybackMetadata;
     }
+    session.subtitleTracks = mergeSubtitleTracks(session.subtitleTracks ?? [], mergedSubtitleTracks);
     session.status = 'listening';
     session.updatedAt = new Date().toISOString();
   });
@@ -259,7 +266,7 @@ async function openCaptureWindow(tabId, candidates, playbackMetadata = null, cur
     return { ok: true };
   }
 
-  await mergeTabCandidates(tabId, [...pendingCandidates, ...candidates], { requireActive: false });
+  await mergeTabCandidates(tabId, attachSubtitleTracksToCandidates([...pendingCandidates, ...candidates], mergedSubtitleTracks), { requireActive: false });
   notifyPanel(tabId);
   return { captured: pendingCandidates.length + candidates.length, ok: true };
 }
@@ -421,6 +428,7 @@ function delay(milliseconds) {
 async function recordNetworkDetails(details, requestHeaders = {}) {
   const contentType = headerValue(details.responseHeaders ?? [], 'content-type');
   const candidate = candidateFromUrl(details.url, contentType, 'browser-request');
+  const subtitleTrack = subtitleTrackFromUrl(details.url, contentType, 'network');
   const state = await getState();
   const tabIds = sessionTabIdsForRequest(details, state);
   const diagnostic = networkDiagnosticFor(details, contentType, candidate, requestHeaders);
@@ -442,6 +450,26 @@ async function recordNetworkDetails(details, requestHeaders = {}) {
     }
   }
   if (!candidate) {
+    if (subtitleTrack) {
+      subtitleTrack.headers = requestHeaders;
+      for (const tabId of tabIds) {
+        await recordNetworkSubtitleTrack(tabId, subtitleTrack);
+        void postExtensionDebugEvent({
+          candidateUrl: subtitleTrack.url,
+          details: {
+            contentType,
+            headerKeys: Object.keys(requestHeaders).sort(),
+            initiator: details.initiator ?? details.documentUrl ?? null,
+            requestType: details.type ?? 'unknown',
+            statusCode: details.statusCode ?? null
+          },
+          eventType: 'network-subtitle-track',
+          reason: null,
+          status: 'captured',
+          tabId
+        }).catch(() => undefined);
+      }
+    }
     return;
   }
   candidate.headers = requestHeaders;
@@ -613,6 +641,32 @@ async function recordNetworkCandidate(tabId, candidate) {
   await mergeTabCandidates(tabId, [candidate], { requireActive: true });
 }
 
+async function recordNetworkSubtitleTrack(tabId, track) {
+  const detectedTrack = { ...track, isSelected: track.isSelected ?? null };
+  rememberPendingSubtitleTrack(tabId, detectedTrack);
+  let session = null;
+  let changed = false;
+  await upsertState((state) => {
+    session = state.sessions[String(tabId)];
+    if (!session || !isSessionCaptureActive(session)) {
+      return;
+    }
+    const subtitleTracks = mergeSubtitleTracks(session.subtitleTracks ?? [], [detectedTrack]);
+    changed = JSON.stringify(subtitleTracks) !== JSON.stringify(session.subtitleTracks ?? []);
+    if (!changed) {
+      return;
+    }
+    session.subtitleTracks = subtitleTracks;
+    session.candidates = attachSubtitleTracksToCandidates(session.candidates ?? [], subtitleTracks);
+    session.updatedAt = new Date().toISOString();
+  });
+
+  if (session && changed) {
+    await postCandidates(session.jobId, session.candidates);
+    notifyPanel(tabId);
+  }
+}
+
 async function mergeTabCandidates(tabId, candidates, options = {}) {
   const normalized = candidates.filter(Boolean);
   if (normalized.length === 0) {
@@ -629,9 +683,10 @@ async function mergeTabCandidates(tabId, candidates, options = {}) {
       return;
     }
     const withKnownHlsMetadata = normalized.map((candidate) => enrichCandidateWithKnownHlsMetadata(tabId, candidate));
+    const withSessionSubtitles = attachSubtitleTracksToCandidates(withKnownHlsMetadata, session.subtitleTracks ?? []);
     session.candidates = mergeCandidates(
       session.candidates,
-      enrichCandidatesWithPlaybackMetadata(withKnownHlsMetadata, session.activePlaybackMetadata)
+      enrichCandidatesWithPlaybackMetadata(withSessionSubtitles, session.activePlaybackMetadata)
     );
     session.updatedAt = new Date().toISOString();
   });
@@ -653,11 +708,63 @@ function rememberPendingNetworkCandidate(tabId, candidate) {
   );
 }
 
+function rememberPendingSubtitleTrack(tabId, track) {
+  const now = Date.now();
+  const pending = pendingSubtitleTracksByTab.get(tabId) ?? [];
+  pending.push({ track, capturedAt: now });
+  pendingSubtitleTracksByTab.set(
+    tabId,
+    pending.filter((entry) => now - entry.capturedAt <= PENDING_NETWORK_BUFFER_MS).slice(-80)
+  );
+}
+
 function takePendingNetworkCandidates(tabId, now = Date.now()) {
   const pending = pendingNetworkCandidatesByTab.get(tabId) ?? [];
   const fresh = pending.filter((entry) => now - entry.capturedAt <= PENDING_NETWORK_BUFFER_MS).map((entry) => entry.candidate);
   pendingNetworkCandidatesByTab.delete(tabId);
   return fresh;
+}
+
+function takePendingSubtitleTracks(tabId, now = Date.now()) {
+  const pending = pendingSubtitleTracksByTab.get(tabId) ?? [];
+  const fresh = pending.filter((entry) => now - entry.capturedAt <= PENDING_NETWORK_BUFFER_MS).map((entry) => entry.track);
+  pendingSubtitleTracksByTab.delete(tabId);
+  return fresh;
+}
+
+function attachSubtitleTracksToCandidates(candidates, subtitleTracks) {
+  const tracks = normalizeSubtitleTracks(subtitleTracks);
+  if (tracks.length === 0) {
+    return candidates;
+  }
+  return candidates.map((candidate) => ({
+    ...candidate,
+    subtitleTracks: mergeSubtitleTracks(candidate.subtitleTracks ?? [], tracks)
+  }));
+}
+
+function mergeSubtitleTracks(existing, incoming) {
+  const byUrl = new Map(normalizeSubtitleTracks(existing).map((track) => [track.url, track]));
+  const normalizedIncoming = normalizeSubtitleTracks(incoming);
+  for (const track of normalizedIncoming) {
+    const current = byUrl.get(track.url);
+    byUrl.set(track.url, current ? { ...current, ...track, headers: { ...(current.headers ?? {}), ...(track.headers ?? {}) } } : track);
+  }
+  return [...byUrl.values()];
+}
+
+function normalizeSubtitleTracks(tracks) {
+  return (tracks ?? []).filter((track) => track?.url).map((track) => ({
+    contentType: track.contentType ?? null,
+    format: track.format ?? 'unknown',
+    isDefault: track.isDefault ?? null,
+    isSelected: track.isSelected ?? null,
+    label: track.label ?? null,
+    language: track.language ?? null,
+    source: track.source ?? 'network',
+    url: track.url,
+    ...(track.headers ? { headers: track.headers } : {})
+  }));
 }
 
 async function inspectHlsManifestCandidate(tabId, candidate) {
@@ -683,8 +790,10 @@ async function inspectHlsManifestCandidate(tabId, candidate) {
     const metadata = parseHlsManifestMetadata(manifest, candidate.url);
     rememberHlsManifestMetadata(tabId, candidate.url, metadata);
     await applyKnownHlsMetadataToSession(tabId);
-    await postHlsManifestDebugEvent(tabId, candidate, metadata.resolution ? 'available' : 'unavailable', metadata.resolution ? null : 'no-variant-resolution', {
+    const metadataAvailable = Boolean(metadata.resolution || metadata.subtitleTracks?.length);
+    await postHlsManifestDebugEvent(tabId, candidate, metadataAvailable ? 'available' : 'unavailable', metadataAvailable ? null : 'no-variant-resolution', {
       resolution: metadata.resolution,
+      subtitleTrackCount: metadata.subtitleTracks?.length ?? 0,
       variantCount: metadata.variants.length
     });
   } catch (error) {
@@ -695,16 +804,22 @@ async function inspectHlsManifestCandidate(tabId, candidate) {
 }
 
 function rememberHlsManifestMetadata(tabId, manifestUrl, metadata) {
-  if (!metadata?.resolution && metadata?.variants?.length === 0) {
+  if (!metadata?.resolution && metadata?.variants?.length === 0 && metadata?.subtitleTracks?.length === 0) {
     return;
   }
   const byUrl = hlsMetadataByTab.get(tabId) ?? new Map();
-  if (metadata.resolution) {
-    byUrl.set(normalizeUrlKey(manifestUrl), { resolution: metadata.resolution });
+  if (metadata.resolution || metadata.subtitleTracks?.length) {
+    byUrl.set(normalizeUrlKey(manifestUrl), {
+      resolution: metadata.resolution ?? null,
+      subtitleTracks: metadata.subtitleTracks ?? []
+    });
   }
   for (const variant of metadata.variants ?? []) {
-    if (variant.resolution) {
-      byUrl.set(normalizeUrlKey(variant.url), { resolution: variant.resolution });
+    if (variant.resolution || metadata.subtitleTracks?.length) {
+      byUrl.set(normalizeUrlKey(variant.url), {
+        resolution: variant.resolution ?? null,
+        subtitleTracks: metadata.subtitleTracks ?? []
+      });
     }
   }
   hlsMetadataByTab.set(tabId, byUrl);
@@ -724,6 +839,10 @@ async function applyKnownHlsMetadataToSession(tabId) {
       return;
     }
     session.candidates = enriched;
+    session.subtitleTracks = mergeSubtitleTracks(
+      session.subtitleTracks ?? [],
+      enriched.flatMap((candidate) => candidate.subtitleTracks ?? [])
+    );
     session.updatedAt = new Date().toISOString();
   });
 
@@ -734,14 +853,19 @@ async function applyKnownHlsMetadataToSession(tabId) {
 }
 
 function enrichCandidateWithKnownHlsMetadata(tabId, candidate) {
-  if (candidate?.manifestType !== 'hls' || candidate.resolution) {
+  if (candidate?.manifestType !== 'hls') {
     return candidate;
   }
   const metadata = hlsMetadataByTab.get(tabId)?.get(normalizeUrlKey(candidate.url));
-  if (!metadata?.resolution) {
+  if (!metadata?.resolution && !metadata?.subtitleTracks?.length) {
     return candidate;
   }
-  return { ...candidate, resolution: metadata.resolution };
+  const subtitleTracks = mergeSubtitleTracks(candidate.subtitleTracks ?? [], metadata.subtitleTracks ?? []);
+  const resolution = candidate.resolution ?? metadata.resolution ?? null;
+  if (resolution === candidate.resolution && subtitleTracks.length === (candidate.subtitleTracks ?? []).length) {
+    return candidate;
+  }
+  return { ...candidate, resolution, subtitleTracks };
 }
 
 function normalizeUrlKey(url) {

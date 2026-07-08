@@ -1,4 +1,4 @@
-import type { MediaCandidate } from '../../shared/types.js';
+import type { MediaCandidate, SubtitleTrack } from '../../shared/types.js';
 
 export interface CandidateDraft {
   kind: MediaCandidate['kind'];
@@ -11,6 +11,7 @@ export interface CandidateDraft {
   sizeBytes: number | null;
   confidence: number;
   headers: Record<string, string>;
+  subtitleTracks?: SubtitleTrack[];
 }
 
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.m4v', '.mov', '.webm', '.mkv', '.avi', '.ts']);
@@ -88,7 +89,8 @@ export function candidate(
     durationSeconds: null,
     sizeBytes: null,
     confidence,
-    headers: {}
+    headers: {},
+    subtitleTracks: []
   };
 }
 

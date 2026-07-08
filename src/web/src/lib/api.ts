@@ -1,5 +1,5 @@
 import type { SourceExtensionKind } from '../../../shared/sourceExtension';
-import type { Category, DownloadJob, MediaCandidate, MediaItem, QueueSnapshot } from '../../../shared/types';
+import type { Category, DownloadJob, MediaCandidate, MediaItem, QueueSnapshot, SubtitleTrack } from '../../../shared/types';
 
 export interface RuntimeConfig {
   sourceExtensionProfile: SourceExtensionKind;
@@ -53,6 +53,8 @@ export const api = {
   deleteJob: (id: string) => request<void>(`/api/jobs/${id}`, { method: 'DELETE' }),
   selectCandidate: (id: string, candidateId: string) =>
     request<DownloadJob>(`/api/jobs/${id}/select-candidate`, { method: 'POST', body: JSON.stringify({ candidateId }) }),
+  selectSubtitleTrack: (id: string, subtitleTrackUrl: string | null) =>
+    request<DownloadJob>(`/api/jobs/${id}/select-subtitle-track`, { method: 'POST', body: JSON.stringify({ subtitleTrackUrl }) }),
   replaceSource: (id: string, sourceUrl: string) =>
     request<DownloadJob>(`/api/jobs/${id}/replace-source`, { method: 'POST', body: JSON.stringify({ sourceUrl }) }),
   liveBrowser: {
@@ -68,4 +70,4 @@ export const api = {
   }
 };
 
-export type { Category, DownloadJob, MediaCandidate, MediaItem, QueueSnapshot };
+export type { Category, DownloadJob, MediaCandidate, MediaItem, QueueSnapshot, SubtitleTrack };

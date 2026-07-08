@@ -44,6 +44,7 @@ describe('DownloadEngine direct download', () => {
       sizeBytes: content.length,
       confidence: 1,
       headers: {},
+      subtitleTracks: [],
       discoveredAt: new Date().toISOString()
     };
     const output = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'xxx-download-')), 'video.mp4');
@@ -110,6 +111,7 @@ describe('DownloadEngine direct download', () => {
       sizeBytes: null,
       confidence: 1,
       headers: {},
+      subtitleTracks: [],
       discoveredAt: new Date().toISOString()
     };
     const output = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'xxx-hls-download-')), 'video.ts');
@@ -183,6 +185,7 @@ describe('DownloadEngine direct download', () => {
       sizeBytes: null,
       confidence: 1,
       headers: {},
+      subtitleTracks: [],
       discoveredAt: new Date().toISOString()
     };
     const output = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'xxx-hls-download-')), 'video.ts');

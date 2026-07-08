@@ -107,6 +107,44 @@ This starts a local Vite-only visual harness at `http://127.0.0.1:5174`. It moun
 
 Use the full Docker Compose app plus a real unpacked extension when validating `Use source`, extension messaging, network capture, cookies, or server integration.
 
+## Manual Source And Subtitle Validation
+
+Use the full Docker Compose app and a real unpacked extension when validating source selection with subtitles. The
+repeatable flow is:
+
+1. Rebuild and start the app:
+
+```bash
+docker compose up -d --build
+```
+
+2. Reload the unpacked extension in the browser if extension runtime files or version changed.
+3. In the source page, start playback, select a source with `Use source`, then choose a subtitle track or `No subtitles`
+   in the main queue UI.
+4. Watch the job state:
+
+```bash
+curl -s http://127.0.0.1:8080/api/queue
+docker compose logs --tail 120
+```
+
+Expected evidence for a selected subtitle track:
+
+- `/api/queue` shows the selected candidate with exactly one supported `subtitleTracks` entry marked `isSelected: true`;
+- logs include `subtitle-downloaded` with the chosen label, language, and format;
+- logs include `processing-completed` with `subtitleTrackCount: 1`;
+- the saved library file is a new filename when a previous file already existed, for example `Title-2.mp4`.
+
+Verify the saved file with `ffprobe` and a representative frame:
+
+```bash
+ffprobe -hide_banner -v error -show_entries format=duration,size:stream=index,codec_type,codec_name,width,height -of default=nw=1 '/path/to/saved.mp4'
+ffmpeg -hide_banner -loglevel error -ss 00:00:27 -i '/path/to/saved.mp4' -frames:v 1 -y /tmp/shv-subtitle-check.png
+```
+
+For burned subtitles, the final proof is the extracted frame: the subtitle text should be visible in the image pixels.
+Do not expect a separate switchable subtitle stream in the default HTML5 player.
+
 ## Frontend UI Notes
 
 Design the library UI touch-first. Phones and tablets are supported browsing surfaces, so primary actions must remain visible and usable without hover. Hover and focus states can add polish, but they must not be the only way to discover or use video, category, queue, or dialog actions.

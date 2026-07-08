@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import type { SubtitleTrack } from '../../shared/types.js';
 import { JobCanceledError, onAbort, throwIfAborted } from '../utils/cancellation.js';
 
 export interface ProbeResult {
@@ -132,6 +133,13 @@ export class MediaProcessor {
     };
   }
 
+  async burnSubtitle(inputPath: string, subtitleTrack: SubtitleTrack & { localPath: string }, signal?: AbortSignal): Promise<ProbeResult> {
+    const temporaryPath = temporarySubtitledPath(inputPath);
+    await run('ffmpeg', buildBurnSubtitleArgs(inputPath, temporaryPath, subtitleTrack), signal);
+    moveFile(temporaryPath, inputPath);
+    return this.probe(inputPath);
+  }
+
   private async transcode(
     inputPath: string,
     outputPath: string,
@@ -235,6 +243,36 @@ export class MediaProcessor {
   }
 }
 
+export function buildBurnSubtitleArgs(inputPath: string, outputPath: string, subtitleTrack: SubtitleTrack & { localPath: string }): string[] {
+  return [
+    '-hide_banner',
+    '-y',
+    '-i',
+    inputPath,
+    '-map',
+    '0:v:0',
+    '-map',
+    '0:a:0?',
+    '-vf',
+    `subtitles=filename='${escapeSubtitleFilterPath(subtitleTrack.localPath)}'`,
+    '-c:v',
+    'libx264',
+    '-crf',
+    '20',
+    '-preset',
+    'veryfast',
+    '-c:a',
+    'copy',
+    '-movflags',
+    '+faststart',
+    outputPath
+  ];
+}
+
+function escapeSubtitleFilterPath(filePath: string): string {
+  return filePath.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/:/g, '\\:');
+}
+
 export function buildTranscodeArgs(inputPath: string, outputPath: string, options: TranscodeOptions = {}): string[] {
   return [
     '-hide_banner',
@@ -333,6 +371,11 @@ function parseTimestamp(match: RegExpMatchArray): number {
   const minutes = Number(match[2]);
   const seconds = Number(match[3]);
   return hours * 3600 + minutes * 60 + seconds;
+}
+
+function temporarySubtitledPath(inputPath: string): string {
+  const extension = path.extname(inputPath) || '.mp4';
+  return path.join(path.dirname(inputPath), `${path.basename(inputPath, extension)}.with-subtitles${extension}`);
 }
 
 export function moveFile(inputPath: string, outputPath: string, fileSystem: MoveFileSystem = fs): void {

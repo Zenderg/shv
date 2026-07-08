@@ -76,6 +76,22 @@ describe('source helper sidebar source', () => {
     expect(contentScriptSource).toContain('SHV_CANDIDATE_METADATA');
   });
 
+  test('does not infer a chosen subtitle track from custom source-page subtitle menus', () => {
+    expect(contentScriptSource).not.toContain('SHV_SUBTITLE_SELECTION');
+    expect(contentScriptSource).not.toContain('subtitleSelectionFromClickTarget');
+  });
+
+  test('describes subtitles as detected sources until the main queue UI chooses one', () => {
+    expect(sourceSidebarSource).toContain('Detected subtitles:');
+    expect(sourceSidebarSource).not.toContain('Burned subtitles:');
+  });
+
+  test('lets the main queue UI choose one detected subtitle track or continue without subtitles', () => {
+    expect(appSource).toContain('needs_subtitle_selection');
+    expect(appSource).toContain('No subtitles');
+    expect(appSource).toContain('selectSubtitleTrack');
+  });
+
   test('does not show the latest unrelated source session when a tab has no session', () => {
     expect(contentScriptSource).not.toContain('?? latestSession(state.sessions)');
   });

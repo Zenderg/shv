@@ -1,9 +1,15 @@
 import { mount } from 'svelte';
-import { APP_ORIGIN, candidateFromUrl, candidateFromVerifiedVideoUrl, PROTOCOL_VERSION } from '../../../extension/chrome-source-helper/shared.js';
+import {
+  APP_ORIGIN,
+  candidateFromUrl,
+  candidateFromVerifiedVideoUrl,
+  PROTOCOL_VERSION,
+  subtitleTrackFromUrl
+} from '../../../extension/chrome-source-helper/shared.js';
 import { visibleSidebarCandidates } from './candidateDisplay';
 import SourceSidebar from './SourceSidebar.svelte';
 import { HIGHLIGHT_PADDING, SIDEBAR_COLLAPSED_WIDTH, SIDEBAR_WIDTH, sidebarCss } from './sidebarStyles';
-import { setSidebarActions, sidebarView, type Candidate, type SourceSession } from './sidebarStore';
+import { setSidebarActions, sidebarView, type Candidate, type SourceSession, type SubtitleTrack } from './sidebarStore';
 
 const PLAYBACK_SIGNAL_INTERVAL_MS = 1200;
 const DIAGNOSTIC_SIGNAL_INTERVAL_MS = 1500;
@@ -600,6 +606,7 @@ function collectAndSendCandidates() {
     currentSrc: activeVideo.currentSrc || activeVideo.src || null,
     playbackMetadata: videoElementMetadata(activeVideo),
     protocolVersion: PROTOCOL_VERSION,
+    subtitleTracks: activeVideoSubtitleTracks(activeVideo),
     type: 'SHV_ACTIVE_PLAYBACK'
   });
 }
@@ -698,6 +705,34 @@ function activeVideoCandidates(video: HTMLVideoElement) {
     }
   }
   return candidates;
+}
+
+function activeVideoSubtitleTracks(video: HTMLVideoElement): SubtitleTrack[] {
+  const tracks: SubtitleTrack[] = [];
+  const seen = new Set<string>();
+  for (const element of video.querySelectorAll('track')) {
+    const kind = (element.kind || '').toLowerCase();
+    if (kind && kind !== 'subtitles' && kind !== 'captions') {
+      continue;
+    }
+    const rawUrl = element.src || element.getAttribute('src');
+    if (!rawUrl) {
+      continue;
+    }
+    const track = subtitleTrackFromUrl(rawUrl, null, 'text-track', window.location.href) as SubtitleTrack | null;
+    if (!track || seen.has(track.url)) {
+      continue;
+    }
+    seen.add(track.url);
+    tracks.push({
+      ...track,
+      isDefault: element.default,
+      isSelected: element.track?.mode === 'showing',
+      label: element.label || element.srclang || track.label,
+      language: element.srclang || track.language
+    });
+  }
+  return tracks;
 }
 
 function probeSessionCandidateMetadata(session: SourceSession | null) {

@@ -210,6 +210,23 @@ export function sidebarCss() {
       font-size: 12px;
     }
 
+    .subtitle-status {
+      background: #f3f4f6;
+      border: 1px solid rgba(55, 65, 81, 0.16);
+      border-radius: 6px;
+      color: #4b5563;
+      font-size: 12px;
+      font-weight: 800;
+      line-height: 1.25;
+      padding: 6px 8px;
+    }
+
+    .subtitle-status.has-subtitles {
+      background: #e7f4de;
+      border-color: rgba(36, 89, 63, 0.24);
+      color: #24593f;
+    }
+
     .source code {
       color: #44524b;
       display: block;

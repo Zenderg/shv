@@ -9,6 +9,7 @@ import type { AppConfig } from '../../src/server/config/appConfig.js';
 import { ExtensionDebugService } from '../../src/server/extension-debug/extensionDebugService.js';
 import { JobService } from '../../src/server/jobs/jobService.js';
 import { openDatabase } from '../../src/server/storage/database.js';
+import type { SubtitleTrack } from '../../src/shared/types.js';
 
 describe('extension candidate route', () => {
   test('treats extension candidates as the current source-session snapshot', async () => {
@@ -43,6 +44,76 @@ describe('extension candidate route', () => {
     expect(jobs.requireJob(job.id).selectedCandidateId).toBe(selected.id);
     expect(jobs.listCandidates(job.id).map((item) => item.id)).toContain(selected.id);
     expect(jobs.listCandidates(job.id).map((item) => item.url)).not.toContain('https://media.example.test/late-network-candidate.m3u8');
+  });
+
+  test('pauses a selected source with subtitles until a subtitle track is chosen', async () => {
+    const { app, job, jobs } = createAppWithJob();
+    const russianUrl = 'https://media.example.test/subtitles/ru.ass';
+    const englishUrl = 'https://media.example.test/subtitles/en.ass';
+    await request(app)
+      .post(`/api/jobs/${job.id}/extension-candidates`)
+      .send({
+        candidates: [
+          candidate('https://media.example.test/video/index.m3u8', [
+            subtitleTrack(russianUrl, 'Russian', 'ru'),
+            subtitleTrack(englishUrl, 'English', 'en')
+          ])
+        ]
+      })
+      .expect(200);
+    const selected = jobs.listCandidates(job.id)[0];
+
+    const selection = await request(app)
+      .post(`/api/jobs/${job.id}/select-candidate`)
+      .send({ candidateId: selected.id })
+      .expect(200);
+
+    expect(selection.body).toMatchObject({
+      selectedCandidateId: selected.id,
+      status: 'needs_subtitle_selection'
+    });
+    expect(jobs.nextRunnableJob()).toBeNull();
+
+    const continuation = await request(app)
+      .post(`/api/jobs/${job.id}/select-subtitle-track`)
+      .send({ subtitleTrackUrl: englishUrl })
+      .expect(200);
+
+    expect(continuation.body).toMatchObject({
+      selectedCandidateId: selected.id,
+      status: 'pending'
+    });
+    expect(jobs.nextRunnableJob()?.id).toBe(job.id);
+    expect(jobs.listCandidates(job.id)[0].subtitleTracks).toEqual([
+      expect.objectContaining({ isSelected: false, label: 'Russian', url: russianUrl }),
+      expect.objectContaining({ isSelected: true, label: 'English', url: englishUrl })
+    ]);
+  });
+
+  test('allows continuing without subtitles for a source with detected subtitle tracks', async () => {
+    const { app, job, jobs } = createAppWithJob();
+    const russianUrl = 'https://media.example.test/subtitles/ru.ass';
+    await request(app)
+      .post(`/api/jobs/${job.id}/extension-candidates`)
+      .send({
+        candidates: [candidate('https://media.example.test/video/index.m3u8', [subtitleTrack(russianUrl, 'Russian', 'ru')])]
+      })
+      .expect(200);
+    const selected = jobs.listCandidates(job.id)[0];
+    await request(app)
+      .post(`/api/jobs/${job.id}/select-candidate`)
+      .send({ candidateId: selected.id })
+      .expect(200);
+
+    await request(app)
+      .post(`/api/jobs/${job.id}/select-subtitle-track`)
+      .send({ subtitleTrackUrl: null })
+      .expect(200);
+
+    expect(jobs.requireJob(job.id).status).toBe('pending');
+    expect(jobs.listCandidates(job.id)[0].subtitleTracks).toEqual([
+      expect.objectContaining({ isSelected: false, label: 'Russian', url: russianUrl })
+    ]);
   });
 });
 
@@ -91,7 +162,7 @@ function tempConfig(root: string): AppConfig {
   };
 }
 
-function candidate(url: string) {
+function candidate(url: string, subtitleTracks: SubtitleTrack[] = []) {
   return {
     bitrate: null,
     confidence: 0.92,
@@ -102,6 +173,20 @@ function candidate(url: string) {
     manifestType: 'hls',
     resolution: null,
     sizeBytes: null,
+    subtitleTracks,
+    url
+  };
+}
+
+function subtitleTrack(url: string, label: string, language: string): SubtitleTrack {
+  return {
+    contentType: 'text/x-ssa',
+    format: 'ass',
+    isDefault: false,
+    isSelected: null,
+    label,
+    language,
+    source: 'network',
     url
   };
 }

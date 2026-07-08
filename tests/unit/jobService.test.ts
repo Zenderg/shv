@@ -37,6 +37,45 @@ describe('JobService', () => {
     expect(service.listCandidates(job.id)).toHaveLength(3);
   });
 
+  test('persists subtitle tracks captured with media candidates', () => {
+    const { service, categoryId } = createJobService();
+    const job = service.create('https://example.test/page', categoryId);
+
+    service.saveCandidates(job.id, [
+      {
+        ...candidate('https://media.example.test/master.m3u8', 0.92),
+        kind: 'hls',
+        contentType: 'application/vnd.apple.mpegurl',
+        manifestType: 'hls',
+        subtitleTracks: [
+          {
+            contentType: 'text/vtt',
+            format: 'webvtt',
+            isDefault: false,
+            isSelected: true,
+            label: 'Russian',
+            language: 'ru',
+            source: 'network',
+            url: 'https://media.example.test/subtitles/ru.vtt'
+          }
+        ]
+      }
+    ]);
+
+    expect(service.listCandidates(job.id)[0].subtitleTracks).toEqual([
+      {
+        contentType: 'text/vtt',
+        format: 'webvtt',
+        isDefault: false,
+        isSelected: true,
+        label: 'Russian',
+        language: 'ru',
+        source: 'network',
+        url: 'https://media.example.test/subtitles/ru.vtt'
+      }
+    ]);
+  });
+
   test('recovers interrupted active jobs on startup', () => {
     const { service, categoryId } = createJobService();
     const job = service.create('https://example.test/page', categoryId);
@@ -65,6 +104,41 @@ describe('JobService', () => {
     expect(retried.startedAt).toBeNull();
     expect(retried.completedAt).toBeNull();
     expect(retried.errorMessage).toBeNull();
+  });
+
+  test('clears run timestamps when a source waits for subtitle selection', () => {
+    const { service, categoryId } = createJobService();
+    const job = service.create('https://example.test/page', categoryId);
+    service.transition(job.id, 'analyzing', 0.1);
+    service.transition(job.id, 'failed', 0, { errorMessage: 'temporary failure' });
+    expect(service.requireJob(job.id).startedAt).not.toBeNull();
+    expect(service.requireJob(job.id).completedAt).not.toBeNull();
+    service.saveCandidates(job.id, [
+      {
+        ...candidate('https://media.example.test/master.m3u8', 0.92),
+        kind: 'hls',
+        contentType: 'application/vnd.apple.mpegurl',
+        manifestType: 'hls',
+        subtitleTracks: [
+          {
+            contentType: 'text/x-ssa',
+            format: 'ass',
+            isDefault: false,
+            isSelected: null,
+            label: 'Russian',
+            language: 'ru',
+            source: 'network',
+            url: 'https://media.example.test/subtitles/ru.ass'
+          }
+        ]
+      }
+    ]);
+
+    const selected = service.selectCandidate(job.id, service.listCandidates(job.id)[0].id);
+
+    expect(selected.status).toBe('needs_subtitle_selection');
+    expect(selected.startedAt).toBeNull();
+    expect(selected.completedAt).toBeNull();
   });
 
   test('retry clears selected candidates so signed media URLs are rediscovered', () => {

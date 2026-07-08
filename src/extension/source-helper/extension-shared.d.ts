@@ -16,6 +16,16 @@ declare module '*extension/chrome-source-helper/shared.js' {
     manifestType: string | null;
     resolution: string | null;
     sizeBytes: number | null;
+    subtitleTracks: Array<{
+      contentType: string | null;
+      format: 'webvtt' | 'srt' | 'ass' | 'hls' | 'unknown';
+      isDefault: boolean | null;
+      isSelected: boolean | null;
+      label: string | null;
+      language: string | null;
+      source: 'network' | 'text-track' | 'hls-manifest';
+      url: string;
+    }>;
     url: string;
   } | null;
   export function candidateFromVerifiedVideoUrl(
@@ -32,6 +42,31 @@ declare module '*extension/chrome-source-helper/shared.js' {
     manifestType: string | null;
     resolution: string | null;
     sizeBytes: number | null;
+    subtitleTracks: Array<{
+      contentType: string | null;
+      format: 'webvtt' | 'srt' | 'ass' | 'hls' | 'unknown';
+      isDefault: boolean | null;
+      isSelected: boolean | null;
+      label: string | null;
+      language: string | null;
+      source: 'network' | 'text-track' | 'hls-manifest';
+      url: string;
+    }>;
+    url: string;
+  } | null;
+  export function subtitleTrackFromUrl(
+    url: string,
+    contentType?: string | null,
+    source?: 'network' | 'text-track' | 'hls-manifest',
+    baseUrl?: string
+  ): {
+    contentType: string | null;
+    format: 'webvtt' | 'srt' | 'ass' | 'hls' | 'unknown';
+    isDefault: boolean | null;
+    isSelected: boolean | null;
+    label: string | null;
+    language: string | null;
+    source: 'network' | 'text-track' | 'hls-manifest';
     url: string;
   } | null;
 }

@@ -66,7 +66,7 @@ SQLite uses explicit migrations under `src/server/storage/migrations.ts`. Core t
 - `categories`: display name, stable folder name, and creation time.
 - `media_items`: category, title, filename, relative media path, thumbnail path, final media metadata, source URL, and timestamps.
 - `download_jobs`: source URL, category, status, selected candidate, title hint, error details, progress, and lifecycle timestamps.
-- `media_candidates`: job-owned candidate URL, kind, content type, manifest type, resolution, bitrate, duration, size, confidence, captured headers, and discovery time.
+- `media_candidates`: job-owned candidate URL, kind, content type, manifest type, resolution, bitrate, duration, size, confidence, captured headers, subtitle tracks, and discovery time.
 - `settings`: key/value app settings.
 
 The filesystem owns media bytes; SQLite owns the index, queue, candidate, and metadata state.
@@ -88,6 +88,14 @@ Runnable, active, problem, and canceled jobs are returned by `/api/queue`; only 
 Automatic analysis chooses a candidate only when the submitted source URL itself is classified as a confident media source. Confident candidates discovered inside a page through HTML inspection, Playwright network capture, or extension capture still move the job to `needs_manual_selection` so the user explicitly confirms which page source to download.
 
 Manual selection supports choosing a candidate or replacing the job source URL via `/api/jobs/:id/replace-source`.
+
+When the selected candidate has supported subtitle tracks (`webvtt`, `srt`, `ass`, or subtitle HLS), manual selection
+pauses at `needs_subtitle_selection`. The queue UI then calls `/api/jobs/:id/select-subtitle-track` with either one
+track URL or `null`. The backend stores that choice by setting exactly one candidate subtitle track `isSelected: true`,
+or all supported tracks `isSelected: false` when the user chooses no subtitles.
+
+Queue-stage rendering must tolerate unknown future job statuses from the API. A stale or older web bundle can otherwise
+receive a newly introduced status, produce no stage object, and crash the queue screen while reading progress labels.
 
 Canceling a running job goes through `QueueRunner.cancel()`, not only a database status update, so the current browser analysis, direct download, ffmpeg copy/remux, transcode, or thumbnail process receives an `AbortSignal`.
 
@@ -141,6 +149,12 @@ Do not replace that with trimming flags such as `-shortest` or `-t`. The transco
 
 Keep the post-transcode duration guard so a future ffmpeg behavior change fails the job instead of saving another inflated MP4.
 
+Selected subtitles are downloaded during the processing phase after the media source has been normalized. `QueueRunner`
+downloads only selected supported tracks. For plain subtitle files it preserves the captured request context; for subtitle
+HLS playlists it downloads and concatenates the subtitle segments first. Current output uses a single chosen subtitle
+track and burns it into the video with ffmpeg's `subtitles` filter. The saved MP4 should therefore show subtitles by
+default and should not be expected to expose switchable subtitle streams in the app's HTML5 player.
+
 ## Browser Analyzer And Extension Contracts
 
 The Docker image installs Playwright-managed Chromium with `npx playwright install --with-deps chromium`. Do not point `CHROMIUM_EXECUTABLE_PATH` at Debian's system `chromium` unless that exact browser has been verified with the installed Playwright version.
@@ -153,8 +167,8 @@ Detailed extension behavior, packaging, candidate capture, cookies, diagnostics,
 
 ## Logging And Diagnostics
 
-Queue downloads emit compact structured lines prefixed with `[shv]`. Useful events include `job-started`, `download-started`, `hls-manifest-selected`, `hls-segments-stitched`, `download-probed`, `download-progress`, `processing-started`, `processing-completed`, `job-completed`, `download-stalled`, and `job-failed`.
+Queue downloads emit compact structured lines prefixed with `[shv]`. Useful events include `job-started`, `download-started`, `hls-manifest-selected`, `hls-segments-stitched`, `download-probed`, `download-progress`, `processing-started`, `subtitle-downloaded`, `processing-completed`, `job-completed`, `download-stalled`, and `job-failed`.
 
 These logs intentionally keep candidate URLs to `host` and `path`, list only request header names, and omit cookies/query strings so production snippets can be shared for debugging without leaking signed media URLs.
 
-`processing-completed` includes `processingStrategy` (`moved`, `remuxed`, or `transcoded`) and may include `remuxRejectionReason` when a copy-remux candidate was rejected and the processor fell back to transcoding.
+`processing-completed` includes `processingStrategy` (`moved`, `remuxed`, or `transcoded`), `subtitleTrackCount`, and may include `remuxRejectionReason` when a copy-remux candidate was rejected and the processor fell back to transcoding.

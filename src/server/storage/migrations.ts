@@ -86,6 +86,13 @@ export const migrations: Migration[] = [
       ALTER TABLE media_items ADD COLUMN width INTEGER;
       ALTER TABLE media_items ADD COLUMN height INTEGER;
     `
+  },
+  {
+    id: 3,
+    name: 'candidate_subtitle_tracks',
+    sql: `
+      ALTER TABLE media_candidates ADD COLUMN subtitle_tracks_json TEXT NOT NULL DEFAULT '[]';
+    `
   }
 ];
 

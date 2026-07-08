@@ -1,5 +1,5 @@
 import { v4 as uuidv4 } from 'uuid';
-import type { DownloadJob, JobStatus, MediaCandidate, QueueSnapshot } from '../../shared/types.js';
+import type { DownloadJob, JobStatus, MediaCandidate, QueueSnapshot, SubtitleTrack } from '../../shared/types.js';
 import { type CandidateDraft } from '../candidate-detection/candidateDetection.js';
 import { nowIso, type Db } from '../storage/database.js';
 import { mapDownloadJob, mapMediaCandidate } from '../storage/rowMappers.js';
@@ -83,7 +83,7 @@ export class JobService {
     const startedAt =
       extra.startedAt !== undefined
         ? extra.startedAt
-        : status === 'pending'
+        : status === 'pending' || status === 'needs_subtitle_selection'
           ? null
           : status === 'analyzing' && !existing.startedAt
             ? now
@@ -116,8 +116,8 @@ export class JobService {
     const insert = this.db.prepare(
       `INSERT INTO media_candidates (
         id, job_id, kind, url, content_type, manifest_type, resolution, bitrate,
-        duration_seconds, size_bytes, confidence, headers_json, discovered_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        duration_seconds, size_bytes, confidence, headers_json, subtitle_tracks_json, discovered_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
     const now = nowIso();
     try {
@@ -137,6 +137,7 @@ export class JobService {
           candidate.sizeBytes,
           candidate.confidence,
           JSON.stringify(candidate.headers),
+          JSON.stringify(normalizeSubtitleTracks(candidate.subtitleTracks)),
           now
         );
       }
@@ -153,13 +154,13 @@ export class JobService {
     const insert = this.db.prepare(
       `INSERT INTO media_candidates (
         id, job_id, kind, url, content_type, manifest_type, resolution, bitrate,
-        duration_seconds, size_bytes, confidence, headers_json, discovered_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        duration_seconds, size_bytes, confidence, headers_json, subtitle_tracks_json, discovered_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
     const update = this.db.prepare(
       `UPDATE media_candidates
        SET kind = ?, content_type = ?, manifest_type = ?, resolution = ?, bitrate = ?,
-           duration_seconds = ?, size_bytes = ?, confidence = ?, headers_json = ?, discovered_at = ?
+           duration_seconds = ?, size_bytes = ?, confidence = ?, headers_json = ?, subtitle_tracks_json = ?, discovered_at = ?
        WHERE id = ?`
     );
     const now = nowIso();
@@ -178,6 +179,7 @@ export class JobService {
             candidate.sizeBytes,
             Math.max(existing.confidence, candidate.confidence),
             JSON.stringify({ ...existing.headers, ...candidate.headers }),
+            JSON.stringify(mergeSubtitleTracks(existing.subtitleTracks, candidate.subtitleTracks)),
             now,
             existing.id
           );
@@ -196,6 +198,7 @@ export class JobService {
           candidate.sizeBytes,
           candidate.confidence,
           JSON.stringify(candidate.headers),
+          JSON.stringify(normalizeSubtitleTracks(candidate.subtitleTracks)),
           now
         );
       }
@@ -209,7 +212,7 @@ export class JobService {
 
   replaceExtensionCandidates(jobId: string, candidates: CandidateDraft[]): MediaCandidate[] {
     const job = this.requireJob(jobId);
-    if (job.selectedCandidateId && ['pending', 'analyzing', 'downloading', 'processing'].includes(job.status)) {
+    if (job.selectedCandidateId && ['pending', 'needs_subtitle_selection', 'analyzing', 'downloading', 'processing'].includes(job.status)) {
       return this.listCandidates(jobId);
     }
     return this.saveCandidates(jobId, candidates);
@@ -223,11 +226,41 @@ export class JobService {
   }
 
   selectCandidate(jobId: string, candidateId: string): DownloadJob {
-    const candidate = this.db.prepare('SELECT id FROM media_candidates WHERE id = ? AND job_id = ?').get(candidateId, jobId);
+    const candidate = this.listCandidates(jobId).find((item) => item.id === candidateId);
     if (!candidate) {
       throw new Error('Candidate not found for job');
     }
-    return this.transition(jobId, 'pending', 0, { selectedCandidateId: candidateId, errorCode: null, errorMessage: null });
+    const status = supportedSubtitleTracks(candidate).length > 0 ? 'needs_subtitle_selection' : 'pending';
+    return this.transition(jobId, status, status === 'needs_subtitle_selection' ? 0.21 : 0, {
+      selectedCandidateId: candidateId,
+      errorCode: null,
+      errorMessage: null
+    });
+  }
+
+  selectSubtitleTrack(jobId: string, subtitleTrackUrl: string | null): DownloadJob {
+    const job = this.requireJob(jobId);
+    if (!job.selectedCandidateId) {
+      throw new Error('Candidate not selected for job');
+    }
+    const candidate = this.listCandidates(jobId).find((item) => item.id === job.selectedCandidateId);
+    if (!candidate) {
+      throw new Error('Candidate not found for job');
+    }
+    const supportedTracks = supportedSubtitleTracks(candidate);
+    if (subtitleTrackUrl && !supportedTracks.some((track) => sameUrl(track.url, subtitleTrackUrl))) {
+      throw new Error('Subtitle track not found for selected candidate');
+    }
+    const subtitleTracks = candidate.subtitleTracks.map((track) => ({
+      ...track,
+      isSelected: subtitleTrackUrl ? sameUrl(track.url, subtitleTrackUrl) : false
+    }));
+    this.updateCandidateSubtitleTracks(candidate.id, subtitleTracks);
+    return this.transition(jobId, 'pending', 0, {
+      selectedCandidateId: candidate.id,
+      errorCode: null,
+      errorMessage: null
+    });
   }
 
   replaceSource(jobId: string, sourceUrl: string): DownloadJob {
@@ -281,12 +314,53 @@ export class JobService {
       throw error;
     }
   }
+
+  private updateCandidateSubtitleTracks(candidateId: string, tracks: SubtitleTrack[]): void {
+    this.db
+      .prepare('UPDATE media_candidates SET subtitle_tracks_json = ? WHERE id = ?')
+      .run(JSON.stringify(normalizeSubtitleTracks(tracks)), candidateId);
+  }
 }
 
 function dedupeCandidates(candidates: CandidateDraft[]): CandidateDraft[] {
   return [...new Map(candidates.map((candidate) => [candidate.url, candidate])).values()].sort(
     (left, right) => right.confidence - left.confidence
   );
+}
+
+function normalizeSubtitleTracks(tracks: SubtitleTrack[] | undefined): SubtitleTrack[] {
+  return (tracks ?? []).filter((track) => track?.url).map((track) => ({
+    contentType: track.contentType ?? null,
+    format: track.format ?? 'unknown',
+    isDefault: track.isDefault ?? null,
+    isSelected: track.isSelected ?? null,
+    label: track.label ?? null,
+    language: track.language ?? null,
+    source: track.source ?? 'network',
+    url: track.url,
+    ...(track.headers ? { headers: track.headers } : {})
+  }));
+}
+
+function mergeSubtitleTracks(existing: SubtitleTrack[], incoming: SubtitleTrack[] | undefined): SubtitleTrack[] {
+  const byUrl = new Map(normalizeSubtitleTracks(existing).map((track) => [track.url, track]));
+  for (const track of normalizeSubtitleTracks(incoming)) {
+    const current = byUrl.get(track.url);
+    byUrl.set(track.url, current ? { ...current, ...track, headers: { ...(current.headers ?? {}), ...(track.headers ?? {}) } } : track);
+  }
+  return [...byUrl.values()];
+}
+
+function supportedSubtitleTracks(candidate: MediaCandidate): SubtitleTrack[] {
+  return candidate.subtitleTracks.filter((track) => ['webvtt', 'srt', 'ass', 'hls'].includes(track.format));
+}
+
+function sameUrl(left: string, right: string): boolean {
+  try {
+    return new URL(left).href === new URL(right).href;
+  } catch {
+    return left === right;
+  }
 }
 
 function isTerminalStatus(status: JobStatus): boolean {

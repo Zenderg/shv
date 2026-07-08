@@ -7,14 +7,46 @@ import { CategoryService } from '../../src/server/categories/categoryService.js'
 import type { AppConfig } from '../../src/server/config/appConfig.js';
 import type { DownloadEngine } from '../../src/server/download-engine/downloadEngine.js';
 import { JobService } from '../../src/server/jobs/jobService.js';
-import { QueueRunner } from '../../src/server/jobs/queueRunner.js';
+import { QueueRunner, subtitleTracksForDownload } from '../../src/server/jobs/queueRunner.js';
 import type { MediaFiles } from '../../src/server/media-library/mediaFiles.js';
 import type { MediaLibraryService } from '../../src/server/media-library/mediaLibraryService.js';
 import type { MediaProcessor } from '../../src/server/media-processing/mediaProcessor.js';
 import { openDatabase } from '../../src/server/storage/database.js';
 import { JobCanceledError } from '../../src/server/utils/cancellation.js';
+import type { MediaCandidate, SubtitleTrack } from '../../src/shared/types.js';
 
 describe('QueueRunner', () => {
+  test('downloads only the selected subtitle track', () => {
+    expect(
+      subtitleTracksForDownload({
+        ...mediaCandidate('https://media.example.test/video.mp4'),
+        subtitleTracks: [
+          subtitleTrack('https://media.example.test/subtitles/ru.ass', { isSelected: true, label: 'Russian' }),
+          subtitleTrack('https://media.example.test/subtitles/en.ass', { isSelected: false, label: 'English' })
+        ]
+      })
+    ).toEqual([subtitleTrack('https://media.example.test/subtitles/ru.ass', { isSelected: true, label: 'Russian' })]);
+  });
+
+  test('downloads no subtitle tracks when the player selection is off or unknown', () => {
+    expect(
+      subtitleTracksForDownload({
+        ...mediaCandidate('https://media.example.test/video.mp4'),
+        subtitleTracks: [
+          subtitleTrack('https://media.example.test/subtitles/ru.ass', { isSelected: false, label: 'Russian' }),
+          subtitleTrack('https://media.example.test/subtitles/en.ass', { isSelected: false, label: 'English' })
+        ]
+      })
+    ).toEqual([]);
+
+    expect(
+      subtitleTracksForDownload({
+        ...mediaCandidate('https://media.example.test/video.mp4'),
+        subtitleTracks: [subtitleTrack('https://media.example.test/subtitles/ru.ass', { isSelected: null, label: 'Russian' })]
+      })
+    ).toEqual([]);
+  });
+
   test('aborts the active pipeline when a running job is canceled', async () => {
     const { categories, config, jobs } = createServices();
     const category = categories.create('test');
@@ -337,7 +369,37 @@ function candidate(url: string) {
     durationSeconds: null,
     sizeBytes: null,
     confidence: 0.9,
-    headers: {}
+    headers: {},
+    subtitleTracks: []
+  };
+}
+
+function mediaCandidate(url: string): MediaCandidate {
+  return {
+    ...candidate(url),
+    discoveredAt: new Date().toISOString(),
+    id: 'candidate-id',
+    jobId: 'job-id'
+  };
+}
+
+function subtitleTrack(url: string, patch: Partial<SubtitleTrack> = {}): SubtitleTrack {
+  return {
+    ...subtitleTrackBase(url),
+    ...patch
+  };
+}
+
+function subtitleTrackBase(url: string): SubtitleTrack {
+  return {
+    contentType: 'text/x-ssa',
+    format: 'ass' as const,
+    isDefault: null,
+    isSelected: null,
+    label: null,
+    language: null,
+    source: 'network' as const,
+    url
   };
 }
 

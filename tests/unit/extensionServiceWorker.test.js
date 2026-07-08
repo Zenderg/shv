@@ -470,6 +470,58 @@ index-v1-a1.m3u8`
     });
   });
 
+  test('captures multiple subtitle network tracks without selecting one in the extension', async () => {
+    storage.sourceState.sessions[42].candidates = [
+      {
+        bitrate: null,
+        confidence: 0.92,
+        contentType: 'application/vnd.apple.mpegurl',
+        durationSeconds: null,
+        headers: {},
+        kind: 'hls',
+        manifestType: 'hls',
+        resolution: '1280x720',
+        sizeBytes: null,
+        subtitleTracks: [],
+        url: 'https://media.example.test/video/index-v1-a1.m3u8'
+      }
+    ];
+    await import('../../extension/chrome-source-helper/service-worker.js');
+
+    listeners.headersReceived({
+      initiator: 'https://media.example.test',
+      requestId: 'sub-ru',
+      responseHeaders: [{ name: 'content-type', value: 'application/octet-stream' }],
+      statusCode: 200,
+      tabId: 42,
+      type: 'xmlhttprequest',
+      url: 'https://media.example.test/video/01_raw_rus.ass'
+    });
+
+    await vi.waitFor(() =>
+      expect(storage.sourceState.sessions[42].candidates[0].subtitleTracks).toEqual([
+        expect.objectContaining({ isSelected: null, label: 'Russian', url: 'https://media.example.test/video/01_raw_rus.ass' })
+      ])
+    );
+
+    listeners.headersReceived({
+      initiator: 'https://media.example.test',
+      requestId: 'sub-en',
+      responseHeaders: [{ name: 'content-type', value: 'application/octet-stream' }],
+      statusCode: 200,
+      tabId: 42,
+      type: 'xmlhttprequest',
+      url: 'https://media.example.test/video/01_raw_eng.ass'
+    });
+
+    await vi.waitFor(() =>
+      expect(storage.sourceState.sessions[42].candidates[0].subtitleTracks).toEqual([
+        expect.objectContaining({ isSelected: null, label: 'Russian', url: 'https://media.example.test/video/01_raw_rus.ass' }),
+        expect.objectContaining({ isSelected: null, label: 'English', url: 'https://media.example.test/video/01_raw_eng.ass' })
+      ])
+    );
+  });
+
   test('sends source and candidate browser cookies when a source is selected', async () => {
     storage.sourceState.sessions[42].candidates = [
       {

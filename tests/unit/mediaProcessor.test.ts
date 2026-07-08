@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import {
+  buildBurnSubtitleArgs,
   buildTranscodeArgs,
   hasSuspiciousDurationInflation,
   hasTimestampWarnings,
@@ -8,6 +9,46 @@ import {
   shouldRemuxToBrowserFriendlyMp4,
   videoDisplayDimensions
 } from '../../src/server/media-processing/mediaProcessor.js';
+
+describe('buildBurnSubtitleArgs', () => {
+  test('burns one selected subtitle track into the video image', () => {
+    const args = buildBurnSubtitleArgs('/library/video.mp4', '/work/video-with-subs.mp4', {
+      contentType: 'text/x-ssa',
+      format: 'ass',
+      isDefault: false,
+      isSelected: true,
+      label: 'Russian',
+      language: 'ru',
+      source: 'network',
+      url: 'https://media.example.test/subtitles/ru.ass',
+      localPath: '/work/subtitles/ru.ass'
+    });
+
+    expect(args).toEqual([
+      '-hide_banner',
+      '-y',
+      '-i',
+      '/library/video.mp4',
+      '-map',
+      '0:v:0',
+      '-map',
+      '0:a:0?',
+      '-vf',
+      "subtitles=filename='/work/subtitles/ru.ass'",
+      '-c:v',
+      'libx264',
+      '-crf',
+      '20',
+      '-preset',
+      'veryfast',
+      '-c:a',
+      'copy',
+      '-movflags',
+      '+faststart',
+      '/work/video-with-subs.mp4'
+    ]);
+  });
+});
 
 describe('buildTranscodeArgs', () => {
   test('preserves input timestamps before decoding timestamp-inflated HLS sources', () => {

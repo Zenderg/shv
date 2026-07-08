@@ -10,6 +10,7 @@ Use this document when a future agent needs to understand why the extension capt
 - Use the development extension profile for capture debugging. The local Docker Compose file sets `SOURCE_EXTENSION_PROFILE=dev`, and the dev profile exposes `GET /api/debug/extension/events`.
 - Keep the capture model narrow: the sidebar captures candidates around active playback, not every media-looking request on the page. Whole-page passive collection creates noisy, stale, and wrong candidates.
 - Do not infer source quality from URL names, query parameters, response size, CDN hostnames, or bitrate-like path fragments. Show `resolution unavailable` unless the app has real media metadata.
+- Do not infer the chosen subtitle track from arbitrary source-player UI. Detect available subtitle tracks, let the app queue UI ask the user which one to use, and treat `No subtitles` as an explicit valid choice.
 - Do not add fallback mechanics without explicit user approval. Fallbacks make this subsystem harder to debug because the same card can be produced by multiple unrelated paths.
 
 ## Important Runtime Files
@@ -21,6 +22,9 @@ Use this document when a future agent needs to understand why the extension capt
 - `src/server/api/routes.ts`: extension package, candidate, cookie, and dev debug routes.
 - `src/server/extension-debug/extensionDebugService.ts`: in-memory dev-only debug event store.
 - `src/web/src/lib/extensionBridge.ts`: app-to-extension handshake, required extension version, extension id selection.
+- `src/web/src/App.tsx`: main queue UI, including subtitle-track selection after `Use source`.
+- `src/server/jobs/queueRunner.ts`: downloads the selected subtitle track during processing and logs `subtitle-downloaded`.
+- `src/server/media-processing/mediaProcessor.ts`: burns the selected subtitle track into the normalized output file.
 
 Do not hand-edit `extension/chrome-source-helper/content-script.js` for durable changes. Edit `src/extension/source-helper/*` and run the extension/web build.
 
@@ -56,6 +60,11 @@ curl -s 'http://127.0.0.1:8080/api/debug/extension/events?limit=50'
 - `hls-manifest`: service-worker HLS manifest fetch/parse result. `status: available` means manifest metadata produced a resolution; `unavailable` keeps the UI honest.
 
 If no `network-candidate` appears, investigate request classification or tab/session mapping. If `network-candidate` appears but no resolution does, investigate the resolution path for that candidate kind.
+
+For subtitle issues, first inspect whether the candidate sent by `Use source` has `subtitleTracks`. If tracks are
+present, the next expected state is `needs_subtitle_selection` in `/api/queue`; the extension has finished its job and
+the app owns the choice. If tracks are absent, reproduce with playback running and inspect whether subtitle URLs appeared
+as network requests, DOM text tracks, or HLS manifest metadata.
 
 ## Resolution Detection Contract
 
@@ -110,12 +119,36 @@ Some embedded players expose network requests but no usable DOM `<video>` to con
 
 When Chromium reports media requests without a concrete tab id, the service worker maps them only when the request can be matched unambiguously to one source session. Do not attach ambiguous tabless requests to every same-origin source tab.
 
+## Subtitle Debugging Notes
+
+Source-player subtitle menus are not a portable API. One site may render `Off`, `Russian`, and `English` as ordinary
+DOM text, another may render icons, shadow DOM, canvas, or a custom component, and another may switch subtitle URLs only
+after playback seeks. Avoid content-script heuristics that watch clicks on menu labels or assume language names. They
+can make one site look fixed while corrupting the contract for the rest of the web.
+
+The stable contract is:
+
+- the extension detects available subtitle tracks and sends them as candidate metadata;
+- the Sources sidebar may list the detected labels so the user knows what will be offered later;
+- the main queue UI chooses exactly one track or no track;
+- the backend downloads only the selected supported track;
+- the media processor burns that track into the final MP4, so verification should inspect video pixels, not an embedded subtitle stream.
+
+Useful end-to-end evidence:
+
+- `/api/queue` shows the selected candidate with one `subtitleTracks[*].isSelected: true`, or all false for no subtitles;
+- Docker logs show `subtitle-downloaded` with the expected label/language/format;
+- Docker logs show `processing-completed` with `subtitleTrackCount: 1` when a subtitle was selected;
+- `ffprobe` on the saved MP4 shows the normalized video/audio streams;
+- an extracted frame during a known subtitle interval shows the subtitle text burned into the image.
+
 ## What Not To Reintroduce
 
 - Native browser side panel APIs or Yandex-specific side panel flags. The production UX is the injected in-page sidebar.
 - Screenshot polling as the production manual-selection UX. Older Playwright/live-browser endpoints are diagnostics and fallback infrastructure, not the target flow.
 - Global active-player resolution propagation. It mislabels quality after switches.
 - Resolution guessing from URL path, query params, response size, bitrate labels, or CDN-specific request fields.
+- Subtitle-menu click heuristics, language-label hardcoding, or attempts to mirror arbitrary player subtitle state from the extension. Subtitle selection belongs in the app queue UI.
 - Extension-side file downloads for YouTube. YouTube remains behind the backend `yt-dlp` extractor because captured `googlevideo` URLs can be bound to player/runtime behavior.
 - Accepting explicit YouTube SABR/UMP transport requests (`sabr=1`) as candidates. They are transport payloads, not replayable direct sources.
 - Whole-page passive media candidate listing. It produces stale and misleading source cards.
@@ -156,6 +189,10 @@ Useful regression tests for this subsystem currently include:
 
 - `tests/unit/extensionShared.test.js`: candidate classification, verified currentSrc candidates, merge semantics, HLS manifest parsing.
 - `tests/unit/extensionServiceWorker.test.js`: request-header preservation, active playback metadata, HLS variant resolution enrichment, dynamic child-frame injection.
-- `tests/unit/sourceSidebarSource.test.ts`: resolution UI states.
+- `tests/unit/sourceSidebarSource.test.ts`: resolution and subtitle UI source-state contracts.
 - `tests/unit/extensionManifest.test.ts`: version/permission alignment.
 - `tests/unit/extensionDebugRoute.test.ts`: dev-only debug event route.
+- `tests/unit/jobService.test.ts`: queue transitions for manual source and subtitle selection.
+- `tests/unit/queueRunner.test.ts`: selected subtitle download behavior before media processing.
+- `tests/unit/mediaProcessor.test.ts`: ffmpeg subtitle burn argument construction and processing behavior.
+- `tests/unit/jobProgress.test.ts`: queue stage rendering fallback for newly introduced job statuses.

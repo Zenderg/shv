@@ -532,6 +532,7 @@ h1 {
 }
 
 .queueJob.needs_manual_selection,
+.queueJob.needs_subtitle_selection,
 .queueJob.failed {
   border-color: var(--color-danger-border);
 }
@@ -592,6 +593,34 @@ progress {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.subtitleSelection {
+  align-items: end;
+  background: var(--color-surface-muted);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(180px, 1fr) auto;
+  padding: 10px;
+}
+
+.subtitleSelection label {
+  color: var(--color-muted);
+  display: grid;
+  font-size: 12px;
+  font-weight: 700;
+  gap: 6px;
+}
+
+.subtitleSelection select {
+  min-width: 0;
+}
+
+.subtitleSelection button {
+  min-height: 42px;
+  padding: 0 16px;
 }
 
 .jobActions button {
@@ -1047,6 +1076,10 @@ progress {
   }
 
   .liveBrowserToolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .subtitleSelection {
     grid-template-columns: 1fr;
   }
 

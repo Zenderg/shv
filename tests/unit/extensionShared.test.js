@@ -5,6 +5,7 @@ import {
   candidateRejectionReason,
   mergeCandidates,
   parseHlsManifestMetadata,
+  subtitleTrackFromUrl,
   sessionTabIdsForRequest
 } from '../../extension/chrome-source-helper/shared.js';
 
@@ -75,6 +76,7 @@ index-v1-a1.m3u8`;
 
     expect(parseHlsManifestMetadata(manifest, 'https://iv-h.phncdn.com/videos/1080P/master.m3u8')).toEqual({
       resolution: '1080x1920',
+      subtitleTracks: [],
       variants: [
         {
           bandwidth: 4000000,
@@ -98,7 +100,60 @@ segment-1.ts`;
 
     expect(parseHlsManifestMetadata(manifest, 'https://iv-h.phncdn.com/videos/1080P/index-v1-a1.m3u8')).toEqual({
       resolution: null,
+      subtitleTracks: [],
       variants: []
+    });
+  });
+
+  test('reads HLS subtitle renditions from master playlists', () => {
+    const manifest = `#EXTM3U
+#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",LANGUAGE="ru",NAME="Russian",DEFAULT=YES,AUTOSELECT=YES,URI="subtitles/ru.m3u8"
+#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",LANGUAGE="en",NAME="English",DEFAULT=NO,AUTOSELECT=YES,URI="https://cdn.example.test/en.vtt"
+#EXT-X-STREAM-INF:BANDWIDTH=3200000,RESOLUTION=1920x1080,SUBTITLES="subs"
+video/index.m3u8`;
+
+    expect(parseHlsManifestMetadata(manifest, 'https://media.example.test/master.m3u8').subtitleTracks).toEqual([
+      {
+        contentType: 'application/vnd.apple.mpegurl',
+        format: 'hls',
+        isDefault: true,
+        isSelected: null,
+        label: 'Russian',
+        language: 'ru',
+        source: 'hls-manifest',
+        url: 'https://media.example.test/subtitles/ru.m3u8'
+      },
+      {
+        contentType: 'text/vtt',
+        format: 'webvtt',
+        isDefault: false,
+        isSelected: null,
+        label: 'English',
+        language: 'en',
+        source: 'hls-manifest',
+        url: 'https://cdn.example.test/en.vtt'
+      }
+    ]);
+  });
+
+  test('detects subtitle network requests by extension and content type', () => {
+    expect(subtitleTrackFromUrl('https://cdn.example.test/subtitles/ru.vtt?token=1', null, 'network')).toMatchObject({
+      contentType: 'text/vtt',
+      format: 'webvtt',
+      label: 'Russian',
+      language: 'ru',
+      source: 'network',
+      url: 'https://cdn.example.test/subtitles/ru.vtt?token=1'
+    });
+    expect(subtitleTrackFromUrl('https://cdn.example.test/episode/01_raw_eng.ass', 'application/octet-stream', 'network')).toMatchObject({
+      contentType: 'application/octet-stream',
+      format: 'ass',
+      label: 'English',
+      language: 'en'
+    });
+    expect(subtitleTrackFromUrl('https://cdn.example.test/subtitles', 'application/x-subrip', 'network')).toMatchObject({
+      contentType: 'application/x-subrip',
+      format: 'srt'
     });
   });
 
