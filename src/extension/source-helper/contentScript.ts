@@ -37,6 +37,7 @@ let activeVideoElement: HTMLVideoElement | null = null;
 let lastPlaybackSignalAt = 0;
 let lastDiagnosticSignalAt = 0;
 let capturePending = false;
+let selectionError: string | null = null;
 
 const observedVideos = new WeakSet<HTMLVideoElement>();
 const selectingSourceUrls = new Set<string>();
@@ -57,6 +58,10 @@ observer.observe(document.documentElement, { childList: true, subtree: true });
 
 chrome?.runtime?.onMessage.addListener((message, _sender, sendResponse) => {
   if (!IS_TOP_FRAME) {
+    return false;
+  }
+  if (message?.type === 'SHV_SOURCE_HELPER_PING') {
+    sendResponse({ ok: true });
     return false;
   }
   if (message?.type === 'SHV_SHOW_SIDEBAR') {
@@ -210,6 +215,7 @@ async function renderSidebar() {
 
   if (session?.status === 'selected') {
     selectingSourceUrls.clear();
+    selectionError = null;
   }
   updateSidebarView(session);
   if (highlightedCandidate) {
@@ -223,6 +229,7 @@ function updateSidebarView(session: SourceSession | null) {
     collapsed: sidebarCollapsed,
     highlightedUrl: highlightedCandidate?.url ?? null,
     selectingUrls: [...selectingSourceUrls],
+    selectionError,
     session,
     status: session ? `${session.candidates.length} active / ${sessionDisplayStatus(session)}` : 'Open a source from shv'
   });
@@ -247,6 +254,7 @@ async function selectSource(url: string) {
   if (selectingSourceUrls.has(url)) {
     return;
   }
+  selectionError = null;
   selectingSourceUrls.add(url);
   updateSidebarView(currentSidebarSession());
   try {
@@ -254,12 +262,13 @@ async function selectSource(url: string) {
       tabId: sidebarTabId,
       type: 'SHV_SELECT_SOURCE',
       url
-    })) as { ok?: boolean } | null;
+    })) as { error?: string; ok?: boolean } | null;
     if (result?.ok) {
       return;
     }
+    selectionError = result?.error ?? 'Could not select that source. Try again from shv.';
   } catch {
-    // Keep the UI response local; the user can click again after the button resets.
+    selectionError = 'Could not select that source. Try again from shv.';
   }
   selectingSourceUrls.delete(url);
   updateSidebarView(currentSidebarSession());
@@ -269,6 +278,7 @@ async function startManualCapture() {
   if (capturePending) {
     return;
   }
+  selectionError = null;
   capturePending = true;
   updateSidebarView(currentSidebarSession());
   try {

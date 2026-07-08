@@ -37,9 +37,9 @@
     return candidate.contentType ?? candidate.manifestType ?? 'unknown type';
   }
 
-  function buttonLabel(candidate: Candidate, selected: boolean, selectingUrls: string[]) {
-    if (selected) {
-      return 'Selected';
+  function buttonLabel(candidate: Candidate, sourceSelected: boolean, selectingUrls: string[], selectedUrl: string | null | undefined) {
+    if (sourceSelected) {
+      return selectedUrl === candidate.url ? 'Selected' : 'Locked';
     }
     return selectingUrls.includes(candidate.url) ? 'Selecting...' : 'Use source';
   }
@@ -116,6 +116,10 @@
       </section>
     {/if}
 
+    {#if $sidebarView.selectionError}
+      <p class="selection-error" role="alert">{$sidebarView.selectionError}</p>
+    {/if}
+
     <section class="sources">
       {#if !$sidebarView.session || $sidebarView.session.candidates.length === 0}
         {@const message = emptyMessage($sidebarView.session)}
@@ -125,10 +129,12 @@
         </div>
         <Diagnostics session={$sidebarView.session} />
       {:else}
-        {@const selected = $sidebarView.session.status === 'selected'}
+        {@const sourceSelected = $sidebarView.session.status === 'selected'}
         {#each $sidebarView.session.candidates as candidate (candidate.url)}
+          {@const candidateSelected = sourceSelected && $sidebarView.session.selectedUrl === candidate.url}
           <article
             class:is-highlighted={$sidebarView.highlightedUrl === candidate.url}
+            class:is-selected={candidateSelected}
             class="source"
             data-highlight-kind={candidate.kind}
             data-highlight-source={candidate.url}
@@ -156,15 +162,14 @@
             <p>{candidateType(candidate)}</p>
             <code>{candidate.url}</code>
             <button
-              disabled={selected || $sidebarView.selectingUrls.includes(candidate.url)}
+              disabled={sourceSelected || $sidebarView.selectingUrls.includes(candidate.url)}
               type="button"
               onclick={() => sidebarActions.selectSource(candidate.url)}
             >
-              {buttonLabel(candidate, selected, $sidebarView.selectingUrls)}
+              {buttonLabel(candidate, sourceSelected, $sidebarView.selectingUrls, $sidebarView.session.selectedUrl)}
             </button>
           </article>
         {/each}
-        <Diagnostics session={$sidebarView.session} />
       {/if}
     </section>
   {/if}

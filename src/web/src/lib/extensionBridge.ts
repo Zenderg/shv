@@ -8,7 +8,7 @@ import {
 export { DEV_SOURCE_EXTENSION_ID, PROD_SOURCE_EXTENSION_ID, sourceExtensionTargetForOrigin };
 
 export const SOURCE_EXTENSION_ID = PROD_SOURCE_EXTENSION_ID;
-export const SOURCE_EXTENSION_REQUIRED_VERSION = '1.0.26';
+export const SOURCE_EXTENSION_REQUIRED_VERSION = '1.0.27';
 export const SOURCE_EXTENSION_PROTOCOL_VERSION = 1;
 export const SOURCE_EXTENSION_DOWNLOAD_PATH = sourceExtensionTargetForOrigin(currentWindowOrigin()).downloadPath;
 

@@ -75,6 +75,9 @@ describe('extension service worker', () => {
         onMessageExternal: chromeEvent(listeners, 'runtimeMessageExternal'),
         sendMessage: vi.fn(() => Promise.resolve())
       },
+      scripting: {
+        executeScript: vi.fn(async () => [])
+      },
       storage: {
         local: {
           get: vi.fn(async () => storage),
@@ -85,6 +88,7 @@ describe('extension service worker', () => {
       },
       tabs: {
         onRemoved: chromeEvent(listeners, 'tabRemoved'),
+        create: vi.fn(async ({ url }) => ({ id: 99, url, windowId: 1 })),
         query: vi.fn(async () => []),
         sendMessage: vi.fn(() => Promise.resolve()),
         update: vi.fn(async () => ({ windowId: 1 }))
@@ -220,6 +224,7 @@ describe('extension service worker', () => {
     );
 
     await vi.waitFor(() => expect(sendResponse).toHaveBeenCalledWith({ ok: true }));
+    expect(storage.sourceState.sessions[42].selectedUrl).toBe('https://media.example.test/video.mp4');
     const candidateCall = globalThis.fetch.mock.calls.find(([url]) => String(url).endsWith('/extension-candidates'));
     const cookieCall = globalThis.fetch.mock.calls.find(([url]) => String(url).endsWith('/cookies'));
     expect(JSON.parse(candidateCall[1].body).candidates[0].headers.Cookie).toBe('media_session=media-value');
@@ -297,5 +302,50 @@ describe('extension service worker', () => {
 
     await vi.waitFor(() => expect(sendResponse).toHaveBeenCalledWith({ ok: true }));
     expect(storage.sourceState.sessions[42].currentUrl).toBe('https://www.youtube.com/watch?v=next');
+  });
+
+  test('does not write unmapped network diagnostics into the active source session', async () => {
+    await import('../../extension/chrome-source-helper/service-worker.js');
+
+    listeners.headersReceived({
+      initiator: 'https://unrelated.example.test',
+      requestId: 'unmapped-request',
+      responseHeaders: [{ name: 'content-type', value: 'video/mp4' }],
+      statusCode: 200,
+      tabId: -1,
+      type: 'media',
+      url: 'https://cdn.unrelated.example.test/video.mp4'
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(storage.sourceState.sessions[42].diagnostics.network.observed).toBe(0);
+  });
+
+  test('injects the content script before showing a newly opened source tab', async () => {
+    globalThis.chrome.tabs.sendMessage = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('no receiver'))
+      .mockResolvedValueOnce({ ok: true })
+      .mockResolvedValueOnce({ ok: true });
+    const sendResponse = vi.fn();
+    await import('../../extension/chrome-source-helper/service-worker.js');
+
+    listeners.runtimeMessageExternal(
+      {
+        jobId: 'job-id',
+        protocolVersion: 1,
+        sourceUrl: 'https://source.example.test/watch',
+        type: 'SHV_OPEN_SOURCE'
+      },
+      { url: 'http://127.0.0.1:8080/' },
+      sendResponse
+    );
+
+    await vi.waitFor(() => expect(sendResponse).toHaveBeenCalledWith({ ok: true, tabId: 99 }));
+    expect(globalThis.chrome.scripting.executeScript).toHaveBeenCalledWith({
+      files: ['content-script.js'],
+      target: { allFrames: true, tabId: 99 }
+    });
   });
 });

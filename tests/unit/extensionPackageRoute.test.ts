@@ -37,6 +37,7 @@ describe('extension package entries', () => {
     expect(entries.some((entry) => entry.name === 'shv-source-helper-dev/content-script.js')).toBe(true);
 
     const manifest = JSON.parse(manifestEntry?.data.toString('utf8') ?? '{}') as {
+      content_scripts?: Array<{ matches?: string[] }>;
       key?: string;
       name?: string;
       externally_connectable?: { matches?: string[] };
@@ -48,5 +49,6 @@ describe('extension package entries', () => {
     expect(manifest.name).toBe('shv Source Helper Dev');
     expect(manifest.key).toBe(sourceExtensionProfile('dev').key);
     expect(manifest.externally_connectable?.matches).toContain('http://127.0.0.1:8080/*');
+    expect(manifest.content_scripts?.[0]?.matches).toContain('http://127.0.0.1:8080/*');
   });
 });

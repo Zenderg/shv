@@ -27,6 +27,20 @@ The Sources sidebar content script is generated from `src/extension/source-helpe
 hand-edit `extension/chrome-source-helper/content-script.js` except for emergency debugging, because the next extension
 build will replace it.
 
+## Versioning
+
+Whenever extension runtime behavior, manifest permissions, packaged files, or app-extension protocol expectations
+change, bump the helper extension version before finishing the change. Keep these values aligned:
+
+```text
+extension/chrome-source-helper/manifest.json version
+extension/chrome-source-helper/shared.js EXTENSION_VERSION
+src/web/src/lib/extensionBridge.ts SOURCE_EXTENSION_REQUIRED_VERSION
+```
+
+The unit test `tests/unit/extensionManifest.test.ts` verifies this alignment. Update bridge tests that intentionally
+mock the current ready version at the same time.
+
 ## Visual Preview
 
 For sidebar layout work that does not need real browser-extension APIs, run:
@@ -80,7 +94,7 @@ YouTube page URLs are handled by the backend `yt-dlp` source extractor. Do not r
 
 ## Embedded Players
 
-The content script runs in all frames so embedded players, such as VK video inside a Yandex page, can report active playback. Only the top frame owns the visible Sources sidebar and the app bridge.
+The extension statically loads the content script only on the app origin so the app-page bridge can work. Source pages are injected programmatically when the app opens a source tab or the user toggles the extension action. That source-page injection targets all frames so embedded players, such as VK video inside a Yandex page, can report active playback. Only the top frame owns the visible Sources sidebar and the app bridge.
 
 Some embedded players do not expose a usable DOM `<video>` to extension content scripts while still streaming media requests. For those cases, start playback and click Capture now in the Sources sidebar; this opens the same short active capture window manually without returning to whole-page passive collection.
 

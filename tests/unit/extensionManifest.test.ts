@@ -7,6 +7,7 @@ const manifest = JSON.parse(
   readFileSync(resolve(process.cwd(), 'extension/chrome-source-helper/manifest.json'), 'utf8')
 ) as {
   content_scripts?: Array<{ all_frames?: boolean; js?: string[]; matches?: string[] }>;
+  host_permissions?: string[];
   permissions?: string[];
   side_panel?: unknown;
   version?: string;
@@ -20,16 +21,22 @@ describe('chrome source helper manifest', () => {
     expect(manifest.permissions ?? []).not.toContain('sidePanel');
   });
 
-  it('loads the source sidebar through the content script', () => {
+  it('loads only the app bridge through static content scripts', () => {
     expect(manifest.content_scripts).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           all_frames: true,
           js: expect.arrayContaining(['content-script.js']),
-          matches: expect.arrayContaining(['<all_urls>'])
+          matches: expect.arrayContaining(['http://127.0.0.1:8080/*', 'http://localhost:8080/*'])
         })
       ])
     );
+    expect(manifest.content_scripts?.flatMap((script) => script.matches ?? [])).not.toContain('<all_urls>');
+  });
+
+  it('uses programmatic injection for source tabs instead of running on every page', () => {
+    expect(manifest.permissions ?? []).toContain('scripting');
+    expect(manifest.host_permissions ?? []).toContain('<all_urls>');
   });
 
   it('keeps the packaged extension version aligned with the app requirement', () => {

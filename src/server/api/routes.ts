@@ -297,6 +297,7 @@ export function extensionZipEntries(
   return listZipEntries(root, profile.packagePrefix).map((entry) => {
     if (entry.name === `${profile.packagePrefix}/manifest.json`) {
       const manifest = JSON.parse(entry.data.toString('utf8')) as {
+        content_scripts?: Array<{ matches?: string[] }>;
         externally_connectable?: { matches?: string[] };
         host_permissions?: string[];
         key?: string;
@@ -309,6 +310,10 @@ export function extensionZipEntries(
         matches: uniqueStrings([...(manifest.externally_connectable?.matches ?? []), `${appOrigin}/*`])
       };
       manifest.host_permissions = uniqueStrings([...(manifest.host_permissions ?? []), `${appOrigin}/*`]);
+      manifest.content_scripts = manifest.content_scripts?.map((script) => ({
+        ...script,
+        matches: uniqueStrings([...(script.matches ?? []), `${appOrigin}/*`])
+      }));
       return { ...entry, data: Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`) };
     }
     if (entry.name === `${profile.packagePrefix}/shared.js`) {

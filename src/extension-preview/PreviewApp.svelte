@@ -31,6 +31,7 @@
     collapsed: false,
     highlightedUrl: null,
     selectingUrls: [],
+    selectionError: null,
     session: null,
     status: 'Open a source from shv'
   };
@@ -120,6 +121,7 @@
       }
       const selectedSession = {
         ...currentView.session,
+        selectedUrl: url,
         status: 'selected',
         updatedAt: new Date().toISOString()
       };
@@ -127,6 +129,7 @@
         ...currentView,
         highlightedUrl: null,
         selectingUrls: [],
+        selectionError: null,
         session: selectedSession,
         status: `${selectedSession.candidates.length} active / selected`
       });
@@ -141,6 +144,7 @@
         collapsed,
         highlightedUrl: null,
         selectingUrls: [],
+        selectionError: null,
         session: null,
         status: 'Open a source from shv',
         ...overrides
@@ -153,6 +157,7 @@
       collapsed,
       highlightedUrl: null,
       selectingUrls: id === 'capture-pending' ? [directVideoCandidate.url] : [],
+      selectionError: null,
       session,
       status: `${session.candidates.length} active / ${sessionStatusLabel(session)}`,
       ...overrides
@@ -179,7 +184,7 @@
       return { ...base, activeCaptureUntil: Date.now() + 30000, candidates: [], status: 'listening' };
     }
     if (id === 'selected') {
-      return { ...base, status: 'selected' };
+      return { ...base, selectedUrl: directVideoCandidate.url, status: 'selected' };
     }
     if (id === 'long-url') {
       return {

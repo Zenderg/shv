@@ -162,6 +162,10 @@ export function sidebarCss() {
       transform: translateX(-2px);
     }
 
+    .source.is-selected {
+      box-shadow: inset 0 0 0 2px #1e6f55;
+    }
+
     .source-top {
       align-items: center;
       display: flex;
@@ -209,6 +213,15 @@ export function sidebarCss() {
     .source button:disabled {
       cursor: not-allowed;
       opacity: 0.62;
+    }
+
+    .selection-error {
+      background: #fee2e2;
+      border-top: 1px solid rgba(127, 29, 29, 0.14);
+      color: #7f1d1d;
+      font-size: 13px;
+      font-weight: 700;
+      padding: 10px 16px;
     }
 
     .empty {

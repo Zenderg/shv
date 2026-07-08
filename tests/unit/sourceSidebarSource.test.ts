@@ -23,4 +23,21 @@ describe('source helper sidebar source', () => {
     expect(contentScriptSource).toContain('window.location.origin !== APP_ORIGIN');
     expect(contentScriptSource).toContain("event.data?.channel !== 'SHV_SOURCE_HELPER'");
   });
+
+  test('labels only the chosen candidate as selected after source selection', () => {
+    expect(sourceSidebarSource).toContain('selectedUrl');
+    expect(sourceSidebarSource).toContain("return selectedUrl === candidate.url ? 'Selected' : 'Locked'");
+  });
+
+  test('shows source selection failures in the sidebar', () => {
+    expect(sourceSidebarSource).toContain('role="alert"');
+    expect(sourceSidebarSource).toContain('selectionError');
+    expect(contentScriptSource).toContain('selectionError =');
+  });
+
+  test('keeps diagnostics out of the normal candidate list', () => {
+    const diagnosticsRenderCount = sourceSidebarSource.match(/<Diagnostics session=/g)?.length ?? 0;
+
+    expect(diagnosticsRenderCount).toBe(1);
+  });
 });

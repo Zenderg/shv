@@ -155,6 +155,7 @@ async function openSourceTab(message, sender) {
       currentUrl: message.sourceUrl,
       diagnostics: emptyDiagnostics(),
       jobId: message.jobId,
+      selectedUrl: null,
       sourceUrl: message.sourceUrl,
       status: 'waiting for playback',
       titleHint: message.titleHint ?? null,
@@ -246,11 +247,24 @@ async function toggleActiveTabSidebar() {
   if (tab?.id == null) {
     return;
   }
+  await ensureContentScriptInTab(tab.id).catch(() => undefined);
   await sendTabMessage(tab.id, { tabId: tab.id, type: 'SHV_TOGGLE_SIDEBAR' }).catch(() => undefined);
 }
 
 async function showSidebarInTab(tabId) {
+  await ensureContentScriptInTab(tabId);
   await retryTabMessage(tabId, { tabId, type: 'SHV_SHOW_SIDEBAR' });
+}
+
+async function ensureContentScriptInTab(tabId) {
+  const existing = await sendTabMessage(tabId, { type: 'SHV_SOURCE_HELPER_PING' }).catch(() => null);
+  if (existing?.ok) {
+    return;
+  }
+  await chrome.scripting.executeScript({
+    files: ['content-script.js'],
+    target: { allFrames: true, tabId }
+  });
 }
 
 async function retryTabMessage(tabId, message) {
@@ -282,13 +296,12 @@ async function recordNetworkDetails(details, requestHeaders = {}) {
   const state = await getState();
   const tabIds = sessionTabIdsForRequest(details, state);
   const diagnostic = networkDiagnosticFor(details, contentType, candidate, requestHeaders);
-  if (diagnostic) {
-    const diagnosticTabIds = tabIds.length > 0 ? tabIds : state.activeTabId != null ? [state.activeTabId] : [];
-    for (const tabId of diagnosticTabIds) {
+  if (diagnostic && tabIds.length > 0) {
+    for (const tabId of tabIds) {
       await updateNetworkDiagnostics(tabId, diagnostic, {
         classified: Boolean(candidate),
-        mapped: tabIds.includes(tabId),
-        unmapped: tabIds.length === 0
+        mapped: true,
+        unmapped: false
       });
     }
   }
@@ -507,6 +520,7 @@ async function selectSource(tabId, url) {
   await upsertState((nextState) => {
     const nextSession = nextState.sessions[String(sourceTabId ?? nextState.activeTabId ?? '')];
     if (nextSession) {
+      nextSession.selectedUrl = url;
       nextSession.status = 'selected';
       nextSession.updatedAt = new Date().toISOString();
     }

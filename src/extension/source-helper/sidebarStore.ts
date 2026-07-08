@@ -22,6 +22,7 @@ export type SourceSession = {
     playback?: Record<string, unknown> | null;
   };
   jobId: string;
+  selectedUrl?: string | null;
   sourceUrl: string;
   status: string;
   titleHint?: string | null;
@@ -33,6 +34,7 @@ export type SidebarView = {
   collapsed: boolean;
   highlightedUrl: string | null;
   selectingUrls: string[];
+  selectionError: string | null;
   session: SourceSession | null;
   status: string;
 };
@@ -42,6 +44,7 @@ export const sidebarView = writable<SidebarView>({
   collapsed: false,
   highlightedUrl: null,
   selectingUrls: [],
+  selectionError: null,
   session: null,
   status: 'Opening...'
 });
