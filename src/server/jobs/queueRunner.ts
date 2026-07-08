@@ -107,7 +107,7 @@ export class QueueRunner {
         this.throwIfCanceled(job.id, signal);
         const candidates = this.jobs.saveCandidates(job.id, analysis.candidates);
         job = this.jobs.transition(job.id, 'analyzing', 0.18, { titleHint: analysis.titleHint ?? titleFromUrl(job.sourceUrl) });
-        selected = chooseAutomaticCandidate(candidates);
+        selected = chooseAutomaticCandidate(candidates, job.sourceUrl);
         if (!selected) {
           this.jobs.transition(job.id, 'needs_manual_selection', 0.2, {
             errorCode: 'manual_selection_required',
@@ -355,13 +355,21 @@ function downloadStallTimeoutMs(config: AppConfig): number {
   return config.downloadStallTimeoutMs ?? 120_000;
 }
 
-function chooseAutomaticCandidate(candidates: MediaCandidate[]): MediaCandidate | null {
+function chooseAutomaticCandidate(candidates: MediaCandidate[], sourceUrl: string): MediaCandidate | null {
   const confident = candidates.filter((candidate) => candidate.confidence >= 0.85);
-  if (confident.length === 1) {
-    return confident[0];
+  return confident.find((candidate) => isSameSourceUrl(candidate.url, sourceUrl)) ?? null;
+}
+
+function isSameSourceUrl(candidateUrl: string, sourceUrl: string): boolean {
+  try {
+    const candidate = new URL(candidateUrl);
+    const source = new URL(sourceUrl);
+    candidate.hash = '';
+    source.hash = '';
+    return candidate.href === source.href;
+  } catch {
+    return candidateUrl === sourceUrl;
   }
-  const direct = confident.find((candidate) => candidate.kind === 'direct');
-  return direct ?? null;
 }
 
 function cleanupCanceledArtifacts(workDir: string | null, finalPath: string | null, thumbnailPath: string | null): void {

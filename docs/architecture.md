@@ -85,7 +85,7 @@ The queue UI shows total job progress and progress within the current stage. Dow
 
 Runnable, active, problem, and canceled jobs are returned by `/api/queue`; only `completed` jobs leave the active queue UI automatically.
 
-Automatic analysis chooses a candidate only when confidence is clear enough. One confident candidate is selected directly; when there are multiple confident candidates, a direct candidate wins. Ambiguous results move the job to `needs_manual_selection` with diagnostics rather than guessing.
+Automatic analysis chooses a candidate only when the submitted source URL itself is classified as a confident media source. Confident candidates discovered inside a page through HTML inspection, Playwright network capture, or extension capture still move the job to `needs_manual_selection` so the user explicitly confirms which page source to download.
 
 Manual selection supports choosing a candidate or replacing the job source URL via `/api/jobs/:id/replace-source`.
 

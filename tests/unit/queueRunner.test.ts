@@ -120,6 +120,51 @@ describe('QueueRunner', () => {
     expect(fs.existsSync(thumbnail)).toBe(false);
   });
 
+  test('requires manual selection for browser requests discovered inside a page', async () => {
+    const { categories, config, jobs } = createServices();
+    const category = categories.create('test');
+    const job = jobs.create('https://example.test/watch/embedded-player', category.id);
+    const analyzer = {
+      analyze: async () => ({
+        candidates: [
+          {
+            ...candidate('https://media.example.test/video.mp4'),
+            kind: 'browser-request' as const,
+            confidence: 0.86,
+            headers: { referer: 'https://example.test/watch/embedded-player' }
+          }
+        ],
+        diagnostics: [],
+        screenshotPath: null,
+        titleHint: 'Embedded Player'
+      })
+    } satisfies Pick<BrowserAnalyzer, 'analyze'>;
+    let downloaderCalled = false;
+    const downloader = {
+      download: async () => {
+        downloaderCalled = true;
+        throw new Error('manual-selection candidate should not download automatically');
+      }
+    } satisfies Pick<DownloadEngine, 'download'>;
+    const runner = new QueueRunner(
+      config,
+      jobs,
+      analyzer as unknown as BrowserAnalyzer,
+      downloader as unknown as DownloadEngine,
+      {} as MediaProcessor,
+      categories,
+      {} as MediaFiles,
+      {} as MediaLibraryService
+    );
+
+    await runner.tick();
+
+    const updated = jobs.requireJob(job.id);
+    expect(updated.status).toBe('needs_manual_selection');
+    expect(updated.selectedCandidateId).toBeNull();
+    expect(downloaderCalled).toBe(false);
+  });
+
   test('uses a source extractor for YouTube even when a stale manual candidate is selected', async () => {
     const { categories, config, jobs } = createServices();
     const category = categories.create('test');

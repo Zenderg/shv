@@ -54,6 +54,8 @@ The default downloader is source-agnostic:
 - preserve browser request headers and selected cookies when the user explicitly chooses a source;
 - remux when possible and transcode only when needed for browser playback.
 
+Automatic download may proceed only when the submitted URL itself is a confident media source. Media candidates discovered inside a page through HTML inspection, Playwright network capture, or extension capture require manual source selection before download.
+
 Site-specific engines are allowed only as explicit extractors for known complex platforms where generic replay is not reliable. YouTube currently uses `yt-dlp` behind the backend source-extractor boundary because some `googlevideo` playback URLs are bound to player/runtime details that cannot be replayed by the generic downloader. Do not route YouTube through extension-side file downloads.
 
 Unsupported sources should fail visibly or ask for manual source selection. Manual selection can resume with a chosen candidate or replace the job source URL with a more precise URL. Unsupported sources should not silently fall back to DRM bypass, key extraction, or broad site-specific scraping.
