@@ -317,7 +317,7 @@ describe('extension service worker', () => {
     expect(storage.sourceState.sessions[42].currentUrl).toBe('https://www.youtube.com/watch?v=next');
   });
 
-  test('does not write unmapped network diagnostics into the active source session', async () => {
+  test('reports unmapped media-like requests on the active source session while capture is active', async () => {
     await import('../../extension/chrome-source-helper/service-worker.js');
 
     listeners.headersReceived({
@@ -332,7 +332,9 @@ describe('extension service worker', () => {
 
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(storage.sourceState.sessions[42].diagnostics.network.observed).toBe(0);
+    expect(storage.sourceState.sessions[42].diagnostics.network.observed).toBe(1);
+    expect(storage.sourceState.sessions[42].diagnostics.network.unmapped).toBe(1);
+    expect(storage.sourceState.sessions[42].diagnostics.network.lastReason).toBe('media-like request was not mapped to a source tab');
   });
 
   test('injects the content script before showing a newly opened source tab', async () => {

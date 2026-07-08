@@ -17,10 +17,10 @@ origin. If the app runs behind a reverse proxy that hides the public scheme or h
 to the browser-visible origin, for example `https://videos.example.com`.
 
 The runtime files under `extension/chrome-source-helper` are shared by both packages. The server rewrites only the
-packaged manifest profile and `APP_ORIGIN`. The app uses the production extension profile by default, even on localhost
-or private LAN origins. Set `SOURCE_EXTENSION_PROFILE=dev` to make the app expect the development extension id and show
-the development package in install/update instructions; the repository Docker Compose file sets this for local
-development convenience.
+packaged manifest profile and app origin constants in both `shared.js` and the generated `content-script.js`. The app
+uses the production extension profile by default, even on localhost or private LAN origins. Set
+`SOURCE_EXTENSION_PROFILE=dev` to make the app expect the development extension id and show the development package in
+install/update instructions; the repository Docker Compose file sets this for local development convenience.
 
 The Sources sidebar content script is generated from `src/extension/source-helper` with Svelte. Run
 `npm run build:extension` after editing that source; `npm run build` runs it before the web and server builds. Do not
@@ -99,6 +99,11 @@ The extension statically loads the content script only on the app origin so the 
 Some embedded players do not expose a usable DOM `<video>` to extension content scripts while still streaming media requests. For those cases, start playback and click Capture now in the Sources sidebar; this opens the same short active capture window manually without returning to whole-page passive collection.
 
 Capture now should show a short Listening state. If the list stays empty, keep playback running or seek so the player emits a fresh media request during that window.
+
+When Chromium reports a media request without a concrete tab id, the service worker maps it back to a source session
+only when the request can be matched unambiguously. If multiple open source sessions share the same origin, such as two
+YouTube tabs, origin-only tabless requests are not attached to every session; the active capture diagnostics record them
+as unmapped instead.
 
 ## Cookies and Request Context
 

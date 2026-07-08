@@ -87,6 +87,13 @@ export function sidebarCss() {
       width: 30px;
     }
 
+    .icon-button svg,
+    .collapse-button svg {
+      display: block;
+      height: 16px;
+      width: 16px;
+    }
+
     .header-actions {
       align-items: center;
       display: flex;
@@ -137,8 +144,12 @@ export function sidebarCss() {
     }
 
     .capture-button:disabled {
-      cursor: progress;
+      cursor: not-allowed;
       opacity: 0.7;
+    }
+
+    .capture-button.capturing:disabled {
+      cursor: progress;
     }
 
     .sources {

@@ -1,5 +1,5 @@
 export const PROTOCOL_VERSION = 1;
-export const EXTENSION_VERSION = '1.0.28';
+export const EXTENSION_VERSION = '1.0.29';
 export const APP_ORIGIN = 'http://127.0.0.1:8080';
 
 const VIDEO_EXTENSIONS = ['.mp4', '.webm', '.mov', '.m4v', '.mkv'];
@@ -118,15 +118,25 @@ export function sessionTabIdsForRequest(details, state) {
     return [details.tabId];
   }
 
+  const exactDocumentUrl = details?.documentUrl ?? null;
+  if (exactDocumentUrl) {
+    const exactMatches = matchingSessionTabIds(state, (session) =>
+      [session?.currentUrl, session?.sourceUrl].some((url) => url === exactDocumentUrl)
+    );
+    if (exactMatches.length === 1) {
+      return exactMatches;
+    }
+  }
+
   const requestOrigin = originOf(details?.initiator) ?? originOf(details?.documentUrl);
   if (!requestOrigin) {
     return [];
   }
 
-  return Object.entries(state?.sessions ?? {})
-    .filter(([, session]) => [session?.currentUrl, session?.sourceUrl].some((url) => originOf(url) === requestOrigin))
-    .map(([tabId]) => Number(tabId))
-    .filter((tabId) => Number.isInteger(tabId) && tabId >= 0);
+  const originMatches = matchingSessionTabIds(state, (session) =>
+    [session?.currentUrl, session?.sourceUrl].some((url) => originOf(url) === requestOrigin)
+  );
+  return originMatches.length === 1 ? originMatches : [];
 }
 
 function originOf(url) {
@@ -138,6 +148,13 @@ function originOf(url) {
   } catch {
     return null;
   }
+}
+
+function matchingSessionTabIds(state, predicate) {
+  return Object.entries(state?.sessions ?? {})
+    .filter(([, session]) => predicate(session))
+    .map(([tabId]) => Number(tabId))
+    .filter((tabId) => Number.isInteger(tabId) && tabId >= 0);
 }
 
 export function candidate(kind, url, contentType, manifestType, confidence) {

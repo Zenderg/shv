@@ -56,4 +56,15 @@ describe('source helper sidebar source', () => {
 
     expect(diagnosticsRenderCount).toBe(1);
   });
+
+  test('does not show the latest unrelated source session when a tab has no session', () => {
+    expect(contentScriptSource).not.toContain('?? latestSession(state.sessions)');
+  });
+
+  test('uses icons for compact sidebar buttons and distinguishes capture progress from listening', () => {
+    expect(sourceSidebarSource).toContain('<ChevronLeftIcon />');
+    expect(sourceSidebarSource).toContain('<ChevronRightIcon />');
+    expect(sourceSidebarSource).toContain('<CloseIcon />');
+    expect(sourceSidebarSource).toContain('class:capturing={$sidebarView.capturePending}');
+  });
 });

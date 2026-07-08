@@ -21,6 +21,8 @@ import {
 
 export { DEV_SOURCE_EXTENSION_ID, PROD_SOURCE_EXTENSION_ID, sourceExtensionProfile };
 
+const DEFAULT_EXTENSION_APP_ORIGIN = 'http://127.0.0.1:8080';
+
 export interface RouteServices {
   config: AppConfig;
   categories: CategoryService;
@@ -323,8 +325,20 @@ export function extensionZipEntries(
       );
       return { ...entry, data: Buffer.from(source) };
     }
+    if (entry.name === `${profile.packagePrefix}/content-script.js`) {
+      const source = rewritePackagedAppOrigin(entry.data.toString('utf8'), appOrigin);
+      return { ...entry, data: Buffer.from(source) };
+    }
     return entry;
   });
+}
+
+function rewritePackagedAppOrigin(source: string, appOrigin: string): string {
+  return source
+    .split(JSON.stringify(DEFAULT_EXTENSION_APP_ORIGIN))
+    .join(JSON.stringify(appOrigin))
+    .split(`'${DEFAULT_EXTENSION_APP_ORIGIN}'`)
+    .join(`'${appOrigin}'`);
 }
 
 function appOriginForExtension(request: Request, config: AppConfig): string {

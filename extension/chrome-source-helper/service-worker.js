@@ -308,6 +308,14 @@ async function recordNetworkDetails(details, requestHeaders = {}) {
         unmapped: false
       });
     }
+  } else if (diagnostic) {
+    for (const tabId of activeDiagnosticTabIds(state)) {
+      await updateNetworkDiagnostics(tabId, { ...diagnostic, reason: 'media-like request was not mapped to a source tab' }, {
+        classified: Boolean(candidate),
+        mapped: false,
+        unmapped: true
+      });
+    }
   }
   if (!candidate) {
     return;
@@ -407,6 +415,19 @@ function networkDiagnosticFor(details, contentType, candidate, requestHeaders = 
     tabId: details.tabId,
     type: details.type ?? 'unknown'
   };
+}
+
+function activeDiagnosticTabIds(state) {
+  const activeTabId = Number(state?.activeTabId);
+  if (Number.isInteger(activeTabId) && isSessionCaptureActive(state?.sessions?.[String(activeTabId)])) {
+    return [activeTabId];
+  }
+
+  const activeSessions = Object.entries(state?.sessions ?? {})
+    .filter(([, session]) => isSessionCaptureActive(session))
+    .map(([tabId]) => Number(tabId))
+    .filter((tabId) => Number.isInteger(tabId) && tabId >= 0);
+  return activeSessions.length === 1 ? activeSessions : [];
 }
 
 function betterPlaybackDiagnostic(current, incoming) {

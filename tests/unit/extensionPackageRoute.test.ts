@@ -17,10 +17,13 @@ describe('extension package entries', () => {
       'https://prod.example.test'
     );
     const archive = buildZipArchive(entries);
+    const contentScriptEntry = entries.find((entry) => entry.name === 'shv-source-helper/content-script.js');
 
     expect(archive.includes(Buffer.from('"name": "shv Source Helper"'))).toBe(true);
     expect(archive.includes(Buffer.from('"https://prod.example.test/*"'))).toBe(true);
     expect(archive.includes(Buffer.from("export const APP_ORIGIN = 'https://prod.example.test';"))).toBe(true);
+    expect(contentScriptEntry?.data.toString('utf8')).toContain('https://prod.example.test');
+    expect(contentScriptEntry?.data.toString('utf8')).not.toContain('http://127.0.0.1:8080');
   });
 
   test('packages a separate dev helper extension from the same source files', () => {

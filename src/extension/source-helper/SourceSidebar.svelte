@@ -1,5 +1,8 @@
 <script lang="ts">
   import Diagnostics from './Diagnostics.svelte';
+  import ChevronLeftIcon from './ChevronLeftIcon.svelte';
+  import ChevronRightIcon from './ChevronRightIcon.svelte';
+  import CloseIcon from './CloseIcon.svelte';
   import { sidebarActions, sidebarView, type Candidate, type SourceSession } from './sidebarStore';
 
   function hostname(url: string) {
@@ -76,7 +79,7 @@
       aria-label={collapseButtonLabel($sidebarView.collapsed)}
       onclick={sidebarActions.toggleCollapsed}
     >
-      &lt;
+      <ChevronLeftIcon />
     </button>
     <span class="rail-label">Sources</span>
   {:else}
@@ -92,9 +95,11 @@
           aria-label={collapseButtonLabel($sidebarView.collapsed)}
           onclick={sidebarActions.toggleCollapsed}
         >
-          &gt;
+          <ChevronRightIcon />
         </button>
-        <button class="icon-button" type="button" aria-label="Close sources" onclick={sidebarActions.close}>x</button>
+        <button class="icon-button" type="button" aria-label="Close sources" onclick={sidebarActions.close}>
+          <CloseIcon />
+        </button>
       </div>
     </header>
 
@@ -105,6 +110,7 @@
         <span>{session.sourceUrl}</span>
         {#if session.status !== 'selected'}
           <button
+            class:capturing={$sidebarView.capturePending}
             class="capture-button"
             disabled={$sidebarView.capturePending || captureSecondsRemaining(session) > 0}
             type="button"

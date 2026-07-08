@@ -87,6 +87,24 @@ describe('extension shared candidate detection', () => {
     expect(sessionTabIdsForRequest({ initiator: 'https://example.test', tabId: -1 }, state)).toEqual([]);
   });
 
+  test('does not map ambiguous tabless requests to every same-origin session', () => {
+    const state = {
+      activeTabId: 42,
+      sessions: {
+        42: {
+          currentUrl: 'https://www.youtube.com/watch?v=first',
+          sourceUrl: 'https://www.youtube.com/watch?v=first'
+        },
+        43: {
+          currentUrl: 'https://www.youtube.com/watch?v=second',
+          sourceUrl: 'https://www.youtube.com/watch?v=second'
+        }
+      }
+    };
+
+    expect(sessionTabIdsForRequest({ initiator: 'https://www.youtube.com', tabId: -1 }, state)).toEqual([]);
+  });
+
   test('explains why media-like URLs are rejected by the classifier', () => {
     expect(candidateRejectionReason('blob:https://example.test/video-id', 'video/mp4')).toBe('non-http protocol blob:');
     expect(candidateRejectionReason('https://media.example.test/video?bytes=0-6402', 'video/webm')).toBe('explicit bytes query param');

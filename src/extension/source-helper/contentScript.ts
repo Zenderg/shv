@@ -210,7 +210,7 @@ async function renderSidebar() {
     return;
   }
   const state = response?.state ?? { activeTabId: null, sessions: {} };
-  const session = state.sessions[String(sidebarTabId ?? state.activeTabId ?? '')] ?? latestSession(state.sessions);
+  const session = state.sessions[String(sidebarTabId ?? state.activeTabId ?? '')] ?? null;
   lastRenderedSession = session;
 
   if (session?.status === 'selected') {
@@ -671,12 +671,6 @@ function activeVideoCandidates(video: HTMLVideoElement) {
     }
   }
   return candidates;
-}
-
-function latestSession(sessions: Record<string, SourceSession>) {
-  const session = Object.values(sessions ?? {}).sort((left, right) => String(right.updatedAt).localeCompare(String(left.updatedAt)))[0] ?? null;
-  lastRenderedSession = session;
-  return session;
 }
 
 function sidebarReservedWidth() {
