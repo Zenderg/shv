@@ -103,6 +103,19 @@ export class LiveBrowserService {
       await this.collectHtmlCandidates(session);
     } catch (error) {
       session.errorMessage = error instanceof Error ? error.message : String(error);
+      session.updatedAt = new Date().toISOString();
+      this.sessions.delete(jobId);
+      await context.close().catch(() => undefined);
+      return {
+        jobId,
+        running: false,
+        currentUrl: null,
+        title: null,
+        width: 1366,
+        height: 900,
+        updatedAt: session.updatedAt,
+        errorMessage: session.errorMessage
+      };
     }
 
     return this.state(jobId);
