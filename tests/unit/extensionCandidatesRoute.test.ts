@@ -17,10 +17,12 @@ describe('extension candidate route', () => {
 
     await request(app)
       .post(`/api/jobs/${job.id}/extension-candidates`)
+      .set('X-SHV-CSRF', 'test-csrf-token')
       .send({ candidates: [candidate('https://media.example.test/old.m3u8')] })
       .expect(200);
     await request(app)
       .post(`/api/jobs/${job.id}/extension-candidates`)
+      .set('X-SHV-CSRF', 'test-csrf-token')
       .send({ candidates: [candidate('https://media.example.test/new.m3u8')] })
       .expect(200);
 
@@ -31,6 +33,7 @@ describe('extension candidate route', () => {
     const { app, job, jobs } = createAppWithJob();
     await request(app)
       .post(`/api/jobs/${job.id}/extension-candidates`)
+      .set('X-SHV-CSRF', 'test-csrf-token')
       .send({ candidates: [candidate('https://media.example.test/selected.m3u8')] })
       .expect(200);
     const selected = jobs.listCandidates(job.id)[0];
@@ -38,6 +41,7 @@ describe('extension candidate route', () => {
 
     await request(app)
       .post(`/api/jobs/${job.id}/extension-candidates`)
+      .set('X-SHV-CSRF', 'test-csrf-token')
       .send({ candidates: [candidate('https://media.example.test/late-network-candidate.m3u8')] })
       .expect(200);
 
@@ -52,6 +56,7 @@ describe('extension candidate route', () => {
     const englishUrl = 'https://media.example.test/subtitles/en.ass';
     await request(app)
       .post(`/api/jobs/${job.id}/extension-candidates`)
+      .set('X-SHV-CSRF', 'test-csrf-token')
       .send({
         candidates: [
           candidate('https://media.example.test/video/index.m3u8', [
@@ -65,6 +70,7 @@ describe('extension candidate route', () => {
 
     const selection = await request(app)
       .post(`/api/jobs/${job.id}/select-candidate`)
+      .set('X-SHV-CSRF', 'test-csrf-token')
       .send({ candidateId: selected.id })
       .expect(200);
 
@@ -76,6 +82,7 @@ describe('extension candidate route', () => {
 
     const continuation = await request(app)
       .post(`/api/jobs/${job.id}/select-subtitle-track`)
+      .set('X-SHV-CSRF', 'test-csrf-token')
       .send({ subtitleTrackUrl: englishUrl })
       .expect(200);
 
@@ -95,6 +102,7 @@ describe('extension candidate route', () => {
     const russianUrl = 'https://media.example.test/subtitles/ru.ass';
     await request(app)
       .post(`/api/jobs/${job.id}/extension-candidates`)
+      .set('X-SHV-CSRF', 'test-csrf-token')
       .send({
         candidates: [candidate('https://media.example.test/video/index.m3u8', [subtitleTrack(russianUrl, 'Russian', 'ru')])]
       })
@@ -102,11 +110,13 @@ describe('extension candidate route', () => {
     const selected = jobs.listCandidates(job.id)[0];
     await request(app)
       .post(`/api/jobs/${job.id}/select-candidate`)
+      .set('X-SHV-CSRF', 'test-csrf-token')
       .send({ candidateId: selected.id })
       .expect(200);
 
     await request(app)
       .post(`/api/jobs/${job.id}/select-subtitle-track`)
+      .set('X-SHV-CSRF', 'test-csrf-token')
       .send({ subtitleTrackUrl: null })
       .expect(200);
 
@@ -126,6 +136,7 @@ function createAppWithJob() {
   app.use(createRouter({
     categories: {} as never,
     config: tempConfig(root),
+    csrfToken: 'test-csrf-token',
     extensionDebug: new ExtensionDebugService(),
     jobs,
     liveBrowser: {} as never,

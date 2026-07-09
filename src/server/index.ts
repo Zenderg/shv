@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import express from 'express';
 import { fileURLToPath } from 'node:url';
-import { createRouter, errorHandler } from './api/routes.js';
+import { createCsrfToken, createRouter, errorHandler } from './api/routes.js';
 import { BrowserAnalyzer } from './browser-analyzer/browserAnalyzer.js';
 import { LiveBrowserService } from './browser-live/liveBrowserService.js';
 import { CategoryService } from './categories/categoryService.js';
@@ -38,11 +38,12 @@ export function createApp() {
   const processor = new MediaProcessor();
   const sourceExtractors = new YtDlpSourceExtractor({ cookiesPath: config.ytDlpCookiesPath });
   const queueRunner = new QueueRunner(config, jobs, analyzer, downloader, processor, categories, mediaFiles, mediaLibrary, sourceExtractors);
+  const csrfToken = createCsrfToken();
 
   const app = express();
   app.disable('x-powered-by');
   app.use(express.json({ limit: '1mb' }));
-  app.use(createRouter({ config, categories, extensionDebug, jobs, queueRunner, liveBrowser, mediaFiles, mediaLibrary }));
+  app.use(createRouter({ config, csrfToken, categories, extensionDebug, jobs, queueRunner, liveBrowser, mediaFiles, mediaLibrary }));
 
   const webRoot = resolveWebRoot();
   if (fs.existsSync(webRoot)) {

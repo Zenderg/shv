@@ -11,6 +11,14 @@ function chromeEvent(listeners, name) {
   };
 }
 
+function runtimeConfigResponse() {
+  return {
+    json: async () => ({ csrfToken: 'test-csrf-token', sourceExtensionProfile: 'prod' }),
+    ok: true,
+    status: 200
+  };
+}
+
 describe('extension service worker', () => {
   let listeners;
   let storage;
@@ -119,7 +127,10 @@ describe('extension service worker', () => {
         update: vi.fn(async () => ({}))
       }
     };
-    globalThis.fetch = vi.fn(async (_url, options) => {
+    globalThis.fetch = vi.fn(async (url, options) => {
+      if (String(url).endsWith('/api/runtime-config')) {
+        return runtimeConfigResponse();
+      }
       const body = JSON.parse(options.body);
       return {
         json: async () => body.candidates.map((candidate, index) => ({ ...candidate, id: `candidate-${index}` })),
@@ -155,8 +166,9 @@ describe('extension service worker', () => {
       url: 'https://rr1---sn-test.googlevideo.com/videoplayback?itag=18&source=youtube&mime=video%2Fmp4&ratebypass=yes'
     });
 
-    await vi.waitFor(() => expect(globalThis.fetch).toHaveBeenCalled());
-    const body = JSON.parse(globalThis.fetch.mock.calls[0][1].body);
+    await vi.waitFor(() => expect(globalThis.fetch.mock.calls.some(([url]) => String(url).endsWith('/extension-candidates'))).toBe(true));
+    const candidatePost = globalThis.fetch.mock.calls.find(([url]) => String(url).endsWith('/extension-candidates'));
+    const body = JSON.parse(candidatePost[1].body);
 
     expect(body.candidates[0].headers).toMatchObject({
       Referer: 'https://www.youtube.com/watch?v=test',
@@ -413,6 +425,9 @@ describe('extension service worker', () => {
     const masterUrl = 'https://iv-h.phncdn.com/videos/202411/19/460719291/1080P_4000K_460719291.mp4/master.m3u8';
     const mediaUrl = 'https://iv-h.phncdn.com/videos/202411/19/460719291/1080P_4000K_460719291.mp4/index-v1-a1.m3u8';
     globalThis.fetch = vi.fn(async (url, options = {}) => {
+      if (String(url).endsWith('/api/runtime-config')) {
+        return runtimeConfigResponse();
+      }
       if (String(url).endsWith('/extension-candidates')) {
         const body = JSON.parse(options.body);
         return {
@@ -550,6 +565,9 @@ index-v1-a1.m3u8`
       }
     ];
     globalThis.fetch = vi.fn(async (url, options) => {
+      if (String(url).endsWith('/api/runtime-config')) {
+        return runtimeConfigResponse();
+      }
       const body = options?.body ? JSON.parse(options.body) : {};
       if (String(url).endsWith('/extension-candidates')) {
         return {
@@ -669,6 +687,9 @@ index-v1-a1.m3u8`
       status: 'waiting for playback'
     };
     globalThis.fetch = vi.fn(async (url, options) => {
+      if (String(url).endsWith('/api/runtime-config')) {
+        return runtimeConfigResponse();
+      }
       const body = options?.body ? JSON.parse(options.body) : {};
       if (String(url).endsWith('/extension-candidates')) {
         return {
@@ -726,6 +747,9 @@ index-v1-a1.m3u8`
       sourceUrl: 'https://other.example.test/watch'
     };
     globalThis.fetch = vi.fn(async (url, options) => {
+      if (String(url).endsWith('/api/runtime-config')) {
+        return runtimeConfigResponse();
+      }
       const body = options?.body ? JSON.parse(options.body) : {};
       if (String(url).endsWith('/extension-candidates')) {
         return {
