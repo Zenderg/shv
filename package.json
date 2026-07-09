@@ -26,6 +26,7 @@
   "dependencies": {
     "@vitejs/plugin-react": "^4.3.4",
     "express": "^4.21.2",
+    "fast-xml-parser": "^5.9.3",
     "mime-types": "^2.1.35",
     "playwright": "^1.50.1",
     "react": "^19.0.0",

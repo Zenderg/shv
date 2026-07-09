@@ -77,4 +77,41 @@ describe('DASH parsing', () => {
     expect(selected.audio?.id).toBe('audio-high');
     expect(selected.audio?.baseUrl).toBe('https://example.test/audio-high.webm');
   });
+
+  test('parses namespaced self-closing representations and ignores commented markup', () => {
+    const namespacedManifest = `<?xml version="1.0"?>
+<dash:MPD xmlns:dash="urn:mpeg:dash:schema:mpd:2011">
+  <dash:Period>
+    <dash:AdaptationSet contentType="video">
+      <!-- <Representation id="commented" bandwidth="9999999"><BaseURL>wrong.mp4</BaseURL></Representation> -->
+      <dash:BaseURL>video.mp4</dash:BaseURL>
+      <dash:Representation id="self-closing" bandwidth="2200000" width="1280" height="720" />
+    </dash:AdaptationSet>
+  </dash:Period>
+</dash:MPD>`;
+
+    expect(parseDashRepresentations(namespacedManifest, 'https://example.test/manifest.mpd')).toEqual([
+      {
+        id: 'self-closing',
+        bandwidth: 2200000,
+        width: 1280,
+        height: 720,
+        baseUrl: 'https://example.test/video.mp4'
+      }
+    ]);
+  });
+
+  test('does not treat a manifest URL as a playable representation URL', () => {
+    const segmentedManifest = `<?xml version="1.0"?>
+<MPD>
+  <Period>
+    <AdaptationSet contentType="video">
+      <SegmentTemplate media="segment-$Number$.m4s" initialization="init.m4s" />
+      <Representation id="segmented" bandwidth="2200000" />
+    </AdaptationSet>
+  </Period>
+</MPD>`;
+
+    expect(parseDashRepresentations(segmentedManifest, 'https://example.test/manifest.mpd')).toEqual([]);
+  });
 });

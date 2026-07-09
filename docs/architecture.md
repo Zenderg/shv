@@ -125,7 +125,9 @@ Some DASH manifests expose video and audio as separate adaptation sets. The down
 
 Direct `browser-request` media candidates are intentionally downloaded with the browser-impersonated `curl_cffi` path instead of Node `fetch`. Some CDNs accept the same signed URL, cookies, referer, range, and sec-fetch headers from Chromium's media network stack but return HTTP 403 to Node/undici. Keep this as the single backend for direct `browser-request` media so failures have one debuggable request path.
 
-DASH manifests are XML, so representation URLs may contain escaped query separators such as `&amp;`; the downloader decodes those before invoking ffmpeg.
+DASH manifests are parsed as XML rather than scanned with regular expressions. Namespace-prefixed and self-closing representation elements are supported, comments are ignored, and escaped query separators such as `&amp;` are decoded before invoking ffmpeg.
+
+The built-in DASH downloader currently supports representations with a direct `BaseURL` on the representation or its adaptation set. `SegmentTemplate` and `SegmentList` manifests are not expanded into segment downloads; representations without a playable `BaseURL` must be rejected instead of treating the manifest URL itself as media input.
 
 HLS/DASH downloads write to an extensionless work file, so ffmpeg remux calls pass an explicit output muxer.
 
