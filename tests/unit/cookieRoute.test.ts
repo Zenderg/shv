@@ -96,6 +96,42 @@ describe('cookie route', () => {
     expect(response.body).toEqual({ error: 'job_not_found' });
     expect(fs.existsSync(cookiesPath)).toBe(false);
   });
+
+  test('ignores malformed Netscape cookie lines while merging uploaded cookies', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'xxx-cookies-'));
+    const cookiesPath = path.join(root, 'cookies.txt');
+    fs.writeFileSync(cookiesPath, [
+      '# Netscape HTTP Cookie File',
+      'not-enough-columns',
+      '.example.test\tTRUE\t/\tTRUE',
+      '#HttpOnly_.youtube.com\tTRUE\t/\tTRUE\t1893456000\tSID\told\tvalue',
+      ''
+    ].join('\n'));
+    const app = createCookieRouteApp(tempConfig(root, cookiesPath));
+
+    await request(app)
+      .post('/api/jobs/job-id/cookies')
+      .set('X-SHV-CSRF', 'test-csrf-token')
+      .send({
+        cookies: [
+          {
+            domain: '.example.test',
+            expirationDate: 1893456000,
+            httpOnly: false,
+            name: 'session',
+            path: '/',
+            secure: true,
+            value: 'new'
+          }
+        ]
+      })
+      .expect(204);
+
+    const file = fs.readFileSync(cookiesPath, 'utf8');
+    expect(file).toContain('#HttpOnly_.youtube.com\tTRUE\t/\tTRUE\t1893456000\tSID\told\tvalue');
+    expect(file).toContain('.example.test\tTRUE\t/\tTRUE\t1893456000\tsession\tnew');
+    expect(file).not.toContain('not-enough-columns');
+  });
 });
 
 function createCookieRouteApp(config: AppConfig, jobs: { get: (id: string) => unknown } = { get: () => ({ id: 'job-id' }) }) {
