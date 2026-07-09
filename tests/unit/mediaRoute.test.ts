@@ -3,13 +3,17 @@ import os from 'node:os';
 import path from 'node:path';
 import express from 'express';
 import request from 'supertest';
-import { describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import { createRouter, errorHandler } from '../../src/server/api/routes.js';
 import type { AppConfig } from '../../src/server/config/appConfig.js';
 import { ExtensionDebugService } from '../../src/server/extension-debug/extensionDebugService.js';
 import type { MediaItem } from '../../src/shared/types.js';
 
 describe('media route', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   test('rejects byte ranges whose end is before start', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'xxx-media-route-'));
     const mediaPath = path.join(root, 'library', 'video.mp4');
@@ -40,6 +44,49 @@ describe('media route', () => {
 
     expect(response.headers['content-range']).toBeUndefined();
     expect(response.headers['content-length']).not.toBe('-39');
+  });
+
+  test('forwards file open errors when media disappears after stat', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'xxx-media-route-'));
+    const mediaPath = path.join(root, 'library', 'video.mp4');
+    fs.mkdirSync(path.dirname(mediaPath), { recursive: true });
+    fs.writeFileSync(mediaPath, Buffer.alloc(100));
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.spyOn(fs, 'statSync').mockImplementationOnce(((filePath: fs.PathLike) => {
+      const stat = fs.lstatSync(filePath);
+      fs.unlinkSync(filePath);
+      return stat;
+    }) as typeof fs.statSync);
+    const app = express();
+    app.use(createRouter({
+      categories: {} as never,
+      config: tempConfig(root),
+      csrfToken: 'test-csrf-token',
+      extensionDebug: new ExtensionDebugService(),
+      jobs: {} as never,
+      liveBrowser: {} as never,
+      mediaFiles: {
+        absoluteMediaPath: () => mediaPath
+      } as never,
+      mediaLibrary: {
+        get: () => mediaItem()
+      } as never,
+      queueRunner: {} as never
+    }));
+    app.use(errorHandler);
+
+    const response = await request(app)
+      .get('/media/media-id')
+      .expect(500);
+
+    expect(response.body).toEqual({
+      error: 'server_error',
+      message: 'Internal server error'
+    });
+    expect(consoleError).toHaveBeenCalledWith(
+      '[shv] api-error',
+      expect.objectContaining({ code: 'ENOENT' })
+    );
   });
 });
 
