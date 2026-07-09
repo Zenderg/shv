@@ -37,9 +37,15 @@ The repository `docker-compose.yml` sets `SOURCE_EXTENSION_PROFILE=dev` so local
 - Docker Compose needs access to the Docker socket, so `docker compose up -d --build` and `docker compose ps` may need sandbox escalation.
 - If sandboxed `curl` cannot reach port `8080` but `docker compose ps` shows `0.0.0.0:8080->8080/tcp`, retry the HTTP check with escalation before assuming the app is down.
 - The in-app browser can open and evaluate the page even if `domSnapshot()` fails with `incrementalAriaSnapshot is not a function`; verify with page URL, title, or a small read-only `evaluate` instead.
-- GitHub issue reads work through the GitHub connector, but issue creation may return `403 Resource not accessible by integration`. In that case, use `gh issue create --repo Zenderg/shv` with sandbox escalation for network access.
+- Sandboxed `gh` network operations may require escalation. Follow [docs/agent-github-workflows.md](agent-github-workflows.md) for connector preference, permission-error fallback, issue selection, and pull request publication rules.
 
 ## Local Checks
+
+Install the locked dependencies before the first local check in a fresh clone or worktree:
+
+```bash
+npm ci
+```
 
 Run focused checks while developing:
 

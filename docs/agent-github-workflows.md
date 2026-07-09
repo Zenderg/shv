@@ -13,9 +13,24 @@ Use two separate agent roles for GitHub-driven changes:
 
 The same conversation should not normally both produce a pull request and merge it. Keeping those responsibilities separate gives the project an independent review gate.
 
+## Selecting Work
+
+When an automation or user asks the agent to choose an issue rather than naming one, handle exactly one issue per run. Use GitHub's current state as the source of truth; automation memory may help avoid repeated discovery, but it is only a cache and must not override current issue or pull request state.
+
+Before selecting an issue:
+
+1. Refresh the repository's open pull requests and inspect which issues they close or otherwise cover.
+2. Refresh the open issues and exclude issues already covered by an open pull request.
+3. Respect explicit priority labels or user direction. Without either, select the oldest uncovered open issue so repeated runs are deterministic.
+4. Read the full issue and linked discussion before deciding that it is actionable.
+5. After initial validation, claim the issue through an existing repository assignment or coordination label when permissions and conventions allow it.
+6. Recheck the issue and open pull request coverage before publishing work so a concurrent agent cannot silently create a duplicate pull request.
+
+An optional coordination label, assignment, or automation-memory entry can make active work easier to see, but its absence must not block the workflow. Do not invent a required label during an issue run, and never use one of these hints instead of checking GitHub itself.
+
 ## Fixing GitHub Issues
 
-When the user provides a GitHub issue URL or issue number and asks to fix it, the agent may create and switch to a dedicated branch without asking for separate branch permission. This is the only exception to the default "work only on main" branch rule.
+When the user provides a GitHub issue URL or issue number and asks to fix it, or explicitly authorizes the agent or automation to select and fix one issue, the agent may create and switch to a dedicated branch without asking for separate branch permission. A request to inspect, summarize, or prioritize issues does not grant that permission. This is the only exception to the default "work only on main" branch rule.
 
 Use a branch name like:
 
@@ -33,15 +48,17 @@ Do not blindly implement every issue. If the issue is invalid, already fixed, un
 
 For a valid issue:
 
-1. Start from an up-to-date `main`.
+1. Start from an up-to-date `origin/main` in a clean worktree.
 2. Create a dedicated `codex/issue-<number>-<slug>` branch.
 3. Investigate the exact cause before editing.
 4. Implement the smallest focused fix that matches project conventions.
 5. Add tests only when they materially improve verification for the change.
-6. Run focused checks that are relevant to the files and behavior touched.
+6. Run the narrowest useful checks first, then broader checks justified by the affected surfaces and risk.
 7. Commit with a conventional prefix such as `fix:`, `feat:`, `docs:`, `test:`, `refactor:`, `build:`, or `chore:`.
 8. Push the branch.
 9. Open a pull request against `main`.
+
+In a multi-worktree checkout, `main` may already be checked out elsewhere. Do not force a second `main` checkout with `--ignore-other-worktrees`, detach the other worktree, or disturb unrelated changes. If the current worktree is clean and based on the fetched `origin/main`, create the issue branch directly from that commit. Otherwise use a clean dedicated worktree. Never stash, reset, or reuse unrelated user changes to make room for an issue fix.
 
 The pull request body must link the issue with a GitHub closing keyword when the PR should close the issue after merge:
 
@@ -58,6 +75,10 @@ The PR description should include:
 - the fix summary;
 - checks run and their results;
 - any residual risk or follow-up that the reviewer should know.
+
+After opening the pull request, verify that it is open against `main`, points at the intended branch and commit, and is recognized as closing the issue when a closing keyword was used. A missing optional repository label is not a publication failure.
+
+Prefer the GitHub connector for issue and pull request reads and supported write operations. If a required capability is unavailable or GitHub returns a permission error such as `403 Resource not accessible by integration`, use an authenticated `gh` command as the fallback. Sandboxed `gh` network operations may require approval. Do not retry a known unsupported connector operation repeatedly within the same run.
 
 The Issue Fix Agent must not merge its own PR.
 

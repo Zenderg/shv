@@ -2,7 +2,7 @@
 
 - Work only on the main branch.
 - Do not create or switch to new branches unless the user explicitly asks for a new branch.
-- Exception: when the user provides a GitHub issue URL or issue number and asks to fix it, follow [docs/agent-github-workflows.md](docs/agent-github-workflows.md). That workflow allows creating a dedicated PR branch, pushing it, and opening a pull request without separate branch permission. It does not allow merging.
+- Exception: when the user provides a GitHub issue URL or issue number and asks to fix it, or explicitly asks an agent or automation to select and fix one issue, follow [docs/agent-github-workflows.md](docs/agent-github-workflows.md). That workflow allows creating a dedicated PR branch, pushing it, and opening a pull request without separate branch permission. It does not allow merging.
 - Use subagents at your discretion whenever they are useful.
 - Use conventional commit prefixes for commit messages so releases can be summarized cleanly: `feat:`, `fix:`, `docs:`, `chore:`, `refactor:`, `test:`, or `build:`.
 - Do not write tests for everything by default. Write only genuinely useful tests; the goal is verification, not testing for its own sake or covering everything. Before adding a test, first ask whether that location truly needs one.
