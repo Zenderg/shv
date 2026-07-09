@@ -1,0 +1,113 @@
+.queueList {
+  display: grid;
+  gap: 12px;
+}
+
+.queueJob {
+  box-shadow: none;
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+.queueJob.needs_manual_selection,
+.queueJob.needs_subtitle_selection,
+.queueJob.failed {
+  border-color: var(--color-danger-border);
+}
+
+.jobHeader {
+  display: grid;
+  gap: 3px;
+}
+
+.queueJob strong {
+  overflow-wrap: anywhere;
+}
+
+.progressStack {
+  display: grid;
+  gap: 8px;
+}
+
+.progressRow {
+  display: grid;
+  gap: 5px;
+}
+
+.progressRow div {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.progressRow span {
+  color: var(--color-subtle);
+  font-size: 12px;
+}
+
+.progressRow strong {
+  color: var(--color-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+progress {
+  accent-color: var(--color-accent-strong);
+  height: 8px;
+  width: 100%;
+}
+
+.queueJob p {
+  color: var(--color-danger-text);
+  font-size: 13px;
+  max-height: 180px;
+  overflow: auto;
+  padding-right: 6px;
+  white-space: pre-wrap;
+}
+
+.jobActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.subtitleSelection {
+  align-items: end;
+  background: var(--color-surface-muted);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(180px, 1fr) auto;
+  padding: 10px;
+}
+
+.subtitleSelection label {
+  color: var(--color-muted);
+  display: grid;
+  font-size: 12px;
+  font-weight: 700;
+  gap: 6px;
+}
+
+.subtitleSelection select {
+  min-width: 0;
+}
+
+.subtitleSelection button {
+  min-height: 42px;
+  padding: 0 16px;
+}
+
+.jobActions button {
+  background: var(--color-surface-muted);
+  color: var(--color-text);
+}
+
+.jobActions .dangerButton {
+  background: var(--color-danger-bg);
+  color: var(--color-danger-text);
+}

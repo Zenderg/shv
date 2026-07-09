@@ -1,0 +1,56 @@
+.categoryMode {
+  background: var(--color-input);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  display: grid;
+  gap: 4px;
+  grid-template-columns: 1fr 1fr;
+  padding: 4px;
+}
+
+.formDialog input,
+.formDialog select {
+  background: var(--color-input);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  color: var(--color-text);
+  min-height: 42px;
+  min-width: 0;
+  padding: 0 12px;
+}
+
+.formDialog button[type="submit"],
+.jobActions button {
+  background: var(--color-accent-strong);
+  border-radius: 6px;
+  color: var(--color-text);
+  font-weight: 700;
+  min-height: 42px;
+  padding: 0 16px;
+}
+
+.formDialog button.dangerButton[type="submit"],
+.dialogActions .dangerButton {
+  background: var(--color-danger-bg);
+  color: var(--color-danger-text);
+}
+
+.dialogActions .secondaryButton {
+  background: var(--color-surface-muted);
+  color: var(--color-text);
+}
+
+.categoryMode button {
+  background: transparent;
+  border-radius: 6px;
+  color: var(--color-muted);
+  justify-content: center;
+  min-height: 38px;
+  padding: 0 12px;
+}
+
+.categoryMode button.selected {
+  background: var(--color-surface-muted);
+  color: var(--color-text);
+  font-weight: 700;
+}

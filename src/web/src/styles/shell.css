@@ -1,0 +1,56 @@
+.shell {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  height: 100vh;
+  overflow: hidden;
+}
+
+.workspace {
+  min-height: 0;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 32px;
+}
+
+.topbar {
+  align-items: end;
+  display: grid;
+  gap: 18px;
+  grid-template-columns: minmax(220px, 1fr) auto;
+  margin-bottom: 24px;
+}
+
+h1 {
+  font-size: clamp(28px, 3vw, 42px);
+  line-height: 1.04;
+}
+
+.topbar p,
+.videoMeta p,
+.muted,
+.queueJob span {
+  color: var(--color-subtle);
+}
+
+.topbarActions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.primaryButton {
+  background: var(--color-accent-strong);
+  border-radius: 6px;
+  color: var(--color-text);
+  font-weight: 700;
+  min-height: 46px;
+  padding: 0 18px;
+}
+
+.error {
+  background: var(--color-danger-bg);
+  border: 1px solid var(--color-danger-border);
+  border-radius: 8px;
+  color: var(--color-danger-text);
+  margin-bottom: 16px;
+  padding: 12px 14px;
+}
