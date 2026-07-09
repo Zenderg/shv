@@ -207,6 +207,10 @@ export function createRouter(services: RouteServices): Router {
 
   router.post('/api/jobs/:id/cookies', (request, response) => {
     const body = z.object({ cookies: z.array(browserCookieSchema()).max(400) }).parse(request.body);
+    if (!services.jobs.get(request.params.id)) {
+      response.status(404).json({ error: 'job_not_found' });
+      return;
+    }
     if (!services.config.ytDlpCookiesPath) {
       response.status(204).end();
       return;

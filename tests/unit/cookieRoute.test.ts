@@ -12,20 +12,7 @@ describe('cookie route', () => {
   test('stores uploaded browser cookies as a Netscape cookies file', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'xxx-cookies-'));
     const cookiesPath = path.join(root, 'youtube-cookies.txt');
-    const app = express();
-    app.use(express.json());
-    app.use(createRouter({
-      categories: {} as never,
-      config: tempConfig(root, cookiesPath),
-      csrfToken: 'test-csrf-token',
-      extensionDebug: new ExtensionDebugService(),
-      jobs: {} as never,
-      liveBrowser: {} as never,
-      mediaFiles: {} as never,
-      mediaLibrary: {} as never,
-      queueRunner: {} as never
-    }));
-    app.use(errorHandler);
+    const app = createCookieRouteApp(tempConfig(root, cookiesPath));
 
     await request(app)
       .post('/api/jobs/job-id/cookies')
@@ -58,20 +45,7 @@ describe('cookie route', () => {
       '.youtube.com\tTRUE\t/\tTRUE\t1893456000\tSID\told',
       ''
     ].join('\n'));
-    const app = express();
-    app.use(express.json());
-    app.use(createRouter({
-      categories: {} as never,
-      config: tempConfig(root, cookiesPath),
-      csrfToken: 'test-csrf-token',
-      extensionDebug: new ExtensionDebugService(),
-      jobs: {} as never,
-      liveBrowser: {} as never,
-      mediaFiles: {} as never,
-      mediaLibrary: {} as never,
-      queueRunner: {} as never
-    }));
-    app.use(errorHandler);
+    const app = createCookieRouteApp(tempConfig(root, cookiesPath));
 
     await request(app)
       .post('/api/jobs/job-id/cookies')
@@ -95,7 +69,52 @@ describe('cookie route', () => {
     expect(file).toContain('.youtube.com\tTRUE\t/\tTRUE\t1893456000\tSID\told');
     expect(file).toContain('.example.test\tTRUE\t/\tTRUE\t1893456000\tsession\tnew');
   });
+
+  test('rejects cookies for unknown jobs without creating a cookie file', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'xxx-cookies-'));
+    const cookiesPath = path.join(root, 'cookies.txt');
+    const app = createCookieRouteApp(tempConfig(root, cookiesPath), { get: () => null });
+
+    const response = await request(app)
+      .post('/api/jobs/missing-job/cookies')
+      .set('X-SHV-CSRF', 'test-csrf-token')
+      .send({
+        cookies: [
+          {
+            domain: '.youtube.com',
+            expirationDate: 1893456000,
+            httpOnly: true,
+            name: 'SID',
+            path: '/',
+            secure: true,
+            value: 'abc'
+          }
+        ]
+      })
+      .expect(404);
+
+    expect(response.body).toEqual({ error: 'job_not_found' });
+    expect(fs.existsSync(cookiesPath)).toBe(false);
+  });
 });
+
+function createCookieRouteApp(config: AppConfig, jobs: { get: (id: string) => unknown } = { get: () => ({ id: 'job-id' }) }) {
+  const app = express();
+  app.use(express.json());
+  app.use(createRouter({
+    categories: {} as never,
+    config,
+    csrfToken: 'test-csrf-token',
+    extensionDebug: new ExtensionDebugService(),
+    jobs: jobs as never,
+    liveBrowser: {} as never,
+    mediaFiles: {} as never,
+    mediaLibrary: {} as never,
+    queueRunner: {} as never
+  }));
+  app.use(errorHandler);
+  return app;
+}
 
 function tempConfig(root: string, cookiesPath: string): AppConfig {
   const appDataRoot = path.join(root, 'app');
