@@ -82,6 +82,52 @@ describe('QueueRunner', () => {
     expect(jobs.requireJob(job.id).status).toBe('canceled');
   });
 
+  test('removes job-owned artifacts when a running job is canceled', async () => {
+    const { categories, config, jobs } = createServices();
+    const category = categories.create('test');
+    const job = jobs.create('https://example.test/video', category.id);
+    jobs.saveCandidates(job.id, [candidate('https://media.example.test/video.mp4')]);
+    jobs.selectCandidate(job.id, jobs.listCandidates(job.id)[0].id);
+
+    const started = deferred<void>();
+    const downloader = {
+      download: (_candidate, _outputPath, _onProgress, signal?: AbortSignal) =>
+        new Promise<never>((_resolve, reject) => {
+          started.resolve();
+          signal?.addEventListener('abort', () => reject(new JobCanceledError()), { once: true });
+        })
+    } satisfies Pick<DownloadEngine, 'download'>;
+    const runner = new QueueRunner(
+      config,
+      jobs,
+      {} as BrowserAnalyzer,
+      downloader as unknown as DownloadEngine,
+      {} as MediaProcessor,
+      categories,
+      {} as MediaFiles,
+      {} as MediaLibraryService
+    );
+
+    const tick = runner.tick();
+    await started.promise;
+    const workDir = path.join(config.workRoot, job.id);
+    const manualScreenshot = path.join(config.appDataRoot, 'manual-screenshots', `${job.id}.png`);
+    const browserProfile = path.join(config.appDataRoot, 'live-browser-profiles', job.id);
+    fs.mkdirSync(path.dirname(manualScreenshot), { recursive: true });
+    fs.mkdirSync(browserProfile, { recursive: true });
+    fs.writeFileSync(path.join(workDir, 'source'), 'partial');
+    fs.writeFileSync(manualScreenshot, 'screenshot');
+    fs.writeFileSync(path.join(browserProfile, 'profile'), 'profile');
+
+    runner.cancel(job.id);
+    await tick;
+
+    expect(jobs.requireJob(job.id).status).toBe('canceled');
+    expect(fs.existsSync(workDir)).toBe(false);
+    expect(fs.existsSync(manualScreenshot)).toBe(false);
+    expect(fs.existsSync(browserProfile)).toBe(false);
+  });
+
   test('fails a job when downloading stalls without progress', async () => {
     const { categories, config, jobs } = createServices();
     config.downloadStallTimeoutMs = 20;

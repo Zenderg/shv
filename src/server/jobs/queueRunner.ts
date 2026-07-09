@@ -205,7 +205,7 @@ export class QueueRunner {
       logJobEvent('info', 'job-completed', { jobId: job.id, title });
     } catch (error) {
       if (isCancellationError(error) || signal.aborted || this.jobs.get(jobId)?.status === 'canceled' || !this.jobs.get(jobId)) {
-        cleanupCanceledArtifacts(workDir, finalPath, thumbnailPath);
+        cleanupCanceledArtifacts(this.config, jobId, finalPath, thumbnailPath);
         if (this.jobs.get(jobId)) {
           this.jobs.cancel(jobId);
         }
@@ -497,15 +497,13 @@ function isSameSourceUrl(candidateUrl: string, sourceUrl: string): boolean {
   }
 }
 
-function cleanupCanceledArtifacts(workDir: string | null, finalPath: string | null, thumbnailPath: string | null): void {
+function cleanupCanceledArtifacts(config: AppConfig, jobId: string, finalPath: string | null, thumbnailPath: string | null): void {
   for (const filePath of [finalPath, thumbnailPath]) {
     if (filePath && fs.existsSync(filePath)) {
       fs.rmSync(filePath, { force: true });
     }
   }
-  if (workDir && fs.existsSync(workDir)) {
-    fs.rmSync(workDir, { recursive: true, force: true });
-  }
+  cleanupJobArtifacts(config, jobId);
 }
 
 function cleanupJobArtifacts(config: AppConfig, jobId: string): void {
