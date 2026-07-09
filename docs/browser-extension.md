@@ -17,11 +17,11 @@ origin. If the app runs behind a reverse proxy, or is opened through any public 
 `PUBLIC_APP_ORIGIN` to the browser-visible origin, for example `https://videos.example.com`. Without that configured
 public origin, extension package downloads only trust localhost, `.local` LAN names, and private LAN IP request hosts.
 
-The runtime files under `extension/chrome-source-helper` are shared by both packages. The server rewrites only the
-packaged manifest profile and app origin constants in both `shared.js` and the generated `content-script.js`. The app
-uses the production extension profile by default, even on localhost or private LAN origins. Set
-`SOURCE_EXTENSION_PROFILE=dev` to make the app expect the development extension id and show the development package in
-install/update instructions; the repository Docker Compose file sets this for local development convenience.
+The runtime files under `extension/chrome-source-helper` are shared by both packages. The server injects the selected
+profile key/name into the packaged manifest and rewrites app origin constants in both `shared.js` and the generated
+`content-script.js`. The app uses the production extension profile by default, even on localhost or private LAN origins.
+Set `SOURCE_EXTENSION_PROFILE=dev` to make the app expect the development extension id and show the development package
+in install/update instructions; the repository Docker Compose file sets this for local development convenience.
 
 The Sources sidebar content script is generated from `src/extension/source-helper` with Svelte. Run
 `npm run build:extension` after editing that source; `npm run build` runs it before the web and server builds. Do not
@@ -70,6 +70,9 @@ The unpacked extensions have stable manifest keys. The expected Chrome extension
 Production: ncgeehcdlbbdgojleaoefhhdinmdhcaf
 Development: jglagfhfffmokhgmaijndppinlbolpee
 ```
+
+The static source manifest does not contain a hardcoded key. Downloaded packages receive the production or development
+key from `src/shared/sourceExtension.ts` when the app builds the zip.
 
 When `Choose source` is clicked, the app checks the extension id selected by `SOURCE_EXTENSION_PROFILE` and verifies
 its protocol version. If it is missing or old, the app shows an install/update dialog with the matching download link
