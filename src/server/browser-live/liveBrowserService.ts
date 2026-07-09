@@ -9,6 +9,7 @@ import {
   extractHtmlMediaCandidates
 } from '../candidate-detection/candidateDetection.js';
 import type { JobService } from '../jobs/jobService.js';
+import { downloadableRequestHeaders } from '../utils/downloadRequestHeaders.js';
 
 export interface LiveBrowserState {
   jobId: string;
@@ -89,12 +90,17 @@ export class LiveBrowserService {
       if (!detected) {
         return;
       }
-      candidates.set(detected.url, {
-        ...detected,
-        kind: detected.kind === 'direct' ? 'browser-request' : detected.kind,
-        headers: browserHeaders(response.request().headers())
+      void response.request().allHeaders().then((headers) => {
+        candidates.set(detected.url, {
+          ...detected,
+          kind: detected.kind === 'direct' ? 'browser-request' : detected.kind,
+          headers: downloadableRequestHeaders(headers)
+        });
+        this.flushCandidates(session);
+      }).catch((error) => {
+        session.errorMessage = `Request header capture failed: ${error instanceof Error ? error.message : String(error)}`;
+        session.updatedAt = new Date().toISOString();
       });
-      this.flushCandidates(session);
     });
 
     try {
@@ -249,9 +255,4 @@ async function injectHighlight(page: Page, candidateUrl: string | null): Promise
     }`,
     candidateUrl
   );
-}
-
-function browserHeaders(headers: Record<string, string>): Record<string, string> {
-  const allowed = ['user-agent', 'referer', 'cookie', 'accept', 'accept-language'];
-  return Object.fromEntries(Object.entries(headers).filter(([key]) => allowed.includes(key.toLowerCase())));
 }

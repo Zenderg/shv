@@ -9,6 +9,7 @@ import {
   isLikelyDirectVideo
 } from '../candidate-detection/candidateDetection.js';
 import { JobCanceledError, isCancellationError, onAbort, throwIfAborted } from '../utils/cancellation.js';
+import { downloadableRequestHeaders } from '../utils/downloadRequestHeaders.js';
 
 export interface AnalysisResult {
   candidates: CandidateDraft[];
@@ -22,6 +23,7 @@ export class BrowserAnalyzer {
 
   async analyze(url: string, jobId: string, signal?: AbortSignal): Promise<AnalysisResult> {
     const diagnostics: string[] = [];
+    const pendingResponseCaptures = new Set<Promise<void>>();
     throwIfAborted(signal);
     const direct = await this.detectDirect(url, diagnostics, signal);
     if (direct && direct.confidence >= 0.86) {
@@ -52,11 +54,17 @@ export class BrowserAnalyzer {
         const contentType = response.headers()['content-type'] ?? null;
         const detected = classifyMediaUrl(response.url(), contentType);
         if (detected) {
-          candidates.set(detected.url, {
-            ...detected,
-            kind: detected.kind === 'direct' ? 'browser-request' : detected.kind,
-            headers: browserHeaders(response.request().headers())
+          const capture = response.request().allHeaders().then((headers) => {
+            candidates.set(detected.url, {
+              ...detected,
+              kind: detected.kind === 'direct' ? 'browser-request' : detected.kind,
+              headers: downloadableRequestHeaders(headers)
+            });
+          }).catch((error) => {
+            diagnostics.push(`Request header capture failed: ${error instanceof Error ? error.message : String(error)}`);
           });
+          pendingResponseCaptures.add(capture);
+          void capture.finally(() => pendingResponseCaptures.delete(capture));
         }
       });
 
@@ -74,6 +82,7 @@ export class BrowserAnalyzer {
       await page.screenshot({ path: screenshotPath, fullPage: true }).catch((error) => {
         diagnostics.push(`Screenshot failed: ${String(error)}`);
       });
+      await drainResponseCaptures(pendingResponseCaptures);
 
       if (candidates.size === 0) {
         diagnostics.push('No media requests, manifests, or HTML media elements were detected.');
@@ -89,6 +98,7 @@ export class BrowserAnalyzer {
       if (signal?.aborted || isCancellationError(error)) {
         throw new JobCanceledError();
       }
+      await drainResponseCaptures(pendingResponseCaptures);
       diagnostics.push(`Browser analysis failed: ${error instanceof Error ? error.message : String(error)}`);
       return { candidates: [...candidates.values()], titleHint: null, diagnostics, screenshotPath: null };
     } finally {
@@ -123,7 +133,8 @@ export class BrowserAnalyzer {
   }
 }
 
-function browserHeaders(headers: Record<string, string>): Record<string, string> {
-  const allowed = ['user-agent', 'referer', 'cookie', 'accept', 'accept-language'];
-  return Object.fromEntries(Object.entries(headers).filter(([key]) => allowed.includes(key.toLowerCase())));
+async function drainResponseCaptures(pending: Set<Promise<void>>): Promise<void> {
+  while (pending.size > 0) {
+    await Promise.all([...pending]);
+  }
 }

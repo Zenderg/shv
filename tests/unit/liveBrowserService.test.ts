@@ -66,6 +66,36 @@ describe('LiveBrowserService', () => {
     });
     expect(state.running).toBe(false);
   });
+
+  test('captures complete replay-safe request headers for detected media', async () => {
+    const { config, db, jobs } = createServices();
+    const job = jobs.create('https://example.test/watch', createCategory(db));
+    const service = new LiveBrowserService(config, jobs);
+    await service.start(job.id);
+
+    const responseListener = playwrightMocks.pageOn.mock.calls.find(([event]) => event === 'response')?.[1];
+    const allHeaders = vi.fn().mockResolvedValue({
+      authorization: 'Bearer media-token',
+      host: 'media.example.test',
+      origin: 'https://example.test',
+      'sec-fetch-dest': 'video',
+      'x-media-token': 'custom-token'
+    });
+    responseListener({
+      headers: () => ({ 'content-type': 'video/mp4' }),
+      request: () => ({ allHeaders }),
+      url: () => 'https://media.example.test/video.mp4'
+    });
+
+    await vi.waitFor(() => expect(jobs.listCandidates(job.id)).toHaveLength(1));
+    expect(allHeaders).toHaveBeenCalledTimes(1);
+    expect(jobs.listCandidates(job.id)[0]?.headers).toEqual({
+      authorization: 'Bearer media-token',
+      origin: 'https://example.test',
+      'sec-fetch-dest': 'video',
+      'x-media-token': 'custom-token'
+    });
+  });
 });
 
 function createServices() {
