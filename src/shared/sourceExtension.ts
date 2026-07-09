@@ -43,7 +43,3 @@ const PROFILES: Record<SourceExtensionKind, SourceExtensionProfile> = {
 export function sourceExtensionProfile(kind: SourceExtensionKind): SourceExtensionProfile {
   return PROFILES[kind];
 }
-
-export function sourceExtensionTargetForOrigin(_origin: string, profile: SourceExtensionKind = 'prod'): SourceExtensionProfile {
-  return sourceExtensionProfile(profile);
-}

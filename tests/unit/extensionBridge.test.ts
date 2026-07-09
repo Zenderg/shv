@@ -5,8 +5,7 @@ import {
   checkSourceExtension,
   evaluateExtensionHandshake,
   isVersionAtLeast,
-  openSourceWithExtension,
-  sourceExtensionTargetForOrigin
+  openSourceWithExtension
 } from '../../src/web/src/lib/extensionBridge.js';
 
 const originalWindow = globalThis.window;
@@ -42,17 +41,6 @@ describe('extension bridge', () => {
       kind: 'ready',
       version: '1.1.0'
     });
-  });
-
-  test('uses the production extension id by default, even for local origins', () => {
-    expect(sourceExtensionTargetForOrigin('http://127.0.0.1:8080').id).not.toBe(DEV_SOURCE_EXTENSION_ID);
-    expect(sourceExtensionTargetForOrigin('http://localhost:8080').id).not.toBe(DEV_SOURCE_EXTENSION_ID);
-    expect(sourceExtensionTargetForOrigin('http://192.168.1.42:8080').id).not.toBe(DEV_SOURCE_EXTENSION_ID);
-  });
-
-  test('uses the dev extension id only when explicitly requested', () => {
-    expect(sourceExtensionTargetForOrigin('https://videos.example.test', 'dev').id).toBe(DEV_SOURCE_EXTENSION_ID);
-    expect(sourceExtensionTargetForOrigin('http://192.168.1.42:8080', 'dev').id).toBe(DEV_SOURCE_EXTENSION_ID);
   });
 
   test('sends runtime messages to the production extension id by default from localhost', async () => {
