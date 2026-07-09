@@ -24,6 +24,7 @@ COPY tsconfig.json tsconfig.server.json vite.config.ts vite.extension.config.ts 
 COPY src ./src
 COPY extension ./extension
 RUN npm run build
+RUN npm prune --omit=dev
 
 ENV NODE_ENV=production
 EXPOSE 8080
