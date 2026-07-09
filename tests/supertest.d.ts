@@ -8,6 +8,9 @@ declare module 'supertest' {
     set(header: string, value: string): TestRequest;
     send(body: unknown): TestRequest;
     type(value: string): TestRequest;
+    parse(
+      parser: (response: NodeJS.ReadableStream, callback: (error: Error | null, body?: unknown) => void) => void
+    ): TestRequest;
     expect(status: number): Promise<TestResponse>;
   }
 
