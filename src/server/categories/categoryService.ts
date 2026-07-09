@@ -102,13 +102,12 @@ export class CategoryService {
         .run(id);
       this.db.prepare("DELETE FROM download_jobs WHERE category_id = ? AND status = 'completed'").run(id);
       this.db.prepare('DELETE FROM categories WHERE id = ?').run(id);
+      fs.rmSync(this.categoryPath(category), { force: true, recursive: true });
       this.db.exec('COMMIT');
     } catch (error) {
       this.db.exec('ROLLBACK');
       throw error;
     }
-
-    fs.rmSync(this.categoryPath(category), { force: true, recursive: true });
 
     return true;
   }
