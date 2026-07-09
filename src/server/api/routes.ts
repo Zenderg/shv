@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import net from 'node:net';
 import path from 'node:path';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import express, { type Request, type Response, type Router } from 'express';
@@ -165,9 +166,12 @@ export function createRouter(services: RouteServices): Router {
       response.status(404).json({ error: 'extension_artifact_not_found' });
       return;
     }
-    const archive = buildZipArchive(
-      extensionZipEntries(extensionRoot, profile, appOriginForExtension(request, services.config))
-    );
+    const appOrigin = appOriginForExtension(request, services.config);
+    if (!appOrigin) {
+      response.status(400).json({ error: 'public_origin_required' });
+      return;
+    }
+    const archive = buildZipArchive(extensionZipEntries(extensionRoot, profile, appOrigin));
     response.setHeader('Cache-Control', 'no-store');
     response.setHeader('Content-Disposition', `attachment; filename="${profile.packageFilename}"`);
     response.type('zip').send(archive);
@@ -399,13 +403,18 @@ function rewritePackagedAppOrigin(source: string, appOrigin: string): string {
     .join(`'${appOrigin}'`);
 }
 
-function appOriginForExtension(request: Request, config: AppConfig): string {
+function appOriginForExtension(request: Request, config: AppConfig): string | null {
   if (config.publicOrigin) {
     return config.publicOrigin;
   }
 
   const requestHost = firstHeaderValue(request.get('host'));
-  const candidateHosts = new Set([requestHost].filter(Boolean));
+  const trustedHost = trustedExtensionHost(requestHost, config.port);
+  if (!trustedHost) {
+    return null;
+  }
+
+  const candidateHosts = new Set([trustedHost]);
   const refererOrigin = trustedHeaderOrigin(request.get('referer'), candidateHosts);
   if (refererOrigin) {
     return refererOrigin;
@@ -416,7 +425,7 @@ function appOriginForExtension(request: Request, config: AppConfig): string {
   }
 
   const protocol = request.protocol;
-  const host = requestHost ?? `127.0.0.1:${config.port}`;
+  const host = trustedHost;
   return normalizeHttpOrigin(`${protocol}://${host}`);
 }
 
@@ -431,6 +440,43 @@ function trustedHeaderOrigin(value: string | undefined, trustedHosts: Set<string
   } catch {
     return null;
   }
+}
+
+function trustedExtensionHost(value: string | undefined, fallbackPort: number): string | undefined {
+  const host = value ?? `127.0.0.1:${fallbackPort}`;
+  try {
+    const parsed = new URL(`http://${host}`);
+    const hostname = parsed.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+    if (
+      hostname === 'localhost' ||
+      hostname.endsWith('.localhost') ||
+      hostname.endsWith('.local') ||
+      isPrivateAddress(hostname)
+    ) {
+      return parsed.host;
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
+function isPrivateAddress(hostname: string): boolean {
+  const family = net.isIP(hostname);
+  if (family === 4) {
+    const [first = 0, second = 0] = hostname.split('.').map(Number);
+    return (
+      first === 10 ||
+      first === 127 ||
+      (first === 172 && second >= 16 && second <= 31) ||
+      (first === 192 && second === 168) ||
+      (first === 169 && second === 254)
+    );
+  }
+  if (family === 6) {
+    return hostname === '::1' || hostname.startsWith('fc') || hostname.startsWith('fd') || hostname.startsWith('fe80:');
+  }
+  return false;
 }
 
 function normalizeHttpOrigin(value: string): string {

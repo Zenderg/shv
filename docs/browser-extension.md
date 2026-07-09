@@ -13,8 +13,9 @@ Development profile: http://127.0.0.1:8080/extension/shv-source-helper-dev.zip
 
 The downloaded package is tailored to the app origin that served it. In production, download it from the same URL where
 the app is open so the extension manifest allows that origin and the service worker posts candidates back to that
-origin. If the app runs behind a reverse proxy that hides the public scheme or host from Node, set `PUBLIC_APP_ORIGIN`
-to the browser-visible origin, for example `https://videos.example.com`.
+origin. If the app runs behind a reverse proxy, or is opened through any public hostname or public IP address, set
+`PUBLIC_APP_ORIGIN` to the browser-visible origin, for example `https://videos.example.com`. Without that configured
+public origin, extension package downloads only trust localhost, `.local` LAN names, and private LAN IP request hosts.
 
 The runtime files under `extension/chrome-source-helper` are shared by both packages. The server rewrites only the
 packaged manifest profile and app origin constants in both `shared.js` and the generated `content-script.js`. The app

@@ -62,23 +62,11 @@ describe('extension package entries', () => {
   });
 
   test('does not trust forwarded headers when deriving the package app origin', async () => {
-    const app = express();
-    app.use(createRouter({
-      categories: {} as never,
-      config: tempConfig(),
-      csrfToken: 'test-csrf-token',
-      extensionDebug: new ExtensionDebugService(),
-      jobs: {} as never,
-      liveBrowser: {} as never,
-      mediaFiles: {} as never,
-      mediaLibrary: {} as never,
-      queueRunner: {} as never
-    }));
-    app.use(errorHandler);
+    const app = createApp(tempConfig());
 
     const response = await request(app)
       .get('/extension/shv-source-helper.zip')
-      .set('Host', 'app.example.test:8080')
+      .set('Host', '192.168.1.42:8080')
       .set('X-Forwarded-Host', 'attacker.example.test')
       .set('X-Forwarded-Proto', 'https')
       .set('Referer', 'https://attacker.example.test/install')
@@ -86,13 +74,74 @@ describe('extension package entries', () => {
       .expect(200);
     const archive = response.body as Buffer;
 
-    expect(archive.includes(Buffer.from('http://app.example.test:8080/*'))).toBe(true);
+    expect(archive.includes(Buffer.from('http://192.168.1.42:8080/*'))).toBe(true);
     expect(archive.includes(Buffer.from('https://attacker.example.test/*'))).toBe(false);
     expect(archive.includes(Buffer.from("export const APP_ORIGIN = 'https://attacker.example.test';"))).toBe(false);
   });
+
+  test('rejects public host-derived extension origins without configured public origin', async () => {
+    const app = createApp(tempConfig());
+
+    const response = await request(app)
+      .get('/extension/shv-source-helper.zip')
+      .set('Host', 'attacker.example.test')
+      .expect(400);
+
+    expect(response.body).toEqual({ error: 'public_origin_required' });
+  });
+
+  test('allows private LAN host-derived extension origins', async () => {
+    const app = createApp(tempConfig());
+
+    const response = await request(app)
+      .get('/extension/shv-source-helper.zip')
+      .set('Host', '192.168.1.42:8080')
+      .expect(200);
+
+    expect(response.headers['content-disposition']).toBe('attachment; filename="shv-source-helper.zip"');
+  });
+
+  test('allows local LAN hostname-derived extension origins', async () => {
+    const app = createApp(tempConfig());
+
+    const response = await request(app)
+      .get('/extension/shv-source-helper.zip')
+      .set('Host', 'shv.local:8080')
+      .expect(200);
+
+    expect(response.headers['content-disposition']).toBe('attachment; filename="shv-source-helper.zip"');
+  });
+
+  test('allows configured public origin when request host is public', async () => {
+    const app = createApp(tempConfig({ publicOrigin: 'https://videos.example.test' }));
+
+    const response = await request(app)
+      .get('/extension/shv-source-helper.zip')
+      .set('Host', 'attacker.example.test')
+      .expect(200);
+
+    expect(response.headers['content-disposition']).toBe('attachment; filename="shv-source-helper.zip"');
+  });
 });
 
-function tempConfig(): AppConfig {
+function createApp(config: AppConfig) {
+  const app = express();
+  app.use(createRouter({
+    categories: {} as never,
+    config,
+    csrfToken: 'test-csrf-token',
+    extensionDebug: new ExtensionDebugService(),
+    jobs: {} as never,
+    liveBrowser: {} as never,
+    mediaFiles: {} as never,
+    mediaLibrary: {} as never,
+    queueRunner: {} as never
+  }));
+  app.use(errorHandler);
+  return app;
+}
+
+function tempConfig(overrides: Partial<AppConfig> = {}): AppConfig {
   const appDataRoot = path.join(process.cwd(), 'data/app');
   return {
     appDataRoot,
@@ -105,7 +154,8 @@ function tempConfig(): AppConfig {
     sourceExtensionProfile: 'prod',
     thumbnailsRoot: path.join(appDataRoot, 'thumbnails'),
     workRoot: path.join(process.cwd(), 'data/work'),
-    ytDlpCookiesPath: path.join(appDataRoot, 'cookies.txt')
+    ytDlpCookiesPath: path.join(appDataRoot, 'cookies.txt'),
+    ...overrides
   };
 }
 
