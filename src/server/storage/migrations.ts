@@ -104,24 +104,31 @@ export function applyMigrations(db: Db): void {
   const applied = new Set(db.prepare('SELECT id FROM schema_migrations').all().map((row) => Number((row as { id: number }).id)));
 
   const apply = (migration: Migration) => {
-    db.exec('BEGIN');
-    db.exec(migration.sql);
-    db.prepare('INSERT INTO schema_migrations (id, name, applied_at) VALUES (?, ?, ?)').run(
-      migration.id,
-      migration.name,
-      new Date().toISOString()
-    );
-    db.exec('COMMIT');
+    let transactionStarted = false;
+
+    try {
+      db.exec('BEGIN');
+      transactionStarted = true;
+      db.exec(migration.sql);
+      db.prepare('INSERT INTO schema_migrations (id, name, applied_at) VALUES (?, ?, ?)').run(
+        migration.id,
+        migration.name,
+        new Date().toISOString()
+      );
+      db.exec('COMMIT');
+      transactionStarted = false;
+    } catch (error) {
+      if (transactionStarted) {
+        db.exec('ROLLBACK');
+      }
+
+      throw error;
+    }
   };
 
   for (const migration of migrations) {
     if (!applied.has(migration.id)) {
-      try {
-        apply(migration);
-      } catch (error) {
-        db.exec('ROLLBACK');
-        throw error;
-      }
+      apply(migration);
     }
   }
 }
