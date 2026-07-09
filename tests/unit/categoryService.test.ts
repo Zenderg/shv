@@ -1,12 +1,16 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import type { AppConfig } from '../../src/server/config/appConfig.js';
 import { CategoryService } from '../../src/server/categories/categoryService.js';
 import { openDatabase } from '../../src/server/storage/database.js';
 
 describe('CategoryService', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   test('returns the existing category when the sanitized name already exists', () => {
     const config = tempConfig();
     const db = openDatabase(config.databasePath);
@@ -52,6 +56,27 @@ describe('CategoryService', () => {
     expect(service.delete(category.id)).toBe(true);
     expect(service.get(category.id)).toBeNull();
     expect(fs.existsSync(categoryPath)).toBe(false);
+  });
+
+  test('keeps category records when category folder removal fails', () => {
+    const config = tempConfig();
+    const db = openDatabase(config.databasePath);
+    const service = new CategoryService(db, config);
+    const category = service.create('Temporary');
+    const categoryPath = path.join(config.libraryRoot, category.folderName);
+
+    vi.spyOn(fs, 'rmSync').mockImplementation((target) => {
+      if (target === categoryPath) {
+        throw new Error('category cleanup failed');
+      }
+    });
+
+    expect(() => service.delete(category.id)).toThrow('category cleanup failed');
+    expect(service.get(category.id)).toMatchObject({
+      id: category.id,
+      folderName: category.folderName,
+      name: category.name
+    });
   });
 
   test('deletes a category with its media files and thumbnails', () => {
