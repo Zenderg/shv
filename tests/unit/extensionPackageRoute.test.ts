@@ -26,10 +26,13 @@ describe('extension package entries', () => {
     );
     const archive = buildZipArchive(entries);
     const contentScriptEntry = entries.find((entry) => entry.name === 'shv-source-helper/content-script.js');
+    const manifestEntry = entries.find((entry) => entry.name === 'shv-source-helper/manifest.json');
+    const manifest = JSON.parse(manifestEntry?.data.toString('utf8') ?? '{}') as { key?: string };
 
     expect(archive.includes(Buffer.from('"name": "shv Source Helper"'))).toBe(true);
     expect(archive.includes(Buffer.from('"https://prod.example.test/*"'))).toBe(true);
     expect(archive.includes(Buffer.from("export const APP_ORIGIN = 'https://prod.example.test';"))).toBe(true);
+    expect(manifest.key).toBe(sourceExtensionProfile('prod').key);
     expect(contentScriptEntry?.data.toString('utf8')).toContain('https://prod.example.test');
     expect(contentScriptEntry?.data.toString('utf8')).not.toContain('http://127.0.0.1:8080');
   });

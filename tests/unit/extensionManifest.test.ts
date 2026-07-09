@@ -8,6 +8,7 @@ const manifest = JSON.parse(
 ) as {
   content_scripts?: Array<{ all_frames?: boolean; js?: string[]; matches?: string[] }>;
   host_permissions?: string[];
+  key?: string;
   permissions?: string[];
   side_panel?: unknown;
   version?: string;
@@ -41,6 +42,10 @@ describe('chrome source helper manifest', () => {
 
   it('can observe embedded player frame navigations for source tabs', () => {
     expect(manifest.permissions ?? []).toContain('webNavigation');
+  });
+
+  it('leaves profile keys to package generation', () => {
+    expect(manifest.key).toBeUndefined();
   });
 
   it('keeps the packaged extension version aligned with the app requirement', () => {
