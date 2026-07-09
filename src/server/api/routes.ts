@@ -549,7 +549,8 @@ export function errorHandler(error: unknown, _request: Request, response: Respon
     response.status(409).json({ error: error.code, message: error.message });
     return;
   }
-  response.status(500).json({ error: 'server_error', message: error instanceof Error ? error.message : String(error) });
+  console.error('[shv] api-error', error);
+  response.status(500).json({ error: 'server_error', message: 'Internal server error' });
 }
 
 function streamFile(request: Request, response: Response, filePath: string, filename: string): void {
