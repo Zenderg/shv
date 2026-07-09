@@ -15,6 +15,10 @@ describe('extension shared candidate detection', () => {
     expect(candidateFromUrl('https://media.example.test/video?bytes=0-6402', 'video/webm')).toBeNull();
   });
 
+  test('accepts non-range bytes query parameters on complete video URLs', () => {
+    expect(candidateFromUrl('https://media.example.test/video?bytes=1234', 'video/webm')?.kind).toBe('browser-request');
+  });
+
   test('accepts complete manifest and direct video URLs', () => {
     expect(candidateFromUrl('https://media.example.test/manifest.mpd', 'application/dash+xml')?.kind).toBe('dash');
     expect(candidateFromUrl('https://media.example.test/video.mp4', 'video/mp4')?.kind).toBe('browser-request');
