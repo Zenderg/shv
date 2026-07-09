@@ -35,12 +35,30 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
   });
   if (!response.ok) {
     const body = await response.text();
-    throw new Error(body || `Request failed with HTTP ${response.status}`);
+    throw new Error(apiErrorMessage(body, response.status));
   }
   if (response.status === 204) {
     return undefined as T;
   }
   return (await response.json()) as T;
+}
+
+function apiErrorMessage(body: string, status: number): string {
+  if (!body) {
+    return `Request failed with HTTP ${status}`;
+  }
+  try {
+    const parsed = JSON.parse(body) as { error?: unknown; message?: unknown };
+    if (typeof parsed.message === 'string' && parsed.message.trim()) {
+      return parsed.message;
+    }
+    if (typeof parsed.error === 'string' && parsed.error.trim()) {
+      return parsed.error.replaceAll('_', ' ');
+    }
+  } catch {
+    // The server may deliberately return a plain-text error.
+  }
+  return body;
 }
 
 async function fetchRuntimeConfig(): Promise<RuntimeConfig> {

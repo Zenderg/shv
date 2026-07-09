@@ -41,7 +41,7 @@
   padding: 18px;
 }
 
-.extensionDialogBody > p {
+.extensionDialogBody > p:not(.inlineDialogError) {
   color: var(--color-muted);
   line-height: 1.5;
 }

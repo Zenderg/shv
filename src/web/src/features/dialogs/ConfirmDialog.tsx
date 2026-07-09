@@ -1,10 +1,11 @@
-import { DialogBackdrop } from '../../components/DialogBackdrop';
+import { DialogBackdrop, DialogClose, DialogTitle } from '../../components/DialogBackdrop';
 import { CloseIcon } from '../../components/icons';
 
 export function ConfirmDialog({
   actionLabel,
   busy,
   danger,
+  error,
   message,
   onClose,
   onConfirm,
@@ -13,6 +14,7 @@ export function ConfirmDialog({
   actionLabel: string;
   busy: boolean;
   danger?: boolean;
+  error: string | null;
   message: string;
   onClose: () => void;
   onConfirm: () => Promise<void>;
@@ -22,18 +24,23 @@ export function ConfirmDialog({
     <DialogBackdrop onClose={onClose}>
       <section className="formDialog confirmDialog">
         <header>
-          <h2>{title}</h2>
-          <button onClick={onClose} type="button">
-            <CloseIcon />
-          </button>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogClose asChild>
+            <button aria-label={`Close ${title}`} disabled={busy} type="button">
+              <CloseIcon />
+            </button>
+          </DialogClose>
         </header>
         <p>{message}</p>
+        {error ? <p className="inlineDialogError" role="alert">{error}</p> : null}
         <div className="dialogActions">
-          <button className="secondaryButton" onClick={onClose} type="button">
-            Cancel
-          </button>
+          <DialogClose asChild>
+            <button className="secondaryButton" data-dialog-initial-focus disabled={busy} type="button">
+              Cancel
+            </button>
+          </DialogClose>
           <button className={danger ? 'dangerButton' : ''} disabled={busy} onClick={() => void onConfirm()} type="button">
-            {actionLabel}
+            {busy ? `${actionLabel}…` : actionLabel}
           </button>
         </div>
       </section>

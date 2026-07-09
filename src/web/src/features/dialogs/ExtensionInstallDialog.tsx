@@ -1,5 +1,5 @@
 import type { SourceExtensionKind } from '../../../../shared/sourceExtension';
-import { DialogBackdrop } from '../../components/DialogBackdrop';
+import { DialogBackdrop, DialogClose, DialogTitle } from '../../components/DialogBackdrop';
 import { CloseIcon } from '../../components/icons';
 import type { DownloadJob } from '../../lib/api';
 import {
@@ -11,12 +11,14 @@ import {
 import { safeHostname } from '../../utils/format';
 
 export function ExtensionInstallDialog({
+  error,
   job,
   onCheckAgain,
   onClose,
   sourceExtensionProfile,
   status
 }: {
+  error: string | null;
   job: DownloadJob;
   onCheckAgain: () => void;
   onClose: () => void;
@@ -24,18 +26,21 @@ export function ExtensionInstallDialog({
   status: Exclude<ExtensionStatus, { kind: 'ready' }>;
 }) {
   const isOutdated = status.kind === 'outdated';
+  const dialogTitle = isOutdated ? 'Update browser extension' : 'Install browser extension';
   const extensionTarget = sourceExtensionTargetForOrigin(window.location.origin, sourceExtensionProfile);
   return (
     <DialogBackdrop onClose={onClose}>
       <section className="extensionDialog">
         <header>
           <div>
-            <h2>{isOutdated ? 'Update browser extension' : 'Install browser extension'}</h2>
+            <DialogTitle>{dialogTitle}</DialogTitle>
             <p>{job.titleHint || safeHostname(job.sourceUrl)}</p>
           </div>
-          <button onClick={onClose} type="button">
-            <CloseIcon />
-          </button>
+          <DialogClose asChild>
+            <button aria-label={`Close ${dialogTitle}`} type="button">
+              <CloseIcon />
+            </button>
+          </DialogClose>
         </header>
         <div className="extensionDialogBody">
           <p>
@@ -70,9 +75,10 @@ export function ExtensionInstallDialog({
           <p className="extensionId">
             Expected extension id: <code>{extensionTarget.id}</code>
           </p>
+          {error ? <p className="inlineDialogError" role="alert">{error}</p> : null}
         </div>
         <footer>
-          <a className="downloadButton" href={extensionTarget.downloadPath}>
+          <a className="downloadButton" data-dialog-initial-focus href={extensionTarget.downloadPath}>
             Download extension
           </a>
           <button onClick={onCheckAgain} type="button">

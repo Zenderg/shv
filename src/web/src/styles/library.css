@@ -142,3 +142,72 @@
   font-size: 24px;
   margin-bottom: 8px;
 }
+
+.emptyState p {
+  line-height: 1.5;
+  max-width: 540px;
+}
+
+.emptyStateActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: center;
+  margin-top: 18px;
+}
+
+.emptyStateActions .secondaryButton {
+  background: var(--color-surface-muted);
+  border-radius: 6px;
+  color: var(--color-text);
+  font-weight: 700;
+  min-height: 46px;
+  padding: 0 18px;
+}
+
+.compactEmptyState {
+  min-height: 320px;
+}
+
+.skeletonCard,
+.skeletonQueueCard {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  overflow: hidden;
+  padding: 14px;
+}
+
+.skeletonPoster {
+  aspect-ratio: 16 / 9;
+  background: var(--color-surface-muted);
+  display: block;
+  margin: -14px -14px 4px;
+}
+
+.skeletonLine,
+.skeletonBar {
+  background: var(--color-surface-muted);
+  border-radius: 999px;
+  display: block;
+  height: 12px;
+  width: 52%;
+}
+
+.skeletonLine.wide {
+  height: 16px;
+  width: 82%;
+}
+
+.skeletonQueueCard {
+  min-height: 130px;
+  padding: 18px;
+}
+
+.skeletonBar {
+  height: 8px;
+  margin-top: 10px;
+  width: 100%;
+}

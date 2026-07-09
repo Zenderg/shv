@@ -5,6 +5,7 @@ export function AppHeader({
   busy,
   categoryName,
   categoryCount,
+  loading,
   mediaCount,
   onAdd,
   page
@@ -13,6 +14,7 @@ export function AppHeader({
   busy: boolean;
   categoryName: string | null;
   categoryCount: number;
+  loading: boolean;
   mediaCount: number;
   onAdd: () => void;
   page: 'library' | 'queue';
@@ -22,7 +24,9 @@ export function AppHeader({
       <div>
         <h1>{page === 'queue' ? 'Queue' : categoryName ?? 'Library'}</h1>
         <p>
-          {page === 'queue'
+          {loading
+            ? page === 'queue' ? 'Loading queue…' : 'Loading videos…'
+            : page === 'queue'
             ? `${categoryCount} current ${categoryCount === 1 ? 'job' : 'jobs'}${activeProblems ? `, ${activeProblems} need attention` : ''}`
             : `${mediaCount} saved videos${activeProblems ? `, ${activeProblems} need attention` : ''}`}
         </p>

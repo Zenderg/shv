@@ -1,15 +1,19 @@
 import { useState } from 'react';
-import { DialogBackdrop } from '../../components/DialogBackdrop';
+import { DialogBackdrop, DialogClose, DialogTitle } from '../../components/DialogBackdrop';
 import { CloseIcon } from '../../components/icons';
 import type { Category, MediaItem } from '../../lib/api';
 
 export function EditDialog({
+  busy,
   categories,
+  error,
   item,
   onClose,
   onSave
 }: {
+  busy: boolean;
   categories: Category[];
+  error: string | null;
   item: MediaItem;
   onClose: () => void;
   onSave: (body: { title?: string; categoryId?: string }) => Promise<void>;
@@ -26,14 +30,16 @@ export function EditDialog({
         }}
       >
         <header>
-          <h2>Edit video</h2>
-          <button onClick={onClose} type="button">
-            <CloseIcon />
-          </button>
+          <DialogTitle>Edit video</DialogTitle>
+          <DialogClose asChild>
+            <button aria-label="Close Edit video" disabled={busy} type="button">
+              <CloseIcon />
+            </button>
+          </DialogClose>
         </header>
         <label>
           Title
-          <input onChange={(event) => setTitle(event.target.value)} value={title} />
+          <input data-dialog-initial-focus onChange={(event) => setTitle(event.target.value)} value={title} />
         </label>
         <label>
           Category
@@ -45,7 +51,8 @@ export function EditDialog({
             ))}
           </select>
         </label>
-        <button type="submit">Save</button>
+        {error ? <p className="inlineDialogError" role="alert">{error}</p> : null}
+        <button disabled={busy} type="submit">{busy ? 'Saving…' : 'Save'}</button>
       </form>
     </DialogBackdrop>
   );

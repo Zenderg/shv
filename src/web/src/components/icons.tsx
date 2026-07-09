@@ -6,6 +6,10 @@ export function QueueIcon() {
   return <svg viewBox="0 0 24 24"><path d="M5 5h14v2H5V5Zm0 6h14v2H5v-2Zm0 6h10v2H5v-2Z" /></svg>;
 }
 
+export function MenuIcon() {
+  return <svg viewBox="0 0 24 24"><path d="M4 6h16v2H4V6Zm0 5h16v2H4v-2Zm0 5h16v2H4v-2Z" /></svg>;
+}
+
 export function FolderIcon() {
   return <svg viewBox="0 0 24 24"><path d="M3 6.8A2.8 2.8 0 0 1 5.8 4h4l2 2.2h6.4A2.8 2.8 0 0 1 21 9v8.2a2.8 2.8 0 0 1-2.8 2.8H5.8A2.8 2.8 0 0 1 3 17.2V6.8Z" /></svg>;
 }

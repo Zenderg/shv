@@ -1,23 +1,25 @@
 import { useState } from 'react';
-import { DialogBackdrop } from '../../components/DialogBackdrop';
+import { DialogBackdrop, DialogClose, DialogTitle } from '../../components/DialogBackdrop';
 import { CloseIcon, PlusIcon } from '../../components/icons';
 import type { Category } from '../../lib/api';
 
 export function AddVideoDialog({
   busy,
   categories,
+  error,
   initialCategoryId,
   onClose,
   onSubmit
 }: {
   busy: boolean;
   categories: Category[];
+  error: string | null;
   initialCategoryId: string;
   onClose: () => void;
   onSubmit: (input: { sourceUrl: string; categoryId: string; newCategoryName: string }) => void;
 }) {
   const [sourceUrl, setSourceUrl] = useState('');
-  const [categoryMode, setCategoryMode] = useState<'existing' | 'new'>('existing');
+  const [categoryMode, setCategoryMode] = useState<'existing' | 'new'>(categories.length > 0 ? 'existing' : 'new');
   const [categoryId, setCategoryId] = useState(initialCategoryId || categories[0]?.id || '');
   const [newCategoryName, setNewCategoryName] = useState('');
   const canSubmit =
@@ -38,17 +40,19 @@ export function AddVideoDialog({
       >
         <header>
           <div>
-            <h2>Add video</h2>
+            <DialogTitle>Add video</DialogTitle>
             <p>Choose an existing category or create one.</p>
           </div>
-          <button onClick={onClose} type="button">
-            <CloseIcon />
-          </button>
+          <DialogClose asChild>
+            <button aria-label="Close Add video" disabled={busy} type="button">
+              <CloseIcon />
+            </button>
+          </DialogClose>
         </header>
         <label>
           Video URL
           <input
-            autoFocus
+            data-dialog-initial-focus
             onChange={(event) => setSourceUrl(event.target.value)}
             placeholder="https://..."
             required
@@ -57,10 +61,21 @@ export function AddVideoDialog({
           />
         </label>
         <div className="categoryMode" role="group" aria-label="Category mode">
-          <button className={categoryMode === 'existing' ? 'selected' : ''} onClick={() => setCategoryMode('existing')} type="button">
+          <button
+            aria-pressed={categoryMode === 'existing'}
+            className={categoryMode === 'existing' ? 'selected' : ''}
+            disabled={categories.length === 0}
+            onClick={() => setCategoryMode('existing')}
+            type="button"
+          >
             Existing
           </button>
-          <button className={categoryMode === 'new' ? 'selected' : ''} onClick={() => setCategoryMode('new')} type="button">
+          <button
+            aria-pressed={categoryMode === 'new'}
+            className={categoryMode === 'new' ? 'selected' : ''}
+            onClick={() => setCategoryMode('new')}
+            type="button"
+          >
             New
           </button>
         </div>
@@ -86,9 +101,10 @@ export function AddVideoDialog({
             />
           </label>
         )}
+        {error ? <p className="inlineDialogError" role="alert">{error}</p> : null}
         <button disabled={busy || !canSubmit} type="submit">
           <PlusIcon />
-          Add to queue
+          {busy ? 'Adding…' : 'Add to queue'}
         </button>
       </form>
     </DialogBackdrop>

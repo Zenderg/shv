@@ -4,13 +4,19 @@ import { formatBytes, formatDuration, formatResolution } from '../../utils/forma
 
 export function LibraryGrid({
   categories,
+  categoryName,
   items,
+  onAdd,
+  onCreateCategory,
   onDelete,
   onEdit,
   onPlay
 }: {
   categories: Category[];
+  categoryName: string | null;
   items: MediaItem[];
+  onAdd: () => void;
+  onCreateCategory: () => void;
   onDelete: (item: MediaItem) => void;
   onEdit: (item: MediaItem) => void;
   onPlay: (item: MediaItem) => void;
@@ -19,8 +25,22 @@ export function LibraryGrid({
     return (
       <section className="emptyState">
         <PlayIcon />
-        <h2>No videos in this category</h2>
-        <p>Add a link above; completed downloads will appear here.</p>
+        <h2>{categoryName ? `No videos in ${categoryName}` : 'Start your library'}</h2>
+        <p>
+          {categoryName
+            ? 'Add a video link; completed downloads will appear here.'
+            : 'Create a category or add a video link to begin your local library.'}
+        </p>
+        <div className="emptyStateActions">
+          <button className="primaryButton" onClick={onAdd} type="button">
+            {categoryName ? 'Add video' : 'Add first video'}
+          </button>
+          {!categoryName ? (
+            <button className="secondaryButton" onClick={onCreateCategory} type="button">
+              Create category
+            </button>
+          ) : null}
+        </div>
       </section>
     );
   }
@@ -29,7 +49,7 @@ export function LibraryGrid({
     <section className="libraryGrid" aria-label="Videos">
       {items.map((item) => (
         <article className="videoCard" key={item.id}>
-          <button className="poster" onClick={() => onPlay(item)} type="button">
+          <button aria-label={`Play ${item.title}`} className="poster" onClick={() => onPlay(item)} type="button">
             {item.thumbnailPath ? (
               <img
                 alt=""
@@ -52,10 +72,10 @@ export function LibraryGrid({
             <span>{categories.find((category) => category.id === item.categoryId)?.name ?? 'Unknown'}</span>
           </div>
           <div className="cardActions">
-            <button onClick={() => onEdit(item)} title="Rename or move" type="button">
+            <button aria-label={`Edit ${item.title}`} onClick={() => onEdit(item)} title="Rename or move" type="button">
               <EditIcon />
             </button>
-            <button onClick={() => void onDelete(item)} title="Delete" type="button">
+            <button aria-label={`Delete ${item.title}`} onClick={() => void onDelete(item)} title="Delete" type="button">
               <TrashIcon />
             </button>
           </div>

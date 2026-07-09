@@ -1,5 +1,6 @@
 import type { Category } from '../lib/api';
-import { EllipsisIcon, FolderIcon, Mark, PlusIcon, QueueIcon } from './icons';
+import { CategoryActionsMenu } from './CategoryActionsMenu';
+import { FolderIcon, Mark, PlusIcon, QueueIcon } from './icons';
 
 export function AppSidebar({
   categories,
@@ -37,7 +38,12 @@ export function AppSidebar({
       </div>
 
       <nav className="queueNav" aria-label="Queue">
-        <button className={page === 'queue' ? 'selected' : ''} onClick={onShowQueue} type="button">
+        <button
+          aria-current={page === 'queue' ? 'page' : undefined}
+          className={page === 'queue' ? 'selected' : ''}
+          onClick={onShowQueue}
+          type="button"
+        >
           <QueueIcon />
           <span>Queue</span>
           <strong className="navBadge">{queueBadgeCount}</strong>
@@ -59,6 +65,7 @@ export function AppSidebar({
               key={category.id}
             >
               <button
+                aria-current={page === 'library' && category.id === selectedCategoryId ? 'page' : undefined}
                 className="categoryLink"
                 onClick={() => {
                   onOpenCategoryMenuChange(null);
@@ -69,41 +76,13 @@ export function AppSidebar({
                 <FolderIcon />
                 <span>{category.name}</span>
               </button>
-              <button
-                aria-expanded={openCategoryMenuId === category.id}
-                aria-haspopup="menu"
-                aria-label={`Open menu for ${category.name}`}
-                className="categoryMenuButton"
-                onClick={() => onOpenCategoryMenuChange(openCategoryMenuId === category.id ? null : category.id)}
-                type="button"
-              >
-                <EllipsisIcon />
-              </button>
-              {openCategoryMenuId === category.id ? (
-                <div className="categoryMenu" role="menu">
-                  <button
-                    onClick={() => {
-                      onOpenCategoryMenuChange(null);
-                      onRenameCategory(category);
-                    }}
-                    role="menuitem"
-                    type="button"
-                  >
-                    Rename
-                  </button>
-                  <button
-                    className="dangerMenuItem"
-                    onClick={() => {
-                      onOpenCategoryMenuChange(null);
-                      onDeleteCategory(category);
-                    }}
-                    role="menuitem"
-                    type="button"
-                  >
-                    Delete
-                  </button>
-                </div>
-              ) : null}
+              <CategoryActionsMenu
+                category={category}
+                onDelete={onDeleteCategory}
+                onOpenChange={(open) => onOpenCategoryMenuChange(open ? category.id : null)}
+                onRename={onRenameCategory}
+                open={openCategoryMenuId === category.id}
+              />
             </div>
           ))}
         </nav>

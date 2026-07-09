@@ -1,4 +1,4 @@
-import { DialogBackdrop } from '../../components/DialogBackdrop';
+import { DialogBackdrop, DialogClose, DialogTitle } from '../../components/DialogBackdrop';
 import { CloseIcon } from '../../components/icons';
 import type { MediaItem } from '../../lib/api';
 
@@ -7,12 +7,14 @@ export function PlayerDialog({ item, onClose }: { item: MediaItem; onClose: () =
     <DialogBackdrop onClose={onClose}>
       <section className="playerDialog">
         <header>
-          <h2>{item.title}</h2>
-          <button onClick={onClose} type="button">
-            <CloseIcon />
-          </button>
+          <DialogTitle>{item.title}</DialogTitle>
+          <DialogClose asChild>
+            <button aria-label={`Close ${item.title}`} type="button">
+              <CloseIcon />
+            </button>
+          </DialogClose>
         </header>
-        <video controls src={`/media/${item.id}`} />
+        <video controls data-dialog-initial-focus src={`/media/${item.id}`} tabIndex={0} />
       </section>
     </DialogBackdrop>
   );

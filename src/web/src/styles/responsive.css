@@ -4,22 +4,21 @@
     grid-template-columns: 1fr;
   }
 
-  .sidebar {
-    position: static;
+  .mobileNavigation {
+    display: block;
+    position: sticky;
+    top: 0;
+    z-index: 30;
   }
 
-  .categoryNav {
-    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  .shell > .sidebar,
+  .topbar {
+    display: none;
   }
 
   .shell {
     height: auto;
     min-height: auto;
-    overflow: visible;
-  }
-
-  .sidebar {
-    gap: 18px;
     overflow: visible;
   }
 
@@ -40,6 +39,10 @@
 
   .topbar {
     align-items: stretch;
+  }
+
+  .mobileHeader {
+    padding-inline: 12px;
   }
 
   h1 {
