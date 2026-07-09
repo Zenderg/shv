@@ -1,0 +1,87 @@
+.dialogBackdrop {
+  align-items: flex-start;
+  background: rgba(3, 6, 5, 0.74);
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  overflow-y: auto;
+  padding: 24px;
+  position: fixed;
+  z-index: 5;
+}
+
+.dialogBackdrop > [role='dialog'] {
+  flex-shrink: 0;
+  margin-block: auto;
+  max-height: calc(100dvh - 48px);
+  overflow-y: auto;
+}
+
+.playerDialog {
+  max-height: min(880px, calc(100vh - 48px));
+  overflow: auto;
+  width: min(1120px, 100%);
+}
+
+.playerDialog header,
+.formDialog header {
+  align-items: center;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  padding: 18px;
+}
+
+.playerDialog video {
+  background: #000000;
+  display: block;
+  max-height: calc(100vh - 150px);
+  width: 100%;
+}
+
+.formDialog {
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+  width: min(460px, 100%);
+}
+
+.addVideoDialog {
+  width: min(540px, 100%);
+}
+
+.confirmDialog > p:not(.inlineDialogError) {
+  color: var(--color-muted);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.dialogActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.dialogActions button {
+  border-radius: 6px;
+  font-weight: 700;
+  min-height: 42px;
+  padding: 0 16px;
+}
+
+.formDialog header {
+  padding: 0;
+}
+
+.formDialog header p {
+  color: var(--color-subtle);
+  font-size: 14px;
+  margin-top: 4px;
+}
+
+.formDialog label {
+  display: grid;
+  gap: 8px;
+  font-weight: 700;
+}

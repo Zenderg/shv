@@ -1,0 +1,213 @@
+.libraryGrid {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+}
+
+.videoCard {
+  box-shadow: var(--shadow-card);
+  display: grid;
+  overflow: hidden;
+}
+
+.poster {
+  aspect-ratio: 16 / 9;
+  background:
+    radial-gradient(circle at 22% 18%, rgba(123, 214, 143, 0.16), transparent 30%),
+    linear-gradient(135deg, #26342f, #141d19);
+  color: var(--color-accent);
+  display: block;
+  overflow: hidden;
+  padding: 0;
+  position: relative;
+  width: 100%;
+}
+
+.poster img {
+  display: block;
+  height: 100%;
+  object-fit: cover;
+  width: 100%;
+}
+
+.posterPlaceholder {
+  align-items: center;
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  position: absolute;
+}
+
+.playBadge,
+.durationBadge {
+  position: absolute;
+  z-index: 1;
+}
+
+.playBadge {
+  align-items: center;
+  background: rgba(7, 19, 13, 0.62);
+  border: 1px solid rgba(238, 244, 238, 0.18);
+  border-radius: 999px;
+  color: var(--color-text);
+  display: flex;
+  height: 52px;
+  justify-content: center;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 52px;
+}
+
+.playBadge svg {
+  height: 26px;
+  transform: translateX(1px);
+  width: 26px;
+}
+
+.durationBadge {
+  background: rgba(3, 6, 5, 0.78);
+  border-radius: 6px;
+  bottom: 12px;
+  color: var(--color-text);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1;
+  padding: 6px 8px;
+  right: 12px;
+}
+
+.videoMeta {
+  display: grid;
+  gap: 6px;
+  padding: 14px 14px 4px;
+}
+
+.videoMeta h2 {
+  display: -webkit-box;
+  font-size: 17px;
+  line-height: 1.25;
+  min-height: 2.5em;
+  overflow-wrap: anywhere;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.videoMeta p {
+  font-size: 13px;
+}
+
+.videoMeta span {
+  color: var(--color-muted);
+  font-size: 12px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  width: fit-content;
+}
+
+.cardActions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  padding: 10px 12px 12px;
+}
+
+.cardActions button:hover,
+.cardActions button:focus-visible {
+  background: var(--color-border-strong);
+}
+
+.emptyState {
+  align-content: center;
+  color: var(--color-subtle);
+  display: grid;
+  justify-items: center;
+  min-height: 420px;
+  padding: 32px;
+  text-align: center;
+}
+
+.emptyState svg {
+  color: var(--color-accent);
+  height: 64px;
+  margin-bottom: 12px;
+  width: 64px;
+}
+
+.emptyState h2 {
+  color: var(--color-text);
+  font-size: 24px;
+  margin-bottom: 8px;
+}
+
+.emptyState p {
+  line-height: 1.5;
+  max-width: 540px;
+}
+
+.emptyStateActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: center;
+  margin-top: 18px;
+}
+
+.emptyStateActions .secondaryButton {
+  background: var(--color-surface-muted);
+  border-radius: 6px;
+  color: var(--color-text);
+  font-weight: 700;
+  min-height: 46px;
+  padding: 0 18px;
+}
+
+.compactEmptyState {
+  min-height: 320px;
+}
+
+.skeletonCard,
+.skeletonQueueCard {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  overflow: hidden;
+  padding: 14px;
+}
+
+.skeletonPoster {
+  aspect-ratio: 16 / 9;
+  background: var(--color-surface-muted);
+  display: block;
+  margin: -14px -14px 4px;
+}
+
+.skeletonLine,
+.skeletonBar {
+  background: var(--color-surface-muted);
+  border-radius: 999px;
+  display: block;
+  height: 12px;
+  width: 52%;
+}
+
+.skeletonLine.wide {
+  height: 16px;
+  width: 82%;
+}
+
+.skeletonQueueCard {
+  min-height: 130px;
+  padding: 18px;
+}
+
+.skeletonBar {
+  height: 8px;
+  margin-top: 10px;
+  width: 100%;
+}
