@@ -10,7 +10,7 @@ permissions:
   packages: write
 
 env:
-  NODE_VERSION: "24"
+  NODE_VERSION: "24.14.0"
 
 jobs:
   release:
