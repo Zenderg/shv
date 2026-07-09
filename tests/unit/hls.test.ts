@@ -22,6 +22,21 @@ mid/index.m3u8`;
     expect(variants[0].uri).toBe('https://example.test/high/index.m3u8');
   });
 
+  test('keeps quoted commas inside HLS stream attributes', () => {
+    const quotedAttributeManifest = `#EXTM3U
+#EXT-X-STREAM-INF:BANDWIDTH=800000,CODECS="avc1.640028,mp4a.40.2",RESOLUTION=640x360
+low/index.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=3200000,VIDEO="main,BANDWIDTH=1",CODECS="avc1.640028,mp4a.40.2",RESOLUTION=1920x1080
+high/index.m3u8`;
+
+    const variants = parseHlsVariants(quotedAttributeManifest, 'https://example.test/master.m3u8');
+
+    expect(variants.map((variant) => variant.uri)).toEqual([
+      'https://example.test/high/index.m3u8',
+      'https://example.test/low/index.m3u8'
+    ]);
+  });
+
   test('falls back to the original manifest when no variants exist', () => {
     expect(selectBestHlsVariant('#EXTM3U\n#EXTINF:4,\nsegment.ts', 'https://example.test/media.m3u8')).toBe(
       'https://example.test/media.m3u8'
