@@ -71,6 +71,8 @@ SQLite uses explicit migrations under `src/server/storage/migrations.ts`. Core t
 
 The filesystem owns media bytes; SQLite owns the index, queue, candidate, and metadata state.
 
+Captured candidate and subtitle request headers are internal download context. Candidate API responses preserve the candidate shape but strip those headers at the Express DTO boundary so queue and candidate-list reads cannot disclose cookies, authorization values, or custom tokens.
+
 ## Queue Contracts
 
 `QueueRunner` serializes active work:
