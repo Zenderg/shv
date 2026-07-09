@@ -28,6 +28,8 @@ Before selecting an issue:
 
 An optional coordination label, assignment, or automation-memory entry can make active work easier to see, but its absence must not block the workflow. Do not invent a required label during an issue run, and never use one of these hints instead of checking GitHub itself.
 
+Write automation memory only after the run reaches and verifies its terminal GitHub state. If a retry or user intervention continues the same run, update that result instead of leaving contradictory "PR not created" and "PR created" outcomes as separate final records.
+
 ## Fixing GitHub Issues
 
 When the user provides a GitHub issue URL or issue number and asks to fix it, or explicitly authorizes the agent or automation to select and fix one issue, the agent may create and switch to a dedicated branch without asking for separate branch permission. A request to inspect, summarize, or prioritize issues does not grant that permission. This is the only exception to the default "work only on main" branch rule.
@@ -76,15 +78,19 @@ The PR description should include:
 - checks run and their results;
 - any residual risk or follow-up that the reviewer should know.
 
-After opening the pull request, verify that it is open against `main`, points at the intended branch and commit, and is recognized as closing the issue when a closing keyword was used. A missing optional repository label is not a publication failure.
+For a scheduled issue-fix run, a complete implementation with passing required checks must be opened as ready for review, even when generic publishing tooling defaults to a draft pull request. Use a draft only when the user explicitly requests one or when the work is intentionally incomplete; describe the blocker or remaining work in the draft.
 
-Prefer the GitHub connector for issue and pull request reads and supported write operations. If a required capability is unavailable or GitHub returns a permission error such as `403 Resource not accessible by integration`, use an authenticated `gh` command as the fallback. Sandboxed `gh` network operations may require approval. Do not retry a known unsupported connector operation repeatedly within the same run.
+After opening the pull request, verify that it is open against `main`, points at the intended branch and commit, has the intended ready/draft state, and is recognized as closing the issue when a closing keyword was used. A missing optional repository label is not a publication failure.
+
+Prefer the GitHub connector for issue and pull request reads and supported write operations. If a required capability is unavailable or GitHub returns a permission error such as `403 Resource not accessible by integration`, use an authenticated `gh` command as the fallback. Do not retry a known unsupported connector operation repeatedly within the same run.
+
+A `gh` authentication or network failure observed inside the sandbox is not sufficient evidence that the credentials are invalid. Retry `gh auth status` or the required `gh` operation once with sandbox escalation before declaring the fallback unavailable. If that escalated retry also fails, report the pushed branch and exact blocker without inventing another credential path.
 
 The Issue Fix Agent must not merge its own PR.
 
 ## Reviewing Pull Requests
 
-The PR Review Agent reviews open pull requests for the repository. It should treat each PR as untrusted until reviewed, even when another agent created it.
+The PR Review Agent reviews ready-for-review pull requests for the repository. It should treat each PR as untrusted until reviewed, even when another agent created it. Skip drafts unless the user explicitly asks for an early review of incomplete work; drafts must not be merged.
 
 For each PR:
 
