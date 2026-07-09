@@ -4,6 +4,10 @@ This document is the source of truth for local development workflows, checks, se
 
 This project is designed to start through Docker Compose. Local commands are fine for tests, checks, scripts, and other tasks that are not application startup.
 
+## Runtime
+
+Use Node.js 24.14.0 or newer for local commands. The server imports `node:sqlite`, and the Docker image plus release workflow pin Node 24.14.0 so the SQLite runtime API is consistent between local checks, CI release builds, and the production container.
+
 ## Docker Compose
 
 Start the application with:
