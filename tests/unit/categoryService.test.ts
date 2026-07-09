@@ -45,6 +45,19 @@ describe('CategoryService', () => {
     expect(fs.existsSync(path.join(config.libraryRoot, category.folderName))).toBe(true);
   });
 
+  test('treats SQL-like category names and identifiers as data', () => {
+    const config = tempConfig();
+    const db = openDatabase(config.databasePath);
+    const service = new CategoryService(db, config);
+    const category = service.create("Kids'); DROP TABLE categories; --");
+
+    expect(service.get(`${category.id}' OR 1=1 --`)).toBeNull();
+    expect(service.rename(`${category.id}' OR 1=1 --`, 'Injected')).toBeNull();
+    expect(service.list()).toHaveLength(1);
+    expect(db.prepare('SELECT COUNT(*) AS count FROM categories').get()).toMatchObject({ count: 1 });
+    expect(service.get(category.id)?.name).toBe("Kids'); DROP TABLE categories; --");
+  });
+
   test('deletes an empty category and removes its empty folder', () => {
     const config = tempConfig();
     const db = openDatabase(config.databasePath);

@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import express from 'express';
 import request from 'supertest';
@@ -59,6 +61,42 @@ describe('extension package entries', () => {
     expect(manifest.key).toBe(sourceExtensionProfile('dev').key);
     expect(manifest.externally_connectable?.matches).toContain('http://127.0.0.1:8080/*');
     expect(manifest.content_scripts?.[0]?.matches).toContain('http://127.0.0.1:8080/*');
+  });
+
+  test('deduplicates generated extension origin permissions in packaged manifests', () => {
+    const extensionRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'xxx-extension-package-'));
+    fs.writeFileSync(path.join(extensionRoot, 'manifest.json'), `${JSON.stringify({
+      content_scripts: [{ matches: ['https://app.example.test/*'], js: ['content-script.js'] }],
+      externally_connectable: { matches: ['https://app.example.test/*'] },
+      host_permissions: ['https://app.example.test/*'],
+      manifest_version: 3,
+      name: 'source',
+      version: '1.0.0'
+    })}\n`);
+    fs.writeFileSync(
+      path.join(extensionRoot, 'shared.js'),
+      "export const APP_ORIGIN = 'http://127.0.0.1:8080';\n"
+    );
+    fs.writeFileSync(
+      path.join(extensionRoot, 'content-script.js'),
+      "const appOrigin = 'http://127.0.0.1:8080';\n"
+    );
+
+    const entries = extensionZipEntries(
+      extensionRoot,
+      sourceExtensionProfile('prod'),
+      'https://app.example.test'
+    );
+    const manifestEntry = entries.find((entry) => entry.name === 'shv-source-helper/manifest.json');
+    const manifest = JSON.parse(manifestEntry?.data.toString('utf8') ?? '{}') as {
+      content_scripts?: Array<{ matches?: string[] }>;
+      externally_connectable?: { matches?: string[] };
+      host_permissions?: string[];
+    };
+
+    expect(manifest.externally_connectable?.matches).toEqual(['https://app.example.test/*']);
+    expect(manifest.host_permissions).toEqual(['https://app.example.test/*']);
+    expect(manifest.content_scripts?.[0]?.matches).toEqual(['https://app.example.test/*']);
   });
 
   test('does not trust forwarded headers when deriving the package app origin', async () => {
