@@ -39,13 +39,13 @@ describe('DASH parsing', () => {
     expect(selected?.baseUrl).toBe('https://media.example.test/video?expires=1&type=7&sig=abc');
   });
 
-  test('decodes CDATA BaseURL values from contentType adaptation sets', () => {
+  test('reads literal CDATA BaseURL values from contentType adaptation sets', () => {
     const cdataManifest = `<?xml version="1.0"?>
 <MPD>
   <Period>
     <AdaptationSet contentType="video">
       <Representation id="720" bandwidth="2200000" width="1280" height="720">
-        <BaseURL><![CDATA[../video/720.mp4?token=a&amp;b]]></BaseURL>
+        <BaseURL><![CDATA[../video/720.mp4?token=a&b]]></BaseURL>
       </Representation>
     </AdaptationSet>
   </Period>
@@ -53,6 +53,22 @@ describe('DASH parsing', () => {
 
     const selected = selectBestDashRepresentation(cdataManifest, 'https://example.test/manifests/manifest.mpd');
     expect(selected?.baseUrl).toBe('https://example.test/video/720.mp4?token=a&b');
+  });
+
+  test('decodes nested entity text exactly once', () => {
+    const nestedEntityManifest = `<?xml version="1.0"?>
+<MPD>
+  <Period>
+    <AdaptationSet contentType="video">
+      <Representation id="nested-entity" bandwidth="2200000">
+        <BaseURL>video&amp;lt;name.mp4</BaseURL>
+      </Representation>
+    </AdaptationSet>
+  </Period>
+</MPD>`;
+
+    const selected = selectBestDashRepresentation(nestedEntityManifest, 'https://example.test/manifest.mpd');
+    expect(selected?.baseUrl).toBe('https://example.test/video&lt;name.mp4');
   });
 
   test('selects separate audio and video renditions when DASH splits streams', () => {

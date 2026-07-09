@@ -117,13 +117,7 @@ function xmlText(value: unknown): string | null {
     return null;
   }
 
-  return text
-    .trim()
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'");
+  return text.trim();
 }
 
 export function selectBestDashRepresentation(manifest: string, manifestUrl: string): DashRepresentation | null {
