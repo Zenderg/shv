@@ -1,6 +1,7 @@
 FROM node:24-bookworm-slim AS base
 
 WORKDIR /app
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
@@ -25,6 +26,9 @@ RUN npm run build
 
 ENV NODE_ENV=production
 EXPOSE 8080
+RUN mkdir -p /data/library /data/app /work \
+  && chown -R node:node /data /work /ms-playwright
 VOLUME ["/data/library", "/data/app", "/work"]
 ENTRYPOINT ["tini", "--"]
+USER node
 CMD ["npm", "run", "start"]
