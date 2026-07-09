@@ -14,6 +14,7 @@ describe('extension debug route', () => {
 
     await request(app)
       .post('/api/debug/extension/events')
+      .set('X-SHV-CSRF', 'test-csrf-token')
       .send({
         eventType: 'metadata-probe',
         jobId: 'job-id',
@@ -52,6 +53,7 @@ describe('extension debug route', () => {
     await request(app).get('/api/debug/extension/events').expect(404);
     await request(app)
       .post('/api/debug/extension/events')
+      .set('X-SHV-CSRF', 'test-csrf-token')
       .send({ eventType: 'metadata-probe', status: 'unavailable' })
       .expect(404);
   });
@@ -64,6 +66,7 @@ function createApp(sourceExtensionProfile: 'dev' | 'prod') {
   app.use(createRouter({
     categories: {} as never,
     config: tempConfig(root, sourceExtensionProfile),
+    csrfToken: 'test-csrf-token',
     extensionDebug: new ExtensionDebugService(),
     jobs: {} as never,
     liveBrowser: {} as never,

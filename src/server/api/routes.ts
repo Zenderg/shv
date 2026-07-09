@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
 import express, { type Request, type Response, type Router } from 'express';
 import mime from 'mime-types';
 import { z } from 'zod';
@@ -23,9 +24,12 @@ import {
 export { DEV_SOURCE_EXTENSION_ID, PROD_SOURCE_EXTENSION_ID, sourceExtensionProfile };
 
 const DEFAULT_EXTENSION_APP_ORIGIN = 'http://127.0.0.1:8080';
+export const CSRF_HEADER_NAME = 'X-SHV-CSRF';
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 export interface RouteServices {
   config: AppConfig;
+  csrfToken: string;
   categories: CategoryService;
   extensionDebug: ExtensionDebugService;
   jobs: JobService;
@@ -38,12 +42,14 @@ export interface RouteServices {
 export function createRouter(services: RouteServices): Router {
   const router = express.Router();
 
+  router.use(csrfProtection(services.csrfToken));
+
   router.get('/api/health', (_request, response) => {
     response.json({ ok: true });
   });
 
   router.get('/api/runtime-config', (_request, response) => {
-    response.json({ sourceExtensionProfile: services.config.sourceExtensionProfile });
+    response.json({ csrfToken: services.csrfToken, sourceExtensionProfile: services.config.sourceExtensionProfile });
   });
 
   router.get('/api/debug/extension/events', (request, response) => {
@@ -291,6 +297,33 @@ export function createRouter(services: RouteServices): Router {
   );
 
   return router;
+}
+
+export function createCsrfToken(): string {
+  return randomBytes(32).toString('base64url');
+}
+
+function csrfProtection(expectedToken: string) {
+  return (request: Request, response: Response, next: () => void) => {
+    if (SAFE_METHODS.has(request.method)) {
+      next();
+      return;
+    }
+    if (!csrfTokenMatches(request.get(CSRF_HEADER_NAME), expectedToken)) {
+      response.status(403).json({ error: 'csrf_token_required' });
+      return;
+    }
+    next();
+  };
+}
+
+function csrfTokenMatches(actualToken: string | undefined, expectedToken: string): boolean {
+  if (!actualToken || !expectedToken) {
+    return false;
+  }
+  const actual = Buffer.from(actualToken);
+  const expected = Buffer.from(expectedToken);
+  return actual.length === expected.length && timingSafeEqual(actual, expected);
 }
 
 function listZipEntries(root: string, prefix: string): ZipEntryInput[] {

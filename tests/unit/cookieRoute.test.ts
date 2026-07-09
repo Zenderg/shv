@@ -17,6 +17,7 @@ describe('cookie route', () => {
     app.use(createRouter({
       categories: {} as never,
       config: tempConfig(root, cookiesPath),
+      csrfToken: 'test-csrf-token',
       extensionDebug: new ExtensionDebugService(),
       jobs: {} as never,
       liveBrowser: {} as never,
@@ -28,6 +29,7 @@ describe('cookie route', () => {
 
     await request(app)
       .post('/api/jobs/job-id/cookies')
+      .set('X-SHV-CSRF', 'test-csrf-token')
       .send({
         cookies: [
           {
@@ -61,6 +63,7 @@ describe('cookie route', () => {
     app.use(createRouter({
       categories: {} as never,
       config: tempConfig(root, cookiesPath),
+      csrfToken: 'test-csrf-token',
       extensionDebug: new ExtensionDebugService(),
       jobs: {} as never,
       liveBrowser: {} as never,
@@ -72,6 +75,7 @@ describe('cookie route', () => {
 
     await request(app)
       .post('/api/jobs/job-id/cookies')
+      .set('X-SHV-CSRF', 'test-csrf-token')
       .send({
         cookies: [
           {

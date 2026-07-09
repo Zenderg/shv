@@ -18,6 +18,7 @@ const pendingSubtitleTracksByTab = new Map();
 const hlsMetadataByTab = new Map();
 const hlsManifestFetches = new Set();
 const requestHeadersByRequestId = new Map();
+let appCsrfTokenPromise = null;
 let stateWriteChain = Promise.resolve();
 const DOWNLOAD_HEADER_NAMES = new Set([
   'accept',
@@ -999,7 +1000,7 @@ async function selectSource(tabId, url) {
   }
   await fetch(`${APP_ORIGIN}/api/jobs/${session.jobId}/select-candidate`, {
     body: JSON.stringify({ candidateId: selected.id }),
-    headers: { 'Content-Type': 'application/json' },
+    headers: await appJsonHeaders(),
     method: 'POST'
   }).then(ensureOk);
   await upsertState((nextState) => {
@@ -1136,7 +1137,7 @@ async function focusAppTab(appTabId) {
 async function postCandidates(jobId, candidates) {
   return fetch(`${APP_ORIGIN}/api/jobs/${jobId}/extension-candidates`, {
     body: JSON.stringify({ candidates }),
-    headers: { 'Content-Type': 'application/json' },
+    headers: await appJsonHeaders(),
     method: 'POST'
   }).then(ensureOk);
 }
@@ -1144,7 +1145,7 @@ async function postCandidates(jobId, candidates) {
 async function postCookies(jobId, cookies) {
   return fetch(`${APP_ORIGIN}/api/jobs/${jobId}/cookies`, {
     body: JSON.stringify({ cookies }),
-    headers: { 'Content-Type': 'application/json' },
+    headers: await appJsonHeaders(),
     method: 'POST'
   }).then(ensureOk);
 }
@@ -1152,13 +1153,32 @@ async function postCookies(jobId, cookies) {
 async function postExtensionDebugEvent(event) {
   return fetch(`${APP_ORIGIN}/api/debug/extension/events`, {
     body: JSON.stringify(event),
-    headers: { 'Content-Type': 'application/json' },
+    headers: await appJsonHeaders(),
     method: 'POST'
   }).then((response) => {
     if (!response.ok && response.status !== 404) {
       throw new Error('Could not record extension debug event');
     }
   });
+}
+
+async function appJsonHeaders() {
+  return {
+    'Content-Type': 'application/json',
+    'X-SHV-CSRF': await appCsrfToken()
+  };
+}
+
+async function appCsrfToken() {
+  appCsrfTokenPromise ??= fetch(`${APP_ORIGIN}/api/runtime-config`)
+    .then(ensureOk)
+    .then((config) => {
+      if (typeof config?.csrfToken !== 'string' || config.csrfToken.length === 0) {
+        throw new Error('The shv app did not provide a CSRF token');
+      }
+      return config.csrfToken;
+    });
+  return appCsrfTokenPromise;
 }
 
 async function ensureOk(response) {

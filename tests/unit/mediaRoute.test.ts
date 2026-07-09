@@ -19,6 +19,7 @@ describe('media route', () => {
     app.use(createRouter({
       categories: {} as never,
       config: tempConfig(root),
+      csrfToken: 'test-csrf-token',
       extensionDebug: new ExtensionDebugService(),
       jobs: {} as never,
       liveBrowser: {} as never,

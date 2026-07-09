@@ -2,6 +2,7 @@ import type { SourceExtensionKind } from '../../../shared/sourceExtension';
 import type { Category, DownloadJob, MediaCandidate, MediaItem, QueueSnapshot, SubtitleTrack } from '../../../shared/types';
 
 export interface RuntimeConfig {
+  csrfToken: string;
   sourceExtensionProfile: SourceExtensionKind;
 }
 
@@ -16,13 +17,21 @@ export interface LiveBrowserState {
   errorMessage: string | null;
 }
 
+const CSRF_HEADER_NAME = 'X-SHV-CSRF';
+let csrfToken: string | null = null;
+let runtimeConfigRequest: Promise<RuntimeConfig> | null = null;
+
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(options?.headers as Record<string, string> | undefined)
+  };
+  if (unsafeMethod(options?.method)) {
+    headers[CSRF_HEADER_NAME] = csrfToken ?? (await fetchRuntimeConfig()).csrfToken;
+  }
   const response = await fetch(url, {
     ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...options?.headers
-    }
+    headers
   });
   if (!response.ok) {
     const body = await response.text();
@@ -34,8 +43,29 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
+async function fetchRuntimeConfig(): Promise<RuntimeConfig> {
+  runtimeConfigRequest ??= fetch('/api/runtime-config', {
+    headers: { 'Content-Type': 'application/json' }
+  }).then(async (response) => {
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(body || `Request failed with HTTP ${response.status}`);
+    }
+    const config = (await response.json()) as RuntimeConfig;
+    csrfToken = config.csrfToken;
+    return config;
+  }).finally(() => {
+    runtimeConfigRequest = null;
+  });
+  return runtimeConfigRequest;
+}
+
+function unsafeMethod(method: string | undefined): boolean {
+  return !['GET', 'HEAD', 'OPTIONS'].includes((method ?? 'GET').toUpperCase());
+}
+
 export const api = {
-  runtimeConfig: () => request<RuntimeConfig>('/api/runtime-config'),
+  runtimeConfig: () => fetchRuntimeConfig(),
   categories: () => request<Category[]>('/api/categories'),
   createCategory: (name: string) => request<Category>('/api/categories', { method: 'POST', body: JSON.stringify({ name }) }),
   renameCategory: (id: string, name: string) =>
