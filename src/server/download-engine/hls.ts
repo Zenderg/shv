@@ -96,11 +96,42 @@ export function canDownloadPlainHlsSegments(manifest: string, segments: HlsSegme
 
 function parseAttributes(input: string): Record<string, string> {
   const result: Record<string, string> = {};
-  for (const part of input.split(',')) {
-    const [key, value] = part.split('=');
-    if (key && value) {
-      result[key.trim()] = value.trim().replace(/^"|"$/g, '');
+  let key = '';
+  let value = '';
+  let readingValue = false;
+  let quoted = false;
+
+  const commit = () => {
+    const normalizedKey = key.trim();
+    if (normalizedKey) {
+      result[normalizedKey] = value.trim().replace(/^"|"$/g, '');
     }
+    key = '';
+    value = '';
+    readingValue = false;
+    quoted = false;
+  };
+
+  for (const character of `${input},`) {
+    if (!readingValue) {
+      if (character === '=') {
+        readingValue = true;
+      } else if (character !== ',') {
+        key += character;
+      }
+      continue;
+    }
+    if (character === '"') {
+      quoted = !quoted;
+      value += character;
+      continue;
+    }
+    if (character === ',' && !quoted) {
+      commit();
+      continue;
+    }
+    value += character;
   }
+
   return result;
 }
