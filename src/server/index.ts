@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import express from 'express';
+import express, { type RequestHandler } from 'express';
 import { fileURLToPath } from 'node:url';
 import { createRouter, errorHandler } from './api/routes.js';
 import { BrowserAnalyzer } from './browser-analyzer/browserAnalyzer.js';
@@ -16,6 +16,18 @@ import { MediaLibraryService } from './media-library/mediaLibraryService.js';
 import { MediaProcessor } from './media-processing/mediaProcessor.js';
 import { YtDlpSourceExtractor } from './source-extractors/sourceExtractorService.js';
 import { openDatabase } from './storage/database.js';
+
+const CONTENT_SECURITY_POLICY = [
+  "default-src 'self'",
+  "base-uri 'self'",
+  "frame-ancestors 'none'",
+  "img-src 'self' data: blob:",
+  "media-src 'self' blob:",
+  "object-src 'none'",
+  "script-src 'self'",
+  "style-src 'self'",
+  "connect-src 'self'"
+].join('; ');
 
 export function createApp() {
   const config = loadAppConfig();
@@ -41,6 +53,7 @@ export function createApp() {
 
   const app = express();
   app.disable('x-powered-by');
+  app.use(securityHeaders());
   app.use(express.json({ limit: '1mb' }));
   app.use(createRouter({ config, categories, extensionDebug, jobs, queueRunner, liveBrowser, mediaFiles, mediaLibrary }));
 
@@ -54,6 +67,16 @@ export function createApp() {
 
   app.use(errorHandler);
   return { app, queueRunner, config, db };
+}
+
+function securityHeaders(): RequestHandler {
+  return (_request, response, next) => {
+    response.setHeader('Content-Security-Policy', CONTENT_SECURITY_POLICY);
+    response.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    response.setHeader('X-Content-Type-Options', 'nosniff');
+    response.setHeader('X-Frame-Options', 'DENY');
+    next();
+  };
 }
 
 if (process.env.NODE_ENV !== 'test') {
