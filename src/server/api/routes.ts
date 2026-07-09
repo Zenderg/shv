@@ -405,8 +405,7 @@ function appOriginForExtension(request: Request, config: AppConfig): string {
   }
 
   const requestHost = firstHeaderValue(request.get('host'));
-  const forwardedHost = firstHeaderValue(request.get('x-forwarded-host'));
-  const candidateHosts = new Set([requestHost, forwardedHost].filter(Boolean));
+  const candidateHosts = new Set([requestHost].filter(Boolean));
   const refererOrigin = trustedHeaderOrigin(request.get('referer'), candidateHosts);
   if (refererOrigin) {
     return refererOrigin;
@@ -416,8 +415,8 @@ function appOriginForExtension(request: Request, config: AppConfig): string {
     return originHeader;
   }
 
-  const protocol = firstHeaderValue(request.get('x-forwarded-proto')) ?? request.protocol;
-  const host = forwardedHost ?? requestHost ?? `127.0.0.1:${config.port}`;
+  const protocol = request.protocol;
+  const host = requestHost ?? `127.0.0.1:${config.port}`;
   return normalizeHttpOrigin(`${protocol}://${host}`);
 }
 

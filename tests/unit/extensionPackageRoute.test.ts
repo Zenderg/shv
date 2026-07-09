@@ -1,11 +1,17 @@
 import path from 'node:path';
+import express from 'express';
+import request from 'supertest';
 import { describe, expect, test } from 'vitest';
 import {
   DEV_SOURCE_EXTENSION_ID,
   PROD_SOURCE_EXTENSION_ID,
+  createRouter,
+  errorHandler,
   sourceExtensionProfile,
   extensionZipEntries
 } from '../../src/server/api/routes.js';
+import type { AppConfig } from '../../src/server/config/appConfig.js';
+import { ExtensionDebugService } from '../../src/server/extension-debug/extensionDebugService.js';
 import { buildZipArchive } from '../../src/server/utils/zipArchive.js';
 
 describe('extension package entries', () => {
@@ -54,4 +60,61 @@ describe('extension package entries', () => {
     expect(manifest.externally_connectable?.matches).toContain('http://127.0.0.1:8080/*');
     expect(manifest.content_scripts?.[0]?.matches).toContain('http://127.0.0.1:8080/*');
   });
+
+  test('does not trust forwarded headers when deriving the package app origin', async () => {
+    const app = express();
+    app.use(createRouter({
+      categories: {} as never,
+      config: tempConfig(),
+      csrfToken: 'test-csrf-token',
+      extensionDebug: new ExtensionDebugService(),
+      jobs: {} as never,
+      liveBrowser: {} as never,
+      mediaFiles: {} as never,
+      mediaLibrary: {} as never,
+      queueRunner: {} as never
+    }));
+    app.use(errorHandler);
+
+    const response = await request(app)
+      .get('/extension/shv-source-helper.zip')
+      .set('Host', 'app.example.test:8080')
+      .set('X-Forwarded-Host', 'attacker.example.test')
+      .set('X-Forwarded-Proto', 'https')
+      .set('Referer', 'https://attacker.example.test/install')
+      .parse(bufferResponse)
+      .expect(200);
+    const archive = response.body as Buffer;
+
+    expect(archive.includes(Buffer.from('http://app.example.test:8080/*'))).toBe(true);
+    expect(archive.includes(Buffer.from('https://attacker.example.test/*'))).toBe(false);
+    expect(archive.includes(Buffer.from("export const APP_ORIGIN = 'https://attacker.example.test';"))).toBe(false);
+  });
 });
+
+function tempConfig(): AppConfig {
+  const appDataRoot = path.join(process.cwd(), 'data/app');
+  return {
+    appDataRoot,
+    browserDataRoot: path.join(appDataRoot, 'browser'),
+    chromiumExecutablePath: undefined,
+    databasePath: path.join(appDataRoot, 'db.sqlite'),
+    host: '127.0.0.1',
+    libraryRoot: path.join(process.cwd(), 'data/library'),
+    port: 8080,
+    sourceExtensionProfile: 'prod',
+    thumbnailsRoot: path.join(appDataRoot, 'thumbnails'),
+    workRoot: path.join(process.cwd(), 'data/work'),
+    ytDlpCookiesPath: path.join(appDataRoot, 'cookies.txt')
+  };
+}
+
+function bufferResponse(
+  response: NodeJS.ReadableStream,
+  callback: (error: Error | null, body?: Buffer) => void
+) {
+  const chunks: Buffer[] = [];
+  response.on('data', (chunk: Buffer) => chunks.push(chunk));
+  response.on('end', () => callback(null, Buffer.concat(chunks)));
+  response.on('error', callback);
+}
