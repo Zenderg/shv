@@ -108,8 +108,16 @@ function isServerDownloadableUrl(url: string): boolean {
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
       return false;
     }
-    return !parsed.searchParams.has('bytes');
+    return !hasExplicitByteRangeQuery(parsed);
   } catch {
     return false;
   }
+}
+
+function hasExplicitByteRangeQuery(parsed: URL): boolean {
+  return ['bytes', 'range'].some((key) => parsed.searchParams.getAll(key).some(isByteRangeValue));
+}
+
+function isByteRangeValue(value: string): boolean {
+  return /^\d+-\d*$/.test(value);
 }

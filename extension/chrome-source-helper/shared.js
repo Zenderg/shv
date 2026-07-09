@@ -68,10 +68,10 @@ export function candidateRejectionReason(url, contentType = null) {
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
     return `non-http protocol ${parsed.protocol}`;
   }
-  if (parsed.searchParams.has('bytes')) {
+  if (hasExplicitByteRangeQuery(parsed, 'bytes')) {
     return 'explicit bytes query param';
   }
-  if (parsed.searchParams.has('range')) {
+  if (hasExplicitByteRangeQuery(parsed, 'range')) {
     return 'explicit range query param';
   }
   if (isYoutubeSabrTransport(parsed, contentType)) {
@@ -341,7 +341,15 @@ export function isServerDownloadableUrl(parsed) {
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
     return false;
   }
-  return !parsed.searchParams.has('bytes') && !parsed.searchParams.has('range');
+  return !hasExplicitByteRangeQuery(parsed, 'bytes') && !hasExplicitByteRangeQuery(parsed, 'range');
+}
+
+function hasExplicitByteRangeQuery(parsed, key) {
+  return parsed.searchParams.getAll(key).some(isByteRangeValue);
+}
+
+function isByteRangeValue(value) {
+  return /^\d+-\d*$/.test(value);
 }
 
 function isGoogleVideoPlaybackUrl(parsed) {
