@@ -34,6 +34,15 @@ jobs:
             exit 1
           fi
 
+          release_version="${GITHUB_REF_NAME#v}"
+          package_version="$(node -p \"require('./package.json').version\")"
+          lockfile_version="$(node -p \"require('./package-lock.json').version\")"
+
+          if [[ "${package_version}" != "${release_version}" || "${lockfile_version}" != "${release_version}" ]]; then
+            echo "Release tag ${GITHUB_REF_NAME} must match package.json and package-lock.json versions (found ${package_version} and ${lockfile_version})." >&2
+            exit 1
+          fi
+
           git fetch origin main:refs/remotes/origin/main
           if ! git merge-base --is-ancestor "${GITHUB_SHA}" refs/remotes/origin/main; then
             echo "Release tag ${GITHUB_REF_NAME} must point to a commit reachable from main." >&2

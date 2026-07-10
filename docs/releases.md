@@ -38,8 +38,17 @@ The prefixes are a release-writing aid, not a substitute for reviewing the diff.
 
 ## Cutting a Release
 
-1. Make sure `main` contains the release commit.
-2. Inspect the changes since the previous release:
+1. Update the package and lockfile versions to the planned release before tagging:
+
+   ```bash
+   npm version X.Y.Z --no-git-tag-version
+   git add package.json package-lock.json
+   git commit -m "chore: prepare vX.Y.Z"
+   ```
+
+   The release workflow rejects a tag unless its version matches both files.
+2. Make sure `main` contains the release commit.
+3. Inspect the changes since the previous release:
 
    ```bash
    git describe --tags --abbrev=0
@@ -48,21 +57,21 @@ The prefixes are a release-writing aid, not a substitute for reviewing the diff.
 
    For the first release, when no previous tag exists yet, use `git log --oneline HEAD`.
 
-3. Create and push an annotated tag:
+4. Create and push an annotated tag:
 
    ```bash
    git tag -a vX.Y.Z -m "vX.Y.Z"
    git push origin vX.Y.Z
    ```
 
-4. Wait for the `Release` workflow to complete.
-5. Open the draft GitHub Release created for the tag.
-6. Replace the draft release-notes section with a concise user-facing changelog:
+5. Wait for the `Release` workflow to complete.
+6. Open the draft GitHub Release created for the tag.
+7. Replace the draft release-notes section with a concise user-facing changelog:
    - what changed;
    - what was fixed;
    - any deployment notes or breaking changes;
    - the final image link.
-7. Publish the GitHub Release.
+8. Publish the GitHub Release.
 
 ## User Deployment
 
