@@ -115,6 +115,7 @@ Even in the trusted LAN/VPN model, the backend treats paths and URLs as untruste
 
 - all filesystem operations stay under configured `/data/library`, `/data/app`, and `/work` roots;
 - category and file names are sanitized;
+- source, candidate, and subtitle URLs that can reach browser navigation or downloading must use `http:` or `https:`;
 - raw browser automation state is not exposed through generic file-serving endpoints.
 
 Private-network SSRF protections are desirable before any future public or semi-public deployment model. They are not a substitute for the current rule that public-internet exposure is unsupported.

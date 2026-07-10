@@ -27,6 +27,13 @@ export { DEV_SOURCE_EXTENSION_ID, PROD_SOURCE_EXTENSION_ID, sourceExtensionProfi
 const DEFAULT_EXTENSION_APP_ORIGIN = 'http://127.0.0.1:8080';
 export const CSRF_HEADER_NAME = 'X-SHV-CSRF';
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+const httpUrlSchema = z.string().url().refine(
+  (value) => {
+    const protocol = new URL(value).protocol;
+    return protocol === 'http:' || protocol === 'https:';
+  },
+  { message: 'URL must use http or https' }
+);
 
 export interface RouteServices {
   config: AppConfig;
@@ -178,7 +185,7 @@ export function createRouter(services: RouteServices): Router {
   }
 
   router.post('/api/jobs', (request, response) => {
-    const body = z.object({ sourceUrl: z.string().url(), categoryId: z.string().uuid() }).parse(request.body);
+    const body = z.object({ sourceUrl: httpUrlSchema, categoryId: z.string().uuid() }).parse(request.body);
     response.status(201).json(services.jobs.create(body.sourceUrl, body.categoryId));
   });
 
@@ -232,12 +239,12 @@ export function createRouter(services: RouteServices): Router {
   });
 
   router.post('/api/jobs/:id/select-subtitle-track', (request, response) => {
-    const body = z.object({ subtitleTrackUrl: z.string().url().nullable() }).parse(request.body);
+    const body = z.object({ subtitleTrackUrl: httpUrlSchema.nullable() }).parse(request.body);
     response.json(services.jobs.selectSubtitleTrack(paramId(request), body.subtitleTrackUrl));
   });
 
   router.post('/api/jobs/:id/replace-source', (request, response) => {
-    const body = z.object({ sourceUrl: z.string().url() }).parse(request.body);
+    const body = z.object({ sourceUrl: httpUrlSchema }).parse(request.body);
     response.json(services.jobs.replaceSource(paramId(request), body.sourceUrl));
   });
 
@@ -529,7 +536,7 @@ function candidateDraftSchema(): z.ZodType<CandidateDraft> {
     resolution: z.string().nullable(),
     sizeBytes: z.number().nullable(),
     subtitleTracks: z.array(subtitleTrackSchema()).max(50).optional().default([]),
-    url: z.string().url()
+    url: httpUrlSchema
   });
 }
 
@@ -543,7 +550,7 @@ function subtitleTrackSchema() {
     label: z.string().nullable(),
     language: z.string().nullable(),
     source: z.enum(['network', 'text-track', 'hls-manifest']),
-    url: z.string().url()
+    url: httpUrlSchema
   });
 }
 

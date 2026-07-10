@@ -12,6 +12,37 @@ import { openDatabase } from '../../src/server/storage/database.js';
 import type { SubtitleTrack } from '../../src/shared/types.js';
 
 describe('extension candidate route', () => {
+  test('rejects non-http URLs before they can enter job or candidate flows', async () => {
+    const { app, job } = createAppWithJob();
+    const fileUrl = 'file:///etc/passwd';
+
+    await request(app)
+      .post('/api/jobs')
+      .set('X-SHV-CSRF', 'test-csrf-token')
+      .send({ categoryId: job.categoryId, sourceUrl: fileUrl })
+      .expect(400);
+    await request(app)
+      .post(`/api/jobs/${job.id}/replace-source`)
+      .set('X-SHV-CSRF', 'test-csrf-token')
+      .send({ sourceUrl: fileUrl })
+      .expect(400);
+    await request(app)
+      .post(`/api/jobs/${job.id}/select-subtitle-track`)
+      .set('X-SHV-CSRF', 'test-csrf-token')
+      .send({ subtitleTrackUrl: fileUrl })
+      .expect(400);
+    await request(app)
+      .post(`/api/jobs/${job.id}/extension-candidates`)
+      .set('X-SHV-CSRF', 'test-csrf-token')
+      .send({ candidates: [candidate(fileUrl)] })
+      .expect(400);
+    await request(app)
+      .post(`/api/jobs/${job.id}/extension-candidates`)
+      .set('X-SHV-CSRF', 'test-csrf-token')
+      .send({ candidates: [candidate('https://media.example.test/video.m3u8', [subtitleTrack(fileUrl, 'Local file', 'en')])] })
+      .expect(400);
+  });
+
   test('treats extension candidates as the current source-session snapshot', async () => {
     const { app, job, jobs } = createAppWithJob();
 
