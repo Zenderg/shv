@@ -124,6 +124,88 @@ describe('DownloadEngine direct download', () => {
     expect(progress.at(-1)).toBe(0.95);
   });
 
+  test('does not replay captured headers to cross-origin HLS variants or segments', async () => {
+    const crossOriginHeaders: Array<{ authorization?: string; cookie?: string; custom?: string }> = [];
+    const mediaServer = http.createServer((request, response) => {
+      crossOriginHeaders.push({
+        authorization: request.headers.authorization,
+        cookie: request.headers.cookie,
+        custom: request.headers['x-media-token'] as string | undefined
+      });
+      if (request.url === '/media.m3u8') {
+        response.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl' });
+        response.end(['#EXTM3U', '#EXT-X-TARGETDURATION:4', '#EXTINF:4,', 'seg-1.ts', '#EXT-X-ENDLIST', ''].join('\n'));
+        return;
+      }
+      if (request.url === '/seg-1.ts') {
+        response.writeHead(200, { 'content-type': 'video/MP2T' });
+        response.end('segment-bytes');
+        return;
+      }
+      response.writeHead(404).end();
+    });
+    servers.push(mediaServer);
+    await new Promise<void>((resolve) => mediaServer.listen(0, '127.0.0.1', resolve));
+    const mediaAddress = mediaServer.address();
+    if (!mediaAddress || typeof mediaAddress === 'string') {
+      throw new Error('Media server did not expose a port');
+    }
+
+    const manifestHeaders: Array<{ authorization?: string; cookie?: string; custom?: string }> = [];
+    const manifestServer = http.createServer((request, response) => {
+      manifestHeaders.push({
+        authorization: request.headers.authorization,
+        cookie: request.headers.cookie,
+        custom: request.headers['x-media-token'] as string | undefined
+      });
+      response.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl' });
+      response.end([
+        '#EXTM3U',
+        '#EXT-X-STREAM-INF:BANDWIDTH=1000,RESOLUTION=640x360',
+        `http://127.0.0.1:${mediaAddress.port}/media.m3u8`,
+        ''
+      ].join('\n'));
+    });
+    servers.push(manifestServer);
+    await new Promise<void>((resolve) => manifestServer.listen(0, '127.0.0.1', resolve));
+    const manifestAddress = manifestServer.address();
+    if (!manifestAddress || typeof manifestAddress === 'string') {
+      throw new Error('Manifest server did not expose a port');
+    }
+
+    const candidate: MediaCandidate = {
+      id: 'candidate',
+      jobId: 'job',
+      kind: 'hls',
+      url: `http://127.0.0.1:${manifestAddress.port}/master.m3u8`,
+      contentType: 'application/vnd.apple.mpegurl',
+      manifestType: 'hls',
+      resolution: null,
+      bitrate: null,
+      durationSeconds: null,
+      sizeBytes: null,
+      confidence: 1,
+      headers: {
+        Authorization: 'Bearer secret',
+        Cookie: 'session=secret',
+        'X-Media-Token': 'custom-secret'
+      },
+      subtitleTracks: [],
+      discoveredAt: new Date().toISOString()
+    };
+    const output = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'shv-cross-origin-hls-')), 'video.ts');
+
+    await new DownloadEngine().download(candidate, output, () => undefined);
+
+    expect(manifestHeaders).toEqual([
+      { authorization: 'Bearer secret', cookie: 'session=secret', custom: 'custom-secret' }
+    ]);
+    expect(crossOriginHeaders).toEqual([
+      { authorization: undefined, cookie: undefined, custom: undefined },
+      { authorization: undefined, cookie: undefined, custom: undefined }
+    ]);
+  });
+
   test('normalizes timestamps while stitching downloaded HLS segments', async () => {
     const segmentDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'xxx-hls-segments-'));
     const firstSegmentPath = path.join(segmentDirectory, 'seg-1.ts');

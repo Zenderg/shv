@@ -78,6 +78,22 @@ export function parseHlsSegments(manifest: string, baseUrl: string): HlsSegment[
   return segments;
 }
 
+export function parseHlsResourceUrls(manifest: string, baseUrl: string): string[] {
+  const urls = new Set(parseHlsSegments(manifest, baseUrl).map((segment) => segment.uri));
+  for (const line of manifest.split(/\r?\n/)) {
+    if (!line.trimStart().startsWith('#')) {
+      continue;
+    }
+    for (const match of line.matchAll(/\bURI=(?:"([^"]+)"|([^,\s]+))/g)) {
+      const value = match[1] ?? match[2];
+      if (value) {
+        urls.add(new URL(value, baseUrl).toString());
+      }
+    }
+  }
+  return [...urls];
+}
+
 export function canDownloadPlainHlsSegments(manifest: string, segments: HlsSegment[]): boolean {
   if (segments.length === 0) {
     return false;

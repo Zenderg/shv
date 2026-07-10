@@ -38,6 +38,22 @@ describe('DownloadEngine ffmpeg helpers', () => {
     expect(args).toEqual(expect.arrayContaining(['-reconnect', '1', '-reconnect_on_network_error', '1']));
   });
 
+  test('does not replay captured headers to cross-origin DASH renditions', () => {
+    const sameOriginVideo = { ...video, baseUrl: 'https://source.example.test/video.webm' };
+    const args = buildDashFfmpegArgs(
+      sameOriginVideo,
+      audio,
+      { Authorization: 'Bearer secret', Cookie: 'session=secret' },
+      '/work/source',
+      'https://source.example.test/manifest.mpd'
+    );
+    const headerValues = args.flatMap((value, index) => value === '-headers' ? [args[index + 1]] : []);
+
+    expect(headerValues[0]).toContain('Authorization: Bearer secret');
+    expect(headerValues[0]).toContain('Cookie: session=secret');
+    expect(headerValues[1]).toBe('');
+  });
+
   test('builds HLS ffmpeg args with reconnects but no EOF reconnects or persistent segment connections', () => {
     const args = buildHlsFfmpegArgs(
       'https://media.example.test/playlist.m3u8',

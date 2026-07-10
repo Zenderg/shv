@@ -127,6 +127,8 @@ Some DASH manifests expose video and audio as separate adaptation sets. The down
 
 Direct `browser-request` media candidates are intentionally downloaded with the browser-impersonated `curl_cffi` path instead of Node `fetch`. Some CDNs accept the same signed URL, cookies, referer, range, and sec-fetch headers from Chromium's media network stack but return HTTP 403 to Node/undici. Keep this as the single backend for direct `browser-request` media so failures have one debuggable request path.
 
+Captured request headers are origin-bound. The downloader replays them only to the origin of the URL that supplied them; cross-origin HLS variants, segments, keys, init maps, DASH renditions, subtitle playlists, and subtitle segments receive no captured headers. When ffmpeg must own a complex HLS playlist, any cross-origin child resource removes captured headers from the whole ffmpeg input because ffmpeg accepts only one header set for that playlist.
+
 DASH manifests are XML, so representation URLs may contain escaped query separators such as `&amp;`; the downloader decodes those before invoking ffmpeg.
 
 HLS/DASH downloads write to an extensionless work file, so ffmpeg remux calls pass an explicit output muxer.

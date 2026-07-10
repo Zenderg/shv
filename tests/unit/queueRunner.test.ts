@@ -7,7 +7,7 @@ import { CategoryService } from '../../src/server/categories/categoryService.js'
 import type { AppConfig } from '../../src/server/config/appConfig.js';
 import type { DownloadEngine } from '../../src/server/download-engine/downloadEngine.js';
 import { JobService } from '../../src/server/jobs/jobService.js';
-import { QueueRunner, subtitleTracksForDownload } from '../../src/server/jobs/queueRunner.js';
+import { QueueRunner, subtitleDownloadHeaders, subtitleTracksForDownload } from '../../src/server/jobs/queueRunner.js';
 import type { MediaFiles } from '../../src/server/media-library/mediaFiles.js';
 import type { MediaLibraryService } from '../../src/server/media-library/mediaLibraryService.js';
 import type { MediaProcessor } from '../../src/server/media-processing/mediaProcessor.js';
@@ -16,6 +16,30 @@ import { JobCanceledError } from '../../src/server/utils/cancellation.js';
 import type { MediaCandidate, SubtitleTrack } from '../../src/shared/types.js';
 
 describe('QueueRunner', () => {
+  test('scopes candidate and subtitle headers to their captured origins', () => {
+    const track = subtitleTrack('https://subtitles.example.test/index.m3u8', {
+      headers: { Authorization: 'Bearer subtitle-secret' }
+    });
+    const candidateHeaders = { Cookie: 'media-session=secret' };
+
+    expect(
+      subtitleDownloadHeaders(
+        track,
+        'https://media.example.test/master.m3u8',
+        candidateHeaders,
+        'https://subtitles.example.test/index.m3u8'
+      )
+    ).toEqual({ Authorization: 'Bearer subtitle-secret' });
+    expect(
+      subtitleDownloadHeaders(
+        track,
+        'https://media.example.test/master.m3u8',
+        candidateHeaders,
+        'https://cdn.example.test/subtitle-1.vtt'
+      )
+    ).toEqual({});
+  });
+
   test('downloads only the selected subtitle track', () => {
     expect(
       subtitleTracksForDownload({

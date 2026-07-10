@@ -21,3 +21,27 @@ export function downloadableRequestHeaders(headers: Record<string, string>): Rec
     })
   );
 }
+
+export function requestHeadersForUrl(
+  headers: Record<string, string>,
+  capturedUrl: string,
+  targetUrl: string
+): Record<string, string> {
+  return sameOrigin(capturedUrl, targetUrl) ? { ...headers } : {};
+}
+
+export function requestHeadersForUrls(
+  headers: Record<string, string>,
+  capturedUrl: string,
+  targetUrls: string[]
+): Record<string, string> {
+  return targetUrls.every((targetUrl) => sameOrigin(capturedUrl, targetUrl)) ? { ...headers } : {};
+}
+
+function sameOrigin(left: string, right: string): boolean {
+  try {
+    return new URL(left).origin === new URL(right).origin;
+  } catch {
+    return false;
+  }
+}
