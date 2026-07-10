@@ -117,7 +117,8 @@ function xmlText(value: unknown): string | null {
     return null;
   }
 
-  return text.trim();
+  const trimmed = text.trim();
+  return trimmed === '' ? null : trimmed;
 }
 
 export function selectBestDashRepresentation(manifest: string, manifestUrl: string): DashRepresentation | null {

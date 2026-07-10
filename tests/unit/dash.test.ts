@@ -130,4 +130,17 @@ describe('DASH parsing', () => {
 
     expect(parseDashRepresentations(segmentedManifest, 'https://example.test/manifest.mpd')).toEqual([]);
   });
+
+  test('does not treat a blank BaseURL as a playable representation URL', () => {
+    const blankBaseManifest = `<?xml version="1.0"?>
+<MPD>
+  <Period>
+    <AdaptationSet contentType="video">
+      <Representation id="blank" bandwidth="2200000"><BaseURL>   </BaseURL></Representation>
+    </AdaptationSet>
+  </Period>
+</MPD>`;
+
+    expect(parseDashRepresentations(blankBaseManifest, 'https://example.test/manifest.mpd')).toEqual([]);
+  });
 });

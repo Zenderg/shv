@@ -38,6 +38,12 @@ describe('DownloadEngine ffmpeg helpers', () => {
     expect(args).toEqual(expect.arrayContaining(['-reconnect', '1', '-reconnect_on_network_error', '1']));
   });
 
+  test('rejects DASH input without a direct media representation', () => {
+    expect(() => buildDashFfmpegArgs(null, null, {}, '/work/source')).toThrow(
+      'DASH manifest did not include a playable media representation'
+    );
+  });
+
   test('builds HLS ffmpeg args with reconnects but no EOF reconnects or persistent segment connections', () => {
     const args = buildHlsFfmpegArgs(
       'https://media.example.test/playlist.m3u8',
