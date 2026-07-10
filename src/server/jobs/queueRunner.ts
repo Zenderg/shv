@@ -23,8 +23,10 @@ class DownloadStalledError extends Error {
 
 export class QueueRunner {
   private readonly activeControllers = new Map<string, AbortController>();
+  private draining: Promise<void> | null = null;
   private running = false;
-  private timer: NodeJS.Timeout | null = null;
+  private started = false;
+  private wakeRequested = false;
 
   constructor(
     private readonly config: AppConfig,
@@ -39,17 +41,17 @@ export class QueueRunner {
   ) {}
 
   start(): void {
-    this.timer = setInterval(() => {
-      void this.tick();
-    }, 1500);
-    void this.tick();
+    if (this.started) {
+      return;
+    }
+    this.started = true;
+    this.jobs.on('runnable', this.requestDrain);
+    this.requestDrain();
   }
 
   stop(): void {
-    if (this.timer) {
-      clearInterval(this.timer);
-      this.timer = null;
-    }
+    this.started = false;
+    this.jobs.off('runnable', this.requestDrain);
   }
 
   cancel(jobId: string) {
@@ -64,12 +66,41 @@ export class QueueRunner {
   }
 
   async tick(): Promise<void> {
-    if (this.running) {
+    await this.runNext();
+  }
+
+  private readonly requestDrain = (): void => {
+    if (!this.started) {
       return;
+    }
+    this.wakeRequested = true;
+    if (this.draining) {
+      return;
+    }
+    this.draining = this.drain().finally(() => {
+      this.draining = null;
+      if (this.wakeRequested) {
+        this.requestDrain();
+      }
+    });
+  };
+
+  private async drain(): Promise<void> {
+    do {
+      this.wakeRequested = false;
+      while (this.started && (await this.runNext())) {
+        // Keep draining jobs that were already queued before the previous job completed.
+      }
+    } while (this.started && this.wakeRequested);
+  }
+
+  private async runNext(): Promise<boolean> {
+    if (this.running) {
+      return false;
     }
     const job = this.jobs.nextRunnableJob();
     if (!job) {
-      return;
+      return false;
     }
 
     this.running = true;
@@ -78,6 +109,7 @@ export class QueueRunner {
     } finally {
       this.running = false;
     }
+    return true;
   }
 
   private async process(jobId: string): Promise<void> {
