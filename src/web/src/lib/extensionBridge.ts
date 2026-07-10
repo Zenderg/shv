@@ -2,15 +2,15 @@ import {
   DEV_SOURCE_EXTENSION_ID,
   PROD_SOURCE_EXTENSION_ID,
   type SourceExtensionKind,
-  sourceExtensionTargetForOrigin
+  sourceExtensionProfile
 } from '../../../shared/sourceExtension';
 
-export { DEV_SOURCE_EXTENSION_ID, PROD_SOURCE_EXTENSION_ID, sourceExtensionTargetForOrigin };
+export { DEV_SOURCE_EXTENSION_ID, PROD_SOURCE_EXTENSION_ID };
 
 export const SOURCE_EXTENSION_ID = PROD_SOURCE_EXTENSION_ID;
 export const SOURCE_EXTENSION_REQUIRED_VERSION = '1.0.44';
 export const SOURCE_EXTENSION_PROTOCOL_VERSION = 1;
-export const SOURCE_EXTENSION_DOWNLOAD_PATH = sourceExtensionTargetForOrigin(currentWindowOrigin()).downloadPath;
+export const SOURCE_EXTENSION_DOWNLOAD_PATH = sourceExtensionProfile('prod').downloadPath;
 
 export interface ExtensionHandshake {
   installed: true;
@@ -188,11 +188,7 @@ async function sendContentScriptBridgeMessage<T>(message: unknown, profile: Sour
 }
 
 function currentSourceExtensionId(profile: SourceExtensionKind = 'prod'): string {
-  return sourceExtensionTargetForOrigin(currentWindowOrigin(), profile).id;
-}
-
-function currentWindowOrigin(): string {
-  return typeof window === 'undefined' ? 'https://shv.local' : window.location.origin;
+  return sourceExtensionProfile(profile).id;
 }
 
 function createBridgeRequestId(): string {

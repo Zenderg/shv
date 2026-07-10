@@ -1,11 +1,13 @@
-import type { SourceExtensionKind } from '../../../../shared/sourceExtension';
+import {
+  sourceExtensionProfile as getSourceExtensionProfile,
+  type SourceExtensionKind
+} from '../../../../shared/sourceExtension';
 import { DialogBackdrop, DialogClose, DialogTitle } from '../../components/DialogBackdrop';
 import { CloseIcon } from '../../components/icons';
 import type { DownloadJob } from '../../lib/api';
 import {
   SOURCE_EXTENSION_PROTOCOL_VERSION,
   SOURCE_EXTENSION_REQUIRED_VERSION,
-  sourceExtensionTargetForOrigin,
   type ExtensionStatus
 } from '../../lib/extensionBridge';
 import { safeHostname } from '../../utils/format';
@@ -27,7 +29,7 @@ export function ExtensionInstallDialog({
 }) {
   const isOutdated = status.kind === 'outdated';
   const dialogTitle = isOutdated ? 'Update browser extension' : 'Install browser extension';
-  const extensionTarget = sourceExtensionTargetForOrigin(window.location.origin, sourceExtensionProfile);
+  const extensionTarget = getSourceExtensionProfile(sourceExtensionProfile);
   return (
     <DialogBackdrop onClose={onClose}>
       <section className="extensionDialog">
