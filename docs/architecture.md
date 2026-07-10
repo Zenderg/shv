@@ -82,7 +82,7 @@ The filesystem owns media bytes; SQLite owns the index, queue, candidate, and me
 
 ## Queue Contracts
 
-`QueueRunner` serializes active work:
+`QueueRunner` runs up to two active jobs by default (configure `MAX_CONCURRENT_JOBS` to change the limit). Each job follows this pipeline independently:
 
 ```text
 analyze -> download -> process -> library insert
