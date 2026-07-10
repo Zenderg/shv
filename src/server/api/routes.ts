@@ -183,11 +183,11 @@ export function createRouter(services: RouteServices): Router {
   });
 
   router.post('/api/jobs/:id/retry', (request, response) => {
-    response.json(services.jobs.retry(request.params.id));
+    response.json(services.jobs.retry(paramId(request)));
   });
 
   router.post('/api/jobs/:id/cancel', (request, response) => {
-    response.json(services.queueRunner.cancel(request.params.id));
+    response.json(services.queueRunner.cancel(paramId(request)));
   });
 
   router.delete(
@@ -201,17 +201,18 @@ export function createRouter(services: RouteServices): Router {
   );
 
   router.get('/api/jobs/:id/candidates', (request, response) => {
-    response.json(services.jobs.listCandidates(request.params.id));
+    response.json(services.jobs.listCandidates(paramId(request)));
   });
 
   router.post('/api/jobs/:id/extension-candidates', (request, response) => {
     const body = z.object({ candidates: z.array(candidateDraftSchema()).max(200) }).parse(request.body);
-    response.json(services.jobs.replaceExtensionCandidates(request.params.id, body.candidates));
+    response.json(services.jobs.replaceExtensionCandidates(paramId(request), body.candidates));
   });
 
   router.post('/api/jobs/:id/cookies', (request, response) => {
+    const jobId = paramId(request);
     const body = z.object({ cookies: z.array(browserCookieSchema()).max(400) }).parse(request.body);
-    if (!services.jobs.get(request.params.id)) {
+    if (!services.jobs.get(jobId)) {
       response.status(404).json({ error: 'job_not_found' });
       return;
     }
@@ -227,21 +228,21 @@ export function createRouter(services: RouteServices): Router {
 
   router.post('/api/jobs/:id/select-candidate', (request, response) => {
     const body = z.object({ candidateId: z.string().uuid() }).parse(request.body);
-    response.json(services.jobs.selectCandidate(request.params.id, body.candidateId));
+    response.json(services.jobs.selectCandidate(paramId(request), body.candidateId));
   });
 
   router.post('/api/jobs/:id/select-subtitle-track', (request, response) => {
     const body = z.object({ subtitleTrackUrl: z.string().url().nullable() }).parse(request.body);
-    response.json(services.jobs.selectSubtitleTrack(request.params.id, body.subtitleTrackUrl));
+    response.json(services.jobs.selectSubtitleTrack(paramId(request), body.subtitleTrackUrl));
   });
 
   router.post('/api/jobs/:id/replace-source', (request, response) => {
     const body = z.object({ sourceUrl: z.string().url() }).parse(request.body);
-    response.json(services.jobs.replaceSource(request.params.id, body.sourceUrl));
+    response.json(services.jobs.replaceSource(paramId(request), body.sourceUrl));
   });
 
   router.get('/api/jobs/:id/screenshot', (request, response) => {
-    const screenshotPath = path.join(services.config.appDataRoot, 'manual-screenshots', `${request.params.id}.png`);
+    const screenshotPath = path.join(services.config.appDataRoot, 'manual-screenshots', `${paramId(request)}.png`);
     if (!fs.existsSync(screenshotPath)) {
       response.status(404).end();
       return;
@@ -619,7 +620,7 @@ function asyncRoute(handler: (request: Request, response: Response) => Promise<v
 }
 
 function paramId(request: Request): string {
-  return String(request.params.id);
+  return z.string().uuid().parse(String(request.params.id));
 }
 
 export function errorHandler(error: unknown, _request: Request, response: Response, next: NextFunction): void {
