@@ -32,6 +32,8 @@ For the in-app Codex browser, `http://127.0.0.1:8080/` is usually the most relia
 
 The repository `docker-compose.yml` sets `SOURCE_EXTENSION_PROFILE=dev` so local development expects the development extension id and package. Production deployments use the production extension profile by default.
 
+The Compose service runs with a read-only root filesystem. Persistent application state belongs in the mounted `./data` folders; `/tmp` is an in-memory temporary filesystem for Chromium and other transient runtime files.
+
 ## Codex Sandbox Notes
 
 - Docker Compose needs access to the Docker socket, so `docker compose up -d --build` and `docker compose ps` may need sandbox escalation.
