@@ -40,6 +40,8 @@ SOURCE_EXTENSION_PROFILE=dev docker compose up -d --build
 That profile expects the development extension id and package. Stop the dev-profile container before returning to the
 default production profile.
 
+The Compose service runs with a read-only root filesystem. Persistent application state belongs in the mounted `./data` folders; `/tmp` is an in-memory temporary filesystem for Chromium and other transient runtime files.
+
 ## Codex Sandbox Notes
 
 - Docker Compose needs access to the Docker socket, so `docker compose up -d --build` and `docker compose ps` may need sandbox escalation.
