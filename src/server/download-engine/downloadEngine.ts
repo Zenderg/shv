@@ -248,7 +248,7 @@ export class DownloadEngine {
   ): Promise<DownloadResult> {
     const manifest = await fetchText(candidate.url, candidate.headers, signal);
     const selected = selectBestDashRenditions(manifest, candidate.url);
-    await this.runFfmpeg(buildDashFfmpegArgs(selected.video, selected.audio, candidate.headers, outputPath, candidate.url), onProgress, signal);
+    await this.runFfmpeg(buildDashFfmpegArgs(selected.video, selected.audio, candidate.headers, outputPath), onProgress, signal);
     return { filePath: outputPath, bytesWritten: fs.statSync(outputPath).size };
   }
 
@@ -461,12 +461,11 @@ export function buildDashFfmpegArgs(
   video: DashRepresentation | null,
   audio: DashRepresentation | null,
   headers: Record<string, string>,
-  outputPath: string,
-  fallbackInput?: string
+  outputPath: string
 ): string[] {
   const headerArgs = headersToFfmpeg(headers);
   const args = ['-y'];
-  const primaryInput = video?.baseUrl ?? fallbackInput;
+  const primaryInput = video?.baseUrl;
   if (!primaryInput) {
     throw new Error('DASH manifest did not include a playable media representation');
   }
