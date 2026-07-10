@@ -30,7 +30,7 @@ describe('CSRF protection', () => {
   });
 
   test('accepts state-changing requests with the CSRF token', async () => {
-    const { app, queueRunner } = createAppWithCsrfToken('test-csrf-token');
+    const { app, liveBrowser, queueRunner } = createAppWithCsrfToken('test-csrf-token');
 
     await request(app)
       .post(`/api/jobs/${jobId}/cancel`)
@@ -38,6 +38,7 @@ describe('CSRF protection', () => {
       .expect(200);
 
     expect(queueRunner.cancel).toHaveBeenCalledWith(jobId);
+    expect(liveBrowser.stop).toHaveBeenCalledWith(jobId);
   });
 
   test('rejects traversal text in job ids before deletion handlers run', async () => {
@@ -58,6 +59,9 @@ function createAppWithCsrfToken(csrfToken: string) {
     cancel: vi.fn((id: string) => ({ id, status: 'canceled' })),
     delete: vi.fn()
   };
+  const liveBrowser = {
+    stop: vi.fn().mockResolvedValue(undefined)
+  };
   app.use(express.json());
   app.use(createRouter({
     categories: {} as never,
@@ -77,11 +81,11 @@ function createAppWithCsrfToken(csrfToken: string) {
     csrfToken,
     extensionDebug: {} as never,
     jobs: {} as never,
-    liveBrowser: {} as never,
+    liveBrowser: liveBrowser as never,
     mediaFiles: {} as never,
     mediaLibrary: {} as never,
     queueRunner: queueRunner as never
   } as never));
   app.use(errorHandler);
-  return { app, queueRunner };
+  return { app, liveBrowser, queueRunner };
 }
