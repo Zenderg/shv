@@ -7,6 +7,11 @@ const contentScriptSource = readFileSync(resolve(process.cwd(), 'src/extension/s
 const diagnosticsSource = readFileSync(resolve(process.cwd(), 'src/extension/source-helper/Diagnostics.svelte'), 'utf8');
 const sidebarStylesSource = readFileSync(resolve(process.cwd(), 'src/extension/source-helper/sidebarStyles.ts'), 'utf8');
 const appSource = readFileSync(resolve(process.cwd(), 'src/web/src/App.tsx'), 'utf8');
+const queuePanelSource = readFileSync(resolve(process.cwd(), 'src/web/src/features/queue/QueuePanel.tsx'), 'utf8');
+const extensionInstallDialogSource = readFileSync(
+  resolve(process.cwd(), 'src/web/src/features/dialogs/ExtensionInstallDialog.tsx'),
+  'utf8'
+);
 
 function cssBlock(selector: string) {
   const pattern = new RegExp(`${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} \\{([\\s\\S]*?)\\n    \\}`);
@@ -96,8 +101,8 @@ describe('source helper sidebar source', () => {
   });
 
   test('lets the main queue UI choose one detected subtitle track or continue without subtitles', () => {
-    expect(appSource).toContain('needs_subtitle_selection');
-    expect(appSource).toContain('No subtitles');
+    expect(queuePanelSource).toContain('needs_subtitle_selection');
+    expect(queuePanelSource).toContain('No subtitles');
     expect(appSource).toContain('selectSubtitleTrack');
   });
 
@@ -127,14 +132,14 @@ describe('source helper sidebar source', () => {
   });
 
   test('does not surface backend candidate counts in the main choose-source action', () => {
-    expect(appSource).toContain('Choose source');
-    expect(appSource).not.toContain('Choose source (');
+    expect(queuePanelSource).toContain('Choose source');
+    expect(queuePanelSource).not.toContain('Choose source (');
   });
 
   test('surfaces broad extension permissions in the install dialog', () => {
-    expect(appSource).toContain('<all_urls>');
-    expect(appSource).toContain('webRequest');
-    expect(appSource).toContain('cookies');
-    expect(appSource).toContain('Use source');
+    expect(extensionInstallDialogSource).toContain('<all_urls>');
+    expect(extensionInstallDialogSource).toContain('webRequest');
+    expect(extensionInstallDialogSource).toContain('cookies');
+    expect(extensionInstallDialogSource).toContain('Use source');
   });
 });

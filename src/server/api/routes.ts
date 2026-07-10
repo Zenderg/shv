@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import express, { type Request, type Response, type Router } from 'express';
+import express, { type NextFunction, type Request, type Response, type Router } from 'express';
 import mime from 'mime-types';
 import { z } from 'zod';
 import type { CandidateDraft } from '../candidate-detection/candidateDetection.js';
@@ -126,13 +126,13 @@ export function createRouter(services: RouteServices): Router {
     response.status(204).end();
   });
 
-  router.get('/media/:id', (request, response) => {
+  router.get('/media/:id', (request, response, next) => {
     const item = services.mediaLibrary.get(request.params.id);
     if (!item) {
       response.status(404).end();
       return;
     }
-    streamFile(request, response, services.mediaFiles.absoluteMediaPath(item.relativePath), item.filename);
+    streamFile(request, response, next, services.mediaFiles.absoluteMediaPath(item.relativePath), item.filename);
   });
 
   router.get('/thumbnails/:id', (request, response) => {
@@ -623,7 +623,11 @@ function paramId(request: Request): string {
   return String(request.params.id);
 }
 
-export function errorHandler(error: unknown, _request: Request, response: Response, _next: (error?: unknown) => void): void {
+export function errorHandler(error: unknown, _request: Request, response: Response, next: NextFunction): void {
+  if (response.headersSent) {
+    next(error);
+    return;
+  }
   if (error instanceof z.ZodError) {
     response.status(400).json({ error: 'validation_failed', issues: error.issues });
     return;
@@ -636,7 +640,7 @@ export function errorHandler(error: unknown, _request: Request, response: Respon
   response.status(500).json({ error: 'server_error', message: 'Internal server error' });
 }
 
-function streamFile(request: Request, response: Response, filePath: string, filename: string): void {
+function streamFile(request: Request, response: Response, next: NextFunction, filePath: string, filename: string): void {
   const stat = fs.statSync(filePath);
   const range = request.headers.range;
   const contentType = mime.lookup(filename) || 'application/octet-stream';
@@ -646,7 +650,7 @@ function streamFile(request: Request, response: Response, filePath: string, file
 
   if (!range) {
     response.setHeader('Content-Length', stat.size);
-    fs.createReadStream(filePath).pipe(response);
+    pipeFileStream(fs.createReadStream(filePath), response, next);
     return;
   }
 
@@ -665,7 +669,21 @@ function streamFile(request: Request, response: Response, filePath: string, file
   response.status(206);
   response.setHeader('Content-Range', `bytes ${start}-${end}/${stat.size}`);
   response.setHeader('Content-Length', end - start + 1);
-  fs.createReadStream(filePath, { start, end }).pipe(response);
+  pipeFileStream(fs.createReadStream(filePath, { start, end }), response, next);
+}
+
+function pipeFileStream(stream: fs.ReadStream, response: Response, next: NextFunction): void {
+  stream.on('error', (error) => {
+    if (!response.headersSent) {
+      response.removeHeader('Accept-Ranges');
+      response.removeHeader('Content-Disposition');
+      response.removeHeader('Content-Length');
+      response.removeHeader('Content-Range');
+      response.removeHeader('Content-Type');
+    }
+    next(error);
+  });
+  stream.pipe(response);
 }
 
 export function buildContentDisposition(filename: string): string {

@@ -13,6 +13,7 @@ import { downloadableRequestHeaders } from '../utils/downloadRequestHeaders.js';
 
 export interface AnalysisResult {
   candidates: CandidateDraft[];
+  automaticCandidateUrl: string | null;
   titleHint: string | null;
   diagnostics: string[];
   screenshotPath: string | null;
@@ -27,7 +28,13 @@ export class BrowserAnalyzer {
     throwIfAborted(signal);
     const direct = await this.detectDirect(url, diagnostics, signal);
     if (direct && direct.confidence >= 0.86) {
-      return { candidates: [direct], titleHint: null, diagnostics, screenshotPath: null };
+      return {
+        candidates: [direct],
+        automaticCandidateUrl: direct.url,
+        titleHint: null,
+        diagnostics,
+        screenshotPath: null
+      };
     }
 
     const candidates = new Map<string, CandidateDraft>();
@@ -90,6 +97,7 @@ export class BrowserAnalyzer {
 
       return {
         candidates: [...candidates.values()].sort((left, right) => right.confidence - left.confidence),
+        automaticCandidateUrl: null,
         titleHint: titleHint || null,
         diagnostics,
         screenshotPath: fs.existsSync(screenshotPath) ? screenshotPath : null
@@ -100,7 +108,13 @@ export class BrowserAnalyzer {
       }
       await drainResponseCaptures(pendingResponseCaptures);
       diagnostics.push(`Browser analysis failed: ${error instanceof Error ? error.message : String(error)}`);
-      return { candidates: [...candidates.values()], titleHint: null, diagnostics, screenshotPath: null };
+      return {
+        candidates: [...candidates.values()],
+        automaticCandidateUrl: null,
+        titleHint: null,
+        diagnostics,
+        screenshotPath: null
+      };
     } finally {
       removeAbortListener();
       await context?.close().catch(() => undefined);

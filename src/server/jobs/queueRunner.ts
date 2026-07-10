@@ -108,7 +108,7 @@ export class QueueRunner {
         this.throwIfCanceled(job.id, signal);
         const candidates = this.jobs.saveCandidates(job.id, analysis.candidates);
         job = this.jobs.transition(job.id, 'analyzing', 0.18, { titleHint: analysis.titleHint ?? titleFromUrl(job.sourceUrl) });
-        selected = chooseAutomaticCandidate(candidates, job.sourceUrl);
+        selected = chooseAutomaticCandidate(candidates, analysis.automaticCandidateUrl);
         if (!selected) {
           this.jobs.transition(job.id, 'needs_manual_selection', 0.2, {
             errorCode: 'manual_selection_required',
@@ -500,9 +500,12 @@ function downloadStallTimeoutMs(config: AppConfig): number {
   return config.downloadStallTimeoutMs ?? 120_000;
 }
 
-function chooseAutomaticCandidate(candidates: MediaCandidate[], sourceUrl: string): MediaCandidate | null {
+function chooseAutomaticCandidate(candidates: MediaCandidate[], automaticCandidateUrl: string | null): MediaCandidate | null {
+  if (!automaticCandidateUrl) {
+    return null;
+  }
   const confident = candidates.filter((candidate) => candidate.confidence >= 0.85);
-  return confident.find((candidate) => isSameSourceUrl(candidate.url, sourceUrl)) ?? null;
+  return confident.find((candidate) => isSameSourceUrl(candidate.url, automaticCandidateUrl)) ?? null;
 }
 
 function isSameSourceUrl(candidateUrl: string, sourceUrl: string): boolean {

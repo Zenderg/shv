@@ -5,6 +5,11 @@ describe('candidate detection', () => {
   test('rejects browser-local and explicit byte-range media URLs', () => {
     expect(classifyMediaUrl('blob:https://example.test/video-id', 'video/mp4')).toBeNull();
     expect(classifyMediaUrl('https://media.example.test/video?bytes=0-6402', 'video/webm')).toBeNull();
+    expect(classifyMediaUrl('https://media.example.test/video?range=0-6402', 'video/webm')).toBeNull();
+  });
+
+  test('accepts non-range bytes query parameters on complete video URLs', () => {
+    expect(classifyMediaUrl('https://media.example.test/video?bytes=1234', 'video/webm')?.kind).toBe('direct');
   });
 
   test('requires a video extension before accepting generic octet-stream responses', () => {

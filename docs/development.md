@@ -30,7 +30,17 @@ http://localhost:8080
 
 For the in-app Codex browser, `http://127.0.0.1:8080/` is usually the most reliable URL.
 
-The repository `docker-compose.yml` sets `SOURCE_EXTENSION_PROFILE=dev` so local development expects the development extension id and package. Production deployments use the production extension profile by default.
+The repository `docker-compose.yml` defaults to `SOURCE_EXTENSION_PROFILE=prod`, so routine Compose use does not expose
+development extension diagnostics. To debug the extension locally, opt in explicitly:
+
+```bash
+SOURCE_EXTENSION_PROFILE=dev docker compose up -d --build
+```
+
+That profile expects the development extension id and package. Stop the dev-profile container before returning to the
+default production profile.
+
+The Compose service runs with a read-only root filesystem. Persistent application state belongs in the mounted `./data` folders; `/tmp` is an in-memory temporary filesystem for Chromium and other transient runtime files.
 
 ## Codex Sandbox Notes
 

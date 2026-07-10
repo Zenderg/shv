@@ -1,0 +1,68 @@
+@media (max-width: 1040px) {
+  .shell,
+  .topbar {
+    grid-template-columns: 1fr;
+  }
+
+  .mobileNavigation {
+    display: block;
+    position: sticky;
+    top: 0;
+    z-index: 30;
+  }
+
+  .shell > .sidebar,
+  .topbar {
+    display: none;
+  }
+
+  .shell {
+    height: auto;
+    min-height: auto;
+    overflow: visible;
+  }
+
+  .workspace {
+    overflow: visible;
+  }
+}
+
+@media (max-width: 680px) {
+  .workspace,
+  .sidebar {
+    padding: 18px;
+  }
+
+  .libraryGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .topbar {
+    align-items: stretch;
+  }
+
+  .mobileHeader {
+    padding-inline: 12px;
+  }
+
+  h1 {
+    font-size: 32px;
+  }
+
+  .subtitleSelection {
+    grid-template-columns: 1fr;
+  }
+
+  .topbarActions {
+    justify-content: stretch;
+  }
+
+  .primaryButton {
+    justify-content: center;
+    width: 100%;
+  }
+
+  .dialogBackdrop {
+    padding: 12px;
+  }
+}

@@ -56,7 +56,7 @@ The default downloader is source-agnostic:
 - preserve detected subtitle-track metadata through manual source selection and burn the user's chosen subtitle track into the saved video;
 - remux when possible and transcode only when needed for browser playback.
 
-Automatic download may proceed only when the submitted URL itself is a confident media source. Media candidates discovered inside a page through HTML inspection, Playwright network capture, or extension capture require manual source selection before download.
+Automatic download may proceed only when the submitted URL's direct probe identifies a confident media source. A redirect target reached by that probe is part of the submitted source. Media candidates discovered later through HTML inspection, Playwright network capture, or extension capture require manual source selection before download.
 
 Site-specific engines are allowed only as explicit extractors for known complex platforms where generic replay is not reliable. YouTube currently uses `yt-dlp` behind the backend source-extractor boundary because some `googlevideo` playback URLs are bound to player/runtime details that cannot be replayed by the generic downloader. Do not route YouTube through extension-side file downloads.
 

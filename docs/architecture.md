@@ -43,6 +43,15 @@ The React UI is category-first. It contains:
 - video playback dialog;
 - media rename, move, and delete actions.
 
+Frontend ownership is split by responsibility under `src/web/src`: `components` owns shared shell/navigation and
+accessible primitives, `features` owns library, queue, and dialog flows, `lib` owns API/extension boundaries, and
+`styles` mirrors those surfaces with a small token layer. TanStack Query owns remote category, media, runtime-config,
+and queue state, including queue polling and targeted invalidation. Radix primitives own modal/dialog and dropdown-menu
+keyboard/focus behavior while project CSS remains the visual source of truth.
+
+Desktop keeps persistent category navigation. At tablet/mobile widths the same actions move into a focus-trapped drawer
+so category volume cannot push the current library or queue below a long navigation block.
+
 There is intentionally no login, nested categories, duplicate detection, global search, or public-internet deployment assumption.
 
 ## Library Contracts
@@ -87,7 +96,7 @@ The queue UI shows total job progress and progress within the current stage. Dow
 
 Runnable, active, problem, and canceled jobs are returned by `/api/queue`; only `completed` jobs leave the active queue UI automatically.
 
-Automatic analysis chooses a candidate only when the submitted source URL itself is classified as a confident media source. Confident candidates discovered inside a page through HTML inspection, Playwright network capture, or extension capture still move the job to `needs_manual_selection` so the user explicitly confirms which page source to download.
+Automatic analysis chooses a candidate only when the submitted source URL's direct probe classifies it, or its redirect target, as a confident media source. Confident candidates discovered later through HTML inspection, Playwright network capture, or extension capture still move the job to `needs_manual_selection` so the user explicitly confirms which page source to download.
 
 Manual selection supports choosing a candidate or replacing the job source URL via `/api/jobs/:id/replace-source`.
 
@@ -129,7 +138,9 @@ Direct `browser-request` media candidates are intentionally downloaded with the 
 
 Captured request headers are origin-bound. The downloader replays them only to the origin of the URL that supplied them; cross-origin HLS variants, segments, keys, init maps, DASH renditions, subtitle playlists, and subtitle segments receive no captured headers. When ffmpeg must own a complex HLS playlist, any cross-origin child resource removes captured headers from the whole ffmpeg input because ffmpeg accepts only one header set for that playlist.
 
-DASH manifests are XML, so representation URLs may contain escaped query separators such as `&amp;`; the downloader decodes those before invoking ffmpeg.
+DASH manifests are parsed as XML rather than scanned with regular expressions. Namespace-prefixed and self-closing representation elements are supported, comments are ignored, and escaped query separators such as `&amp;` are decoded before invoking ffmpeg.
+
+The built-in DASH downloader currently supports representations with a direct `BaseURL` on the representation or its adaptation set. `SegmentTemplate` and `SegmentList` manifests are not expanded into segment downloads; representations without a playable `BaseURL` must be rejected instead of treating the manifest URL itself as media input.
 
 HLS/DASH downloads write to an extensionless work file, so ffmpeg remux calls pass an explicit output muxer.
 

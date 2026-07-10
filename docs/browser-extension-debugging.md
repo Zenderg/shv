@@ -7,7 +7,7 @@ Use this document when a future agent needs to understand why the extension capt
 ## First Principles
 
 - Prefer evidence from the user's real browser over assumptions. The extension runs inside the user's Chromium profile, not inside Codex, so Codex cannot directly inspect extension DevTools, current cookies, real page DOM, or player internals unless the app/extension explicitly reports them.
-- Use the development extension profile for capture debugging. The local Docker Compose file sets `SOURCE_EXTENSION_PROFILE=dev`, and the dev profile exposes `GET /api/debug/extension/events`.
+- Use the development extension profile for capture debugging. Opt in with `SOURCE_EXTENSION_PROFILE=dev docker compose up`; the dev profile exposes `GET /api/debug/extension/events`.
 - Keep the capture model narrow: the sidebar captures candidates around active playback, not every media-looking request on the page. Whole-page passive collection creates noisy, stale, and wrong candidates.
 - Do not infer source quality from URL names, query parameters, response size, CDN hostnames, or bitrate-like path fragments. Show `resolution unavailable` unless the app has real media metadata.
 - Do not infer the chosen subtitle track from arbitrary source-player UI. Detect available subtitle tracks, let the app queue UI ask the user which one to use, and treat `No subtitles` as an explicit valid choice.
@@ -30,10 +30,10 @@ Do not hand-edit `extension/chrome-source-helper/content-script.js` for durable 
 
 ## Debugging Workflow
 
-1. Confirm the app is running through Docker Compose, not a host-local dev server:
+1. Start the app through Docker Compose with the development profile, not a host-local dev server:
 
 ```bash
-docker compose up -d --build
+SOURCE_EXTENSION_PROFILE=dev docker compose up -d --build
 ```
 
 2. Confirm the dev extension package is available:

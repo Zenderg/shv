@@ -303,6 +303,7 @@ describe('QueueRunner', () => {
             headers: { referer: 'https://example.test/watch/embedded-player' }
           }
         ],
+        automaticCandidateUrl: null,
         diagnostics: [],
         screenshotPath: null,
         titleHint: 'Embedded Player'
@@ -332,6 +333,74 @@ describe('QueueRunner', () => {
     expect(updated.status).toBe('needs_manual_selection');
     expect(updated.selectedCandidateId).toBeNull();
     expect(downloaderCalled).toBe(false);
+  });
+
+  test('automatically selects a confident direct candidate after a redirect', async () => {
+    const { categories, config, jobs } = createServices();
+    const category = categories.create('test');
+    const job = jobs.create('https://example.test/video', category.id);
+    const redirectedUrl = 'https://cdn.example.test/video.mp4';
+    const analyzer = {
+      analyze: async () => ({
+        candidates: [candidate(redirectedUrl)],
+        automaticCandidateUrl: redirectedUrl,
+        diagnostics: [],
+        screenshotPath: null,
+        titleHint: null
+      })
+    } satisfies Pick<BrowserAnalyzer, 'analyze'>;
+    let downloadedUrl: string | null = null;
+    const downloader = {
+      download: async (selected: MediaCandidate, outputPath: string) => {
+        downloadedUrl = selected.url;
+        fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+        fs.writeFileSync(outputPath, 'redirected-video');
+        return { bytesWritten: 16, filePath: outputPath };
+      }
+    } satisfies Pick<DownloadEngine, 'download'>;
+    const processor = {
+      normalize: async (_inputPath, outputPath, thumbnailPath) => {
+        fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+        fs.mkdirSync(path.dirname(thumbnailPath), { recursive: true });
+        fs.writeFileSync(outputPath, 'normalized');
+        return {
+          audioCodec: 'aac',
+          browserFriendly: true,
+          container: 'mov,mp4,m4a,3gp,3g2,mj2',
+          durationSeconds: 1,
+          height: 1080,
+          outputPath,
+          processingStrategy: 'transcoded',
+          sizeBytes: 10,
+          thumbnailPath: null,
+          videoCodec: 'h264',
+          width: 1920
+        };
+      }
+    } satisfies Pick<MediaProcessor, 'normalize'>;
+    const mediaFiles = {
+      finalVideoPath: () => path.join(config.libraryRoot, 'test', 'redirected.mp4'),
+      thumbnailPath: () => path.join(config.thumbnailsRoot, `${job.id}.jpg`)
+    } satisfies Pick<MediaFiles, 'finalVideoPath' | 'thumbnailPath'>;
+    const mediaLibrary = {
+      create: () => mediaItem(category.id, job.id, job.sourceUrl)
+    } satisfies Pick<MediaLibraryService, 'create'>;
+    const runner = new QueueRunner(
+      config,
+      jobs,
+      analyzer as unknown as BrowserAnalyzer,
+      downloader as unknown as DownloadEngine,
+      processor as unknown as MediaProcessor,
+      categories,
+      mediaFiles as unknown as MediaFiles,
+      mediaLibrary as unknown as MediaLibraryService
+    );
+
+    await runner.tick();
+
+    expect(downloadedUrl).toBe(redirectedUrl);
+    expect(jobs.requireJob(job.id).status).toBe('completed');
+    expect(jobs.requireJob(job.id).selectedCandidateId).not.toBeNull();
   });
 
   test('uses a source extractor for YouTube even when a stale manual candidate is selected', async () => {

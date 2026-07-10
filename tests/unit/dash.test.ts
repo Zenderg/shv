@@ -39,13 +39,13 @@ describe('DASH parsing', () => {
     expect(selected?.baseUrl).toBe('https://media.example.test/video?expires=1&type=7&sig=abc');
   });
 
-  test('decodes CDATA BaseURL values from contentType adaptation sets', () => {
+  test('reads literal CDATA BaseURL values from contentType adaptation sets', () => {
     const cdataManifest = `<?xml version="1.0"?>
 <MPD>
   <Period>
     <AdaptationSet contentType="video">
       <Representation id="720" bandwidth="2200000" width="1280" height="720">
-        <BaseURL><![CDATA[../video/720.mp4?token=a&amp;b]]></BaseURL>
+        <BaseURL><![CDATA[../video/720.mp4?token=a&b]]></BaseURL>
       </Representation>
     </AdaptationSet>
   </Period>
@@ -53,6 +53,22 @@ describe('DASH parsing', () => {
 
     const selected = selectBestDashRepresentation(cdataManifest, 'https://example.test/manifests/manifest.mpd');
     expect(selected?.baseUrl).toBe('https://example.test/video/720.mp4?token=a&b');
+  });
+
+  test('decodes nested entity text exactly once', () => {
+    const nestedEntityManifest = `<?xml version="1.0"?>
+<MPD>
+  <Period>
+    <AdaptationSet contentType="video">
+      <Representation id="nested-entity" bandwidth="2200000">
+        <BaseURL>video&amp;lt;name.mp4</BaseURL>
+      </Representation>
+    </AdaptationSet>
+  </Period>
+</MPD>`;
+
+    const selected = selectBestDashRepresentation(nestedEntityManifest, 'https://example.test/manifest.mpd');
+    expect(selected?.baseUrl).toBe('https://example.test/video&lt;name.mp4');
   });
 
   test('selects separate audio and video renditions when DASH splits streams', () => {
@@ -76,5 +92,55 @@ describe('DASH parsing', () => {
     expect(selected.video?.baseUrl).toBe('https://example.test/1080/video.webm');
     expect(selected.audio?.id).toBe('audio-high');
     expect(selected.audio?.baseUrl).toBe('https://example.test/audio-high.webm');
+  });
+
+  test('parses namespaced self-closing representations and ignores commented markup', () => {
+    const namespacedManifest = `<?xml version="1.0"?>
+<dash:MPD xmlns:dash="urn:mpeg:dash:schema:mpd:2011">
+  <dash:Period>
+    <dash:AdaptationSet contentType="video">
+      <!-- <Representation id="commented" bandwidth="9999999"><BaseURL>wrong.mp4</BaseURL></Representation> -->
+      <dash:BaseURL>video.mp4</dash:BaseURL>
+      <dash:Representation id="self-closing" bandwidth="2200000" width="1280" height="720" />
+    </dash:AdaptationSet>
+  </dash:Period>
+</dash:MPD>`;
+
+    expect(parseDashRepresentations(namespacedManifest, 'https://example.test/manifest.mpd')).toEqual([
+      {
+        id: 'self-closing',
+        bandwidth: 2200000,
+        width: 1280,
+        height: 720,
+        baseUrl: 'https://example.test/video.mp4'
+      }
+    ]);
+  });
+
+  test('does not treat a manifest URL as a playable representation URL', () => {
+    const segmentedManifest = `<?xml version="1.0"?>
+<MPD>
+  <Period>
+    <AdaptationSet contentType="video">
+      <SegmentTemplate media="segment-$Number$.m4s" initialization="init.m4s" />
+      <Representation id="segmented" bandwidth="2200000" />
+    </AdaptationSet>
+  </Period>
+</MPD>`;
+
+    expect(parseDashRepresentations(segmentedManifest, 'https://example.test/manifest.mpd')).toEqual([]);
+  });
+
+  test('does not treat a blank BaseURL as a playable representation URL', () => {
+    const blankBaseManifest = `<?xml version="1.0"?>
+<MPD>
+  <Period>
+    <AdaptationSet contentType="video">
+      <Representation id="blank" bandwidth="2200000"><BaseURL>   </BaseURL></Representation>
+    </AdaptationSet>
+  </Period>
+</MPD>`;
+
+    expect(parseDashRepresentations(blankBaseManifest, 'https://example.test/manifest.mpd')).toEqual([]);
   });
 });

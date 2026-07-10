@@ -257,7 +257,11 @@ export class DownloadEngine {
   ): Promise<DownloadResult> {
     const manifest = await fetchText(candidate.url, candidate.headers, signal);
     const selected = selectBestDashRenditions(manifest, candidate.url);
-    await this.runFfmpeg(buildDashFfmpegArgs(selected.video, selected.audio, candidate.headers, outputPath, candidate.url), onProgress, signal);
+    await this.runFfmpeg(
+      buildDashFfmpegArgs(selected.video, selected.audio, candidate.headers, outputPath, candidate.url),
+      onProgress,
+      signal
+    );
     return { filePath: outputPath, bytesWritten: fs.statSync(outputPath).size };
   }
 
@@ -471,19 +475,18 @@ export function buildDashFfmpegArgs(
   audio: DashRepresentation | null,
   headers: Record<string, string>,
   outputPath: string,
-  fallbackInput?: string
+  capturedManifestUrl: string
 ): string[] {
   const args = ['-y'];
-  const primaryInput = video?.baseUrl ?? fallbackInput;
+  const primaryInput = video?.baseUrl;
   if (!primaryInput) {
     throw new Error('DASH manifest did not include a playable media representation');
   }
 
-  const capturedUrl = fallbackInput ?? primaryInput;
   args.push(
     ...ffmpegNetworkInputArgs(),
     '-headers',
-    headersToFfmpeg(requestHeadersForUrl(headers, capturedUrl, primaryInput)),
+    headersToFfmpeg(requestHeadersForUrl(headers, capturedManifestUrl, primaryInput)),
     '-i',
     primaryInput
   );
@@ -491,7 +494,7 @@ export function buildDashFfmpegArgs(
     args.push(
       ...ffmpegNetworkInputArgs(),
       '-headers',
-      headersToFfmpeg(requestHeadersForUrl(headers, capturedUrl, audio.baseUrl)),
+      headersToFfmpeg(requestHeadersForUrl(headers, capturedManifestUrl, audio.baseUrl)),
       '-i',
       audio.baseUrl,
       '-map',
