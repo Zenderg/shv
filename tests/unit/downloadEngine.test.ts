@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 import {
   DownloadEngine,
   buildDashFfmpegArgs,
@@ -81,6 +81,8 @@ describe('DownloadEngine ffmpeg helpers', () => {
         '1',
         '-reconnect_on_network_error',
         '1',
+        '-max_redirects',
+        '0',
         '-http_persistent',
         '0',
         '-fflags',
@@ -89,6 +91,118 @@ describe('DownloadEngine ffmpeg helpers', () => {
     );
     expect(args.indexOf('-http_persistent')).toBeLessThan(args.indexOf('-i'));
     expect(args).not.toContain('-reconnect_at_eof');
+  });
+
+  test('rejects an unsafe ffmpeg input URL before spawning ffmpeg', () => {
+    expect(() => buildHlsFfmpegArgs('file:///etc/passwd', {}, '/work/source')).toThrow(/HTTP or HTTPS/);
+  });
+
+  test('rejects private HLS and DASH URLs resolved from manifests before requesting them', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'shv-manifest-url-safety-'));
+    const candidate: MediaCandidate = {
+      bitrate: null,
+      confidence: 0.9,
+      contentType: 'application/vnd.apple.mpegurl',
+      discoveredAt: new Date().toISOString(),
+      durationSeconds: null,
+      headers: {},
+      id: 'candidate-id',
+      jobId: 'job-id',
+      kind: 'hls',
+      manifestType: 'hls',
+      resolution: null,
+      sizeBytes: null,
+      subtitleTracks: [],
+      url: 'https://1.1.1.1/master.m3u8'
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nhttp://127.0.0.1/private.m3u8'))
+      .mockResolvedValueOnce(new Response('<MPD><Period><AdaptationSet mimeType="video/mp4"><Representation bandwidth="1"><BaseURL>http://169.254.169.254/video.mp4</BaseURL></Representation></AdaptationSet></Period></MPD>'));
+    vi.stubGlobal('fetch', fetchMock);
+
+    try {
+      await expect(new DownloadEngine().download(candidate, path.join(tempDir, 'source'), () => undefined)).rejects.toThrow(/public address/);
+      await expect(new DownloadEngine().download({ ...candidate, kind: 'dash', manifestType: 'dash' }, path.join(tempDir, 'dash-source'), () => undefined)).rejects.toThrow(
+        /public address/
+      );
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  test('rejects HLS and DASH redirects to private targets before following them', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'shv-manifest-redirect-safety-'));
+    const candidate: MediaCandidate = {
+      bitrate: null,
+      confidence: 0.9,
+      contentType: 'application/vnd.apple.mpegurl',
+      discoveredAt: new Date().toISOString(),
+      durationSeconds: null,
+      headers: {},
+      id: 'candidate-id',
+      jobId: 'job-id',
+      kind: 'hls',
+      manifestType: 'hls',
+      resolution: null,
+      sizeBytes: null,
+      subtitleTracks: [],
+      url: 'https://1.1.1.1/master.m3u8'
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(null, { headers: { location: 'http://127.0.0.1/private.m3u8' }, status: 302 }))
+      .mockResolvedValueOnce(new Response(null, { headers: { location: 'http://169.254.169.254/video.mp4' }, status: 302 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    try {
+      await expect(new DownloadEngine().download(candidate, path.join(tempDir, 'hls-source'), () => undefined)).rejects.toThrow(/public address/);
+      await expect(new DownloadEngine().download({ ...candidate, kind: 'dash', manifestType: 'dash' }, path.join(tempDir, 'dash-source'), () => undefined)).rejects.toThrow(
+        /public address/
+      );
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(fetchMock.mock.calls.every(([, options]) => options.redirect === 'manual')).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  test('strips captured credentials on cross-origin redirects and keeps them on same-origin redirects', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'shv-header-redirect-safety-'));
+    const candidate: MediaCandidate = {
+      bitrate: null,
+      confidence: 0.9,
+      contentType: 'video/mp4',
+      discoveredAt: new Date().toISOString(),
+      durationSeconds: null,
+      headers: { Authorization: 'Bearer secret', Cookie: 'session=secret' },
+      id: 'candidate-id',
+      jobId: 'job-id',
+      kind: 'direct',
+      manifestType: null,
+      resolution: null,
+      sizeBytes: null,
+      subtitleTracks: [],
+      url: 'https://source.example.test/video.mp4'
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(null, { headers: { location: 'https://cdn.example.test/video.mp4' }, status: 302 }))
+      .mockResolvedValueOnce(new Response('cross-origin'))
+      .mockResolvedValueOnce(new Response(null, { headers: { location: '/final.mp4' }, status: 302 }))
+      .mockResolvedValueOnce(new Response('same-origin'));
+    vi.stubGlobal('fetch', fetchMock);
+
+    try {
+      const engine = new DownloadEngine(undefined, async (url) => url);
+      await engine.download(candidate, path.join(tempDir, 'cross-origin.mp4'), () => undefined);
+      await engine.download(candidate, path.join(tempDir, 'same-origin.mp4'), () => undefined);
+
+      expect(fetchMock.mock.calls[0][1].headers).toEqual(candidate.headers);
+      expect(fetchMock.mock.calls[1][1].headers).toEqual({});
+      expect(fetchMock.mock.calls[2][1].headers).toEqual(candidate.headers);
+      expect(fetchMock.mock.calls[3][1].headers).toEqual(candidate.headers);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   test('formats ffmpeg HLS network errors without frame spam or signed query strings', () => {
@@ -120,7 +234,7 @@ describe('DownloadEngine ffmpeg helpers', () => {
       fs.writeFileSync(input.outputPath, 'browser bytes');
       input.onProgress(0.5);
       return { bytesWritten: fs.statSync(input.outputPath).size, filePath: input.outputPath };
-    });
+    }, async (url) => url);
     const candidate: MediaCandidate = {
       bitrate: null,
       confidence: 0.86,

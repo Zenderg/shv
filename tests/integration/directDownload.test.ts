@@ -49,7 +49,7 @@ describe('DownloadEngine direct download', () => {
     };
     const output = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'xxx-download-')), 'video.mp4');
 
-    const result = await new DownloadEngine().download(candidate, output, () => undefined);
+    const result = await new DownloadEngine(undefined, async (url) => url).download(candidate, output, () => undefined);
 
     expect(result.bytesWritten).toBe(content.length);
     expect(fs.readFileSync(output)).toEqual(content);
@@ -256,7 +256,7 @@ describe('DownloadEngine direct download', () => {
     const output = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'xxx-hls-download-')), 'video.ts');
     const progress: number[] = [];
 
-    const result = await new DownloadEngine().download(candidate, output, (value) => progress.push(value));
+    const result = await new DownloadEngine(undefined, async (url) => url).download(candidate, output, (value) => progress.push(value));
 
     expect(result.bytesWritten).toBe(firstSegment.length + secondSegment.length);
     expect(fs.readFileSync(output)).toEqual(Buffer.concat([firstSegment, secondSegment]));
@@ -334,7 +334,7 @@ describe('DownloadEngine direct download', () => {
     };
     const output = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'shv-cross-origin-hls-')), 'video.ts');
 
-    await new DownloadEngine().download(candidate, output, () => undefined);
+    await new DownloadEngine(undefined, async (url) => url).download(candidate, output, () => undefined);
 
     expect(manifestHeaders).toEqual([
       { authorization: 'Bearer secret', cookie: 'session=secret', custom: 'custom-secret' }
@@ -411,7 +411,7 @@ describe('DownloadEngine direct download', () => {
     };
     const output = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'xxx-hls-download-')), 'video.ts');
 
-    await new DownloadEngine().download(candidate, output, () => undefined);
+    await new DownloadEngine(undefined, async (url) => url).download(candidate, output, () => undefined);
 
     await expect(probeDuration(output)).resolves.toBeCloseTo(2, 0);
   });
