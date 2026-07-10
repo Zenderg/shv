@@ -35,6 +35,7 @@ COPY --from=build /app/extension ./extension
 
 ENV NODE_ENV=production
 EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 CMD node -e "fetch('http://127.0.0.1:8080/api/health').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"
 RUN mkdir -p /data/library /data/app /work \
   && chown -R node:node /data /work /ms-playwright
 VOLUME ["/data/library", "/data/app", "/work"]
