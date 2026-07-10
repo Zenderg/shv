@@ -10,7 +10,7 @@ import type { MediaLibraryService } from '../media-library/mediaLibraryService.j
 import type { MediaProcessor } from '../media-processing/mediaProcessor.js';
 import { NoopSourceExtractor, type SourceExtractor } from '../source-extractors/sourceExtractorService.js';
 import { JobCanceledError, isCancellationError, onAbort, throwIfAborted } from '../utils/cancellation.js';
-import { titleFromUrl } from '../utils/fileSafety.js';
+import { assertInsideRoot, titleFromUrl } from '../utils/fileSafety.js';
 import { logJobEvent, safeUrlParts, shortMessage } from '../utils/jobLogger.js';
 import type { JobService } from './jobService.js';
 
@@ -511,14 +511,18 @@ function cleanupCanceledArtifacts(config: AppConfig, jobId: string, finalPath: s
 
 function cleanupJobArtifacts(config: AppConfig, jobId: string): void {
   const paths = [
-    path.join(config.workRoot, jobId),
-    path.join(config.appDataRoot, 'manual-screenshots', `${jobId}.png`),
-    path.join(config.appDataRoot, 'live-browser-profiles', jobId),
-    path.join(config.thumbnailsRoot, `${jobId}.jpg`)
+    artifactPath(config.workRoot, jobId),
+    artifactPath(path.join(config.appDataRoot, 'manual-screenshots'), `${jobId}.png`),
+    artifactPath(path.join(config.appDataRoot, 'live-browser-profiles'), jobId),
+    artifactPath(config.thumbnailsRoot, `${jobId}.jpg`)
   ];
   for (const artifactPath of paths) {
     if (fs.existsSync(artifactPath)) {
       fs.rmSync(artifactPath, { recursive: true, force: true });
     }
   }
+}
+
+function artifactPath(root: string, relativePath: string): string {
+  return assertInsideRoot(root, path.join(root, relativePath));
 }

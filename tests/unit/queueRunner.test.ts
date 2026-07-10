@@ -265,6 +265,28 @@ describe('QueueRunner', () => {
     expect(fs.existsSync(thumbnail)).toBe(false);
   });
 
+  test('does not remove paths outside artifact roots for an invalid job id', () => {
+    const { categories, config, jobs } = createServices();
+    const category = categories.create('test');
+    jobs.create('https://example.test/video', category.id);
+    const runner = new QueueRunner(
+      config,
+      jobs,
+      {} as BrowserAnalyzer,
+      {} as DownloadEngine,
+      {} as MediaProcessor,
+      categories,
+      {} as MediaFiles,
+      {} as MediaLibraryService
+    );
+    const victimPath = path.join(path.dirname(config.workRoot), 'victim');
+    fs.mkdirSync(victimPath, { recursive: true });
+    fs.writeFileSync(path.join(victimPath, 'keep'), 'safe');
+
+    expect(() => runner.delete('../victim')).toThrow(/escapes configured root/);
+    expect(fs.existsSync(path.join(victimPath, 'keep'))).toBe(true);
+  });
+
   test('requires manual selection for browser requests discovered inside a page', async () => {
     const { categories, config, jobs } = createServices();
     const category = categories.create('test');
