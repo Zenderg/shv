@@ -1,11 +1,14 @@
+import { EventEmitter } from 'node:events';
 import { v4 as uuidv4 } from 'uuid';
 import type { DownloadJob, JobStatus, MediaCandidate, QueueSnapshot, SubtitleTrack } from '../../shared/types.js';
 import { type CandidateDraft } from '../candidate-detection/candidateDetection.js';
 import { nowIso, type Db } from '../storage/database.js';
 import { mapDownloadJob, mapMediaCandidate } from '../storage/rowMappers.js';
 
-export class JobService {
-  constructor(private readonly db: Db) {}
+export class JobService extends EventEmitter {
+  constructor(private readonly db: Db) {
+    super();
+  }
 
   create(sourceUrl: string, categoryId: string): DownloadJob {
     const id = uuidv4();
@@ -17,7 +20,9 @@ export class JobService {
         ) VALUES (?, ?, ?, 'pending', 0, ?, ?)`
       )
       .run(id, sourceUrl, categoryId, now, now);
-    return this.requireJob(id);
+    const job = this.requireJob(id);
+    this.emitRunnable();
+    return job;
   }
 
   listVisible(): DownloadJob[] {
@@ -62,6 +67,7 @@ export class JobService {
          WHERE status IN ('analyzing', 'downloading', 'processing')`
       )
       .run(now);
+    this.emitRunnable();
   }
 
   get(id: string): DownloadJob | null {
@@ -109,7 +115,11 @@ export class JobService {
         now,
         id
       );
-    return this.requireJob(id);
+    const job = this.requireJob(id);
+    if (status === 'pending') {
+      this.emitRunnable();
+    }
+    return job;
   }
 
   saveCandidates(jobId: string, candidates: CandidateDraft[]): MediaCandidate[] {
@@ -274,7 +284,9 @@ export class JobService {
       )
       .run(sourceUrl, now, jobId);
     this.db.prepare('DELETE FROM media_candidates WHERE job_id = ?').run(jobId);
-    return this.requireJob(jobId);
+    const job = this.requireJob(jobId);
+    this.emitRunnable();
+    return job;
   }
 
   retry(jobId: string): DownloadJob {
@@ -295,7 +307,9 @@ export class JobService {
       this.db.exec('ROLLBACK');
       throw error;
     }
-    return this.requireJob(jobId);
+    const job = this.requireJob(jobId);
+    this.emitRunnable();
+    return job;
   }
 
   cancel(jobId: string): DownloadJob {
@@ -319,6 +333,10 @@ export class JobService {
     this.db
       .prepare('UPDATE media_candidates SET subtitle_tracks_json = ? WHERE id = ?')
       .run(JSON.stringify(normalizeSubtitleTracks(tracks)), candidateId);
+  }
+
+  private emitRunnable(): void {
+    this.emit('runnable');
   }
 }
 

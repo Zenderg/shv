@@ -9,13 +9,15 @@ import type { AppConfig } from '../../src/server/config/appConfig.js';
 import { ExtensionDebugService } from '../../src/server/extension-debug/extensionDebugService.js';
 
 describe('cookie route', () => {
+  const jobId = '0f5ec30b-5d96-4d9b-9f47-565b67292c5e';
+
   test('stores uploaded browser cookies as a Netscape cookies file', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'xxx-cookies-'));
     const cookiesPath = path.join(root, 'youtube-cookies.txt');
     const app = createCookieRouteApp(tempConfig(root, cookiesPath));
 
     await request(app)
-      .post('/api/jobs/job-id/cookies')
+      .post(`/api/jobs/${jobId}/cookies`)
       .set('X-SHV-CSRF', 'test-csrf-token')
       .send({
         cookies: [
@@ -48,7 +50,7 @@ describe('cookie route', () => {
     const app = createCookieRouteApp(tempConfig(root, cookiesPath));
 
     await request(app)
-      .post('/api/jobs/job-id/cookies')
+      .post(`/api/jobs/${jobId}/cookies`)
       .set('X-SHV-CSRF', 'test-csrf-token')
       .send({
         cookies: [
@@ -76,7 +78,7 @@ describe('cookie route', () => {
     const app = createCookieRouteApp(tempConfig(root, cookiesPath), { get: () => null });
 
     const response = await request(app)
-      .post('/api/jobs/missing-job/cookies')
+      .post(`/api/jobs/${jobId}/cookies`)
       .set('X-SHV-CSRF', 'test-csrf-token')
       .send({
         cookies: [
@@ -110,7 +112,7 @@ describe('cookie route', () => {
     const app = createCookieRouteApp(tempConfig(root, cookiesPath));
 
     await request(app)
-      .post('/api/jobs/job-id/cookies')
+      .post(`/api/jobs/${jobId}/cookies`)
       .set('X-SHV-CSRF', 'test-csrf-token')
       .send({
         cookies: [

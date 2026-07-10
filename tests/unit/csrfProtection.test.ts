@@ -4,6 +4,8 @@ import { describe, expect, test, vi } from 'vitest';
 import { createRouter, errorHandler } from '../../src/server/api/routes.js';
 
 describe('CSRF protection', () => {
+  const jobId = '0f5ec30b-5d96-4d9b-9f47-565b67292c5e';
+
   test('exposes the server CSRF token through runtime config', async () => {
     const { app } = createAppWithCsrfToken('test-csrf-token');
 
@@ -18,7 +20,7 @@ describe('CSRF protection', () => {
     const { app, queueRunner } = createAppWithCsrfToken('test-csrf-token');
 
     await request(app)
-      .post('/api/jobs/job-id/cancel')
+      .post(`/api/jobs/${jobId}/cancel`)
       .set('Origin', 'https://attacker.example')
       .type('form')
       .send('cross-site=1')
@@ -31,17 +33,31 @@ describe('CSRF protection', () => {
     const { app, queueRunner } = createAppWithCsrfToken('test-csrf-token');
 
     await request(app)
-      .post('/api/jobs/job-id/cancel')
+      .post(`/api/jobs/${jobId}/cancel`)
       .set('X-SHV-CSRF', 'test-csrf-token')
       .expect(200);
 
-    expect(queueRunner.cancel).toHaveBeenCalledWith('job-id');
+    expect(queueRunner.cancel).toHaveBeenCalledWith(jobId);
+  });
+
+  test('rejects traversal text in job ids before deletion handlers run', async () => {
+    const { app, queueRunner } = createAppWithCsrfToken('test-csrf-token');
+
+    await request(app)
+      .delete('/api/jobs/..%2F..%2Fvictim')
+      .set('X-SHV-CSRF', 'test-csrf-token')
+      .expect(400);
+
+    expect(queueRunner.delete).not.toHaveBeenCalled();
   });
 });
 
 function createAppWithCsrfToken(csrfToken: string) {
   const app = express();
-  const queueRunner = { cancel: vi.fn((id: string) => ({ id, status: 'canceled' })) };
+  const queueRunner = {
+    cancel: vi.fn((id: string) => ({ id, status: 'canceled' })),
+    delete: vi.fn()
+  };
   app.use(express.json());
   app.use(createRouter({
     categories: {} as never,
