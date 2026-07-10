@@ -47,6 +47,36 @@ describe('QueueRunner', () => {
     ).toEqual([]);
   });
 
+  test('starts a newly created job without waiting for a polling interval', async () => {
+    const { categories, config, jobs } = createServices();
+    const category = categories.create('test');
+    const started = deferred<void>();
+    const analyzer = {
+      analyze: async () => {
+        started.resolve();
+        return { automaticCandidateUrl: null, candidates: [], diagnostics: [], screenshotPath: null, titleHint: null };
+      }
+    } satisfies Pick<BrowserAnalyzer, 'analyze'>;
+    const runner = new QueueRunner(
+      config,
+      jobs,
+      analyzer as unknown as BrowserAnalyzer,
+      {} as DownloadEngine,
+      {} as MediaProcessor,
+      categories,
+      {} as MediaFiles,
+      {} as MediaLibraryService
+    );
+
+    runner.start();
+    const job = jobs.create('https://example.test/video', category.id);
+    await started.promise;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    runner.stop();
+
+    expect(jobs.requireJob(job.id).status).toBe('needs_manual_selection');
+  });
+
   test('aborts the active pipeline when a running job is canceled', async () => {
     const { categories, config, jobs } = createServices();
     const category = categories.create('test');
