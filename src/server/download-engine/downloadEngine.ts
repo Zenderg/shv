@@ -76,9 +76,15 @@ export class DownloadEngine {
     }
 
     let response = await fetch(candidate.url, { headers, signal });
+    let retriedWithoutRange = false;
     if (existingBytes > 0 && response.status === 206 && !hasRequestedContentRange(response, existingBytes)) {
       await response.body?.cancel();
       response = await fetch(candidate.url, { headers: withoutRangeHeader(headers), signal });
+      retriedWithoutRange = true;
+    }
+    if (retriedWithoutRange && response.status !== 200) {
+      await response.body?.cancel();
+      throw new Error(`Download resume retry returned HTTP ${response.status}; expected a complete HTTP 200 response`);
     }
     if (!response.ok && response.status !== 206) {
       throw new Error(`Download failed with HTTP ${response.status}`);
@@ -453,6 +459,7 @@ if range_header.startswith("bytes=") and range_header.endswith("-"):
 
 os.makedirs(os.path.dirname(output_path), exist_ok=True)
 response = requests.get(url, headers=headers, impersonate="chrome", stream=True, timeout=30)
+retried_without_range = False
 if existing_bytes > 0 and response.status_code == 206:
     content_range = response.headers.get("content-range") or response.headers.get("Content-Range") or ""
     content_range_match = re.match(r"^bytes\\s+(\\d+)-\\d+/(?:\\d+|\\*)$", content_range, re.IGNORECASE)
@@ -460,6 +467,10 @@ if existing_bytes > 0 and response.status_code == 206:
         response.close()
         headers = {name: value for name, value in headers.items() if name.lower() != "range"}
         response = requests.get(url, headers=headers, impersonate="chrome", stream=True, timeout=30)
+        retried_without_range = True
+if retried_without_range and response.status_code != 200:
+    response.close()
+    raise RuntimeError(f"Resume retry returned HTTP {response.status_code}; expected a complete HTTP 200 response")
 if response.status_code < 200 or response.status_code >= 300:
     raise RuntimeError(f"HTTP {response.status_code}")
 
