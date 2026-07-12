@@ -8,7 +8,9 @@ import { selectBestDashRenditions, type DashRepresentation } from './dash.js';
 import { JobCanceledError, onAbort, throwIfAborted } from '../utils/cancellation.js';
 import { requestHeadersForUrl, requestHeadersForUrls } from '../utils/downloadRequestHeaders.js';
 import { logJobEvent, safeUrlParts, shortMessage } from '../utils/jobLogger.js';
-import { assertPublicHttpUrl, assertPublicHttpUrlSyntax } from '../utils/networkSafety.js';
+import { assertPublicHttpUrlSyntax } from '../utils/networkSafety.js';
+import { PublicMediaSession, type PublicMediaSessionLike } from '../utils/publicHttpProxy.js';
+import type { Response as UndiciResponse } from 'undici';
 import { downloadBrowserRequestMedia } from './browserRequestDownloader.js';
 
 export interface DownloadResult {
@@ -21,18 +23,21 @@ export interface BrowserRequestDownloadInput {
   headers: Record<string, string>;
   outputPath: string;
   onProgress: (progress: number) => void;
+  proxyUrl: string;
   signal?: AbortSignal;
 }
 
 export type BrowserRequestDownloadRunner = (input: BrowserRequestDownloadInput) => Promise<DownloadResult>;
 export type PublicUrlValidator = (url: string) => Promise<string>;
+export type PublicMediaSessionFactory = () => Promise<PublicMediaSessionLike>;
 
 const MAX_SAFE_REDIRECTS = 5;
 
 export class DownloadEngine {
   constructor(
     private readonly browserRequestDownloader: BrowserRequestDownloadRunner = downloadBrowserRequestMedia,
-    private readonly validatePublicUrl: PublicUrlValidator = assertPublicHttpUrl
+    private readonly validatePublicUrl: PublicUrlValidator = async (url) => assertPublicHttpUrlSyntax(url),
+    private readonly createMediaSession: PublicMediaSessionFactory = () => PublicMediaSession.start()
   ) {}
 
   async download(
@@ -43,23 +48,29 @@ export class DownloadEngine {
   ): Promise<DownloadResult> {
     fs.mkdirSync(path.dirname(outputPath), { recursive: true });
     throwIfAborted(signal);
-    await this.validatePublicUrl(candidate.url);
-    if (candidate.manifestType === 'hls') {
-      return this.downloadHls(candidate, outputPath, onProgress, signal);
+    const session = await this.createMediaSession();
+    try {
+      await this.validatePublicUrl(candidate.url);
+      if (candidate.manifestType === 'hls') {
+        return await this.downloadHls(candidate, outputPath, onProgress, session, signal);
+      }
+      if (candidate.manifestType === 'dash') {
+        return await this.downloadDash(candidate, outputPath, onProgress, session, signal);
+      }
+      if (isDirectBrowserRequest(candidate)) {
+        return await this.downloadBrowserRequestDirect(candidate, outputPath, onProgress, session, signal);
+      }
+      return await this.downloadDirect(candidate, outputPath, onProgress, session, signal);
+    } finally {
+      await session.close();
     }
-    if (candidate.manifestType === 'dash') {
-      return this.downloadDash(candidate, outputPath, onProgress, signal);
-    }
-    if (isDirectBrowserRequest(candidate)) {
-      return this.downloadBrowserRequestDirect(candidate, outputPath, onProgress, signal);
-    }
-    return this.downloadDirect(candidate, outputPath, onProgress, signal);
   }
 
   private async downloadBrowserRequestDirect(
     candidate: MediaCandidate,
     outputPath: string,
     onProgress: (progress: number) => void,
+    session: PublicMediaSessionLike,
     signal?: AbortSignal
   ): Promise<DownloadResult> {
     const existingBytes = fs.existsSync(outputPath) ? fs.statSync(outputPath).size : 0;
@@ -67,6 +78,7 @@ export class DownloadEngine {
       headers: browserRequestHeaders(candidate.headers, existingBytes),
       onProgress,
       outputPath,
+      proxyUrl: session.proxyUrl,
       signal,
       url: candidate.url
     });
@@ -76,6 +88,7 @@ export class DownloadEngine {
     candidate: MediaCandidate,
     outputPath: string,
     onProgress: (progress: number) => void,
+    session: PublicMediaSessionLike,
     signal?: AbortSignal
   ): Promise<DownloadResult> {
     const existingBytes = fs.existsSync(outputPath) ? fs.statSync(outputPath).size : 0;
@@ -84,11 +97,11 @@ export class DownloadEngine {
       additionalHeaders.Range = `bytes=${existingBytes}-`;
     }
 
-    let response = await this.fetchPublic(candidate.url, candidate.url, candidate.headers, { additionalHeaders, signal });
+    let response = await this.fetchPublic(candidate.url, candidate.url, candidate.headers, session, { additionalHeaders, signal });
     let retriedWithoutRange = false;
     if (existingBytes > 0 && response.status === 206 && !hasRequestedContentRange(response, existingBytes)) {
       await response.body?.cancel();
-      response = await this.fetchPublic(candidate.url, candidate.url, candidate.headers, { signal });
+      response = await this.fetchPublic(candidate.url, candidate.url, candidate.headers, session, { signal });
       retriedWithoutRange = true;
     }
     if (retriedWithoutRange && response.status !== 200) {
@@ -96,15 +109,17 @@ export class DownloadEngine {
       throw new Error(`Download resume retry returned HTTP ${response.status}; expected a complete HTTP 200 response`);
     }
     if (!response.ok && response.status !== 206) {
+      await response.body?.cancel();
       throw new Error(`Download failed with HTTP ${response.status}`);
     }
     if (!response.body) {
       throw new Error('Download response did not include a body');
     }
 
-    const total = Number(response.headers.get('content-length') ?? candidate.sizeBytes ?? 0) + (response.status === 206 ? existingBytes : 0);
-    const stream = fs.createWriteStream(outputPath, { flags: response.status === 206 ? 'a' : 'w' });
-    let written = response.status === 206 ? existingBytes : 0;
+    const append = response.status === 206 && existingBytes > 0;
+    const total = Number(response.headers.get('content-length') ?? candidate.sizeBytes ?? 0) + (append ? existingBytes : 0);
+    const stream = fs.createWriteStream(outputPath, { flags: append ? 'a' : 'w' });
+    let written = append ? existingBytes : 0;
 
     const reader = response.body.getReader();
     const removeAbortListener = onAbort(signal, () => {
@@ -120,7 +135,7 @@ export class DownloadEngine {
         }
         const chunk = value;
         written += chunk.byteLength;
-        stream.write(chunk);
+        await writeChunk(stream, chunk);
         if (total > 0) {
           onProgress(Math.min(0.95, written / total));
         }
@@ -141,14 +156,15 @@ export class DownloadEngine {
     candidate: MediaCandidate,
     outputPath: string,
     onProgress: (progress: number) => void,
+    session: PublicMediaSessionLike,
     signal?: AbortSignal
   ): Promise<DownloadResult> {
-    const manifest = await this.fetchText(candidate.url, candidate.url, candidate.headers, signal);
+    const manifest = await this.fetchText(candidate.url, candidate.url, candidate.headers, session, signal);
     const variantUrl = selectBestHlsVariant(manifest, candidate.url);
     await this.validatePublicUrl(variantUrl);
     const mediaManifest = variantUrl === candidate.url
       ? manifest
-      : await this.fetchText(variantUrl, candidate.url, candidate.headers, signal);
+      : await this.fetchText(variantUrl, candidate.url, candidate.headers, session, signal);
     const segments = parseHlsSegments(mediaManifest, variantUrl);
     const resourceUrls = parseHlsResourceUrls(mediaManifest, variantUrl);
     await Promise.all(resourceUrls.map((resourceUrl) => this.validatePublicUrl(resourceUrl)));
@@ -168,11 +184,11 @@ export class DownloadEngine {
       variant: safeUrlParts(variantUrl)
     });
     if (plainSegmentDownload) {
-      return this.downloadHlsSegments(segments, candidate.url, candidate.headers, outputPath, onProgress, signal);
+      return this.downloadHlsSegments(segments, candidate.url, candidate.headers, outputPath, onProgress, session, signal);
     }
     const ffmpegHeaders = requestHeadersForUrls(candidate.headers, candidate.url, [variantUrl, ...resourceUrls]);
     await this.runFfmpeg(
-      buildHlsFfmpegArgs(variantUrl, ffmpegHeaders, outputPath),
+      buildHlsFfmpegArgs(variantUrl, ffmpegHeaders, outputPath, session.proxyUrl),
       onProgress,
       signal,
       durationSeconds
@@ -186,6 +202,7 @@ export class DownloadEngine {
     headers: Record<string, string>,
     outputPath: string,
     onProgress: (progress: number) => void,
+    session: PublicMediaSessionLike,
     signal?: AbortSignal
   ): Promise<DownloadResult> {
     fs.rmSync(outputPath, { force: true });
@@ -208,8 +225,9 @@ export class DownloadEngine {
         const segment = segments[index];
         const segmentPath = path.join(segmentDirectory, `segment-${String(index + 1).padStart(6, '0')}.ts`);
         const stream = fs.createWriteStream(segmentPath, { flags: 'w' });
-        const response = await this.fetchPublic(segment.uri, capturedUrl, headers, { signal });
+        const response = await this.fetchPublic(segment.uri, capturedUrl, headers, session, { signal });
         if (!response.ok) {
+          await response.body?.cancel();
           throw new Error(`HLS segment ${index + 1} request failed with HTTP ${response.status}`);
         }
         if (!response.body) {
@@ -271,9 +289,10 @@ export class DownloadEngine {
     candidate: MediaCandidate,
     outputPath: string,
     onProgress: (progress: number) => void,
+    session: PublicMediaSessionLike,
     signal?: AbortSignal
   ): Promise<DownloadResult> {
-    const manifest = await this.fetchText(candidate.url, candidate.url, candidate.headers, signal);
+    const manifest = await this.fetchText(candidate.url, candidate.url, candidate.headers, session, signal);
     const selected = selectBestDashRenditions(manifest, candidate.url);
     if (selected.video) {
       await this.validatePublicUrl(selected.video.baseUrl);
@@ -282,7 +301,7 @@ export class DownloadEngine {
       await this.validatePublicUrl(selected.audio.baseUrl);
     }
     await this.runFfmpeg(
-      buildDashFfmpegArgs(selected.video, selected.audio, candidate.headers, outputPath, candidate.url),
+      buildDashFfmpegArgs(selected.video, selected.audio, candidate.headers, outputPath, candidate.url, session.proxyUrl),
       onProgress,
       signal
     );
@@ -334,10 +353,12 @@ export class DownloadEngine {
     url: string,
     capturedUrl: string,
     capturedHeaders: Record<string, string>,
+    session: PublicMediaSessionLike,
     signal?: AbortSignal
   ): Promise<string> {
-    const response = await this.fetchPublic(url, capturedUrl, capturedHeaders, { signal });
+    const response = await this.fetchPublic(url, capturedUrl, capturedHeaders, session, { signal });
     if (!response.ok) {
+      await response.body?.cancel();
       throw new Error(`Manifest request failed with HTTP ${response.status}`);
     }
     return response.text();
@@ -347,12 +368,13 @@ export class DownloadEngine {
     url: string,
     capturedUrl: string,
     capturedHeaders: Record<string, string>,
+    session: PublicMediaSessionLike,
     options: { additionalHeaders?: Record<string, string>; signal?: AbortSignal }
-  ): Promise<Response> {
+  ): Promise<UndiciResponse> {
     let targetUrl = await this.validatePublicUrl(url);
 
     for (let redirectCount = 0; redirectCount <= MAX_SAFE_REDIRECTS; redirectCount += 1) {
-      const response = await fetch(targetUrl, {
+      const response = await session.fetch(targetUrl, {
         headers: {
           ...requestHeadersForUrl(capturedHeaders, capturedUrl, targetUrl),
           ...options.additionalHeaders
@@ -369,9 +391,11 @@ export class DownloadEngine {
         return response;
       }
       if (redirectCount === MAX_SAFE_REDIRECTS) {
+        await response.body?.cancel();
         throw new Error(`Media request exceeded ${MAX_SAFE_REDIRECTS} redirects`);
       }
 
+      await response.body?.cancel();
       targetUrl = await this.validatePublicUrl(new URL(location, targetUrl).toString());
     }
 
@@ -379,11 +403,11 @@ export class DownloadEngine {
   }
 }
 
-export function buildHlsFfmpegArgs(variantUrl: string, headers: Record<string, string>, outputPath: string): string[] {
+export function buildHlsFfmpegArgs(variantUrl: string, headers: Record<string, string>, outputPath: string, proxyUrl: string): string[] {
   assertPublicHttpUrlSyntax(variantUrl);
   return [
     '-y',
-    ...ffmpegNetworkInputArgs({ reconnectAtEof: false }),
+    ...ffmpegNetworkInputArgs(proxyUrl, { reconnectAtEof: false }),
     '-http_persistent',
     '0',
     '-headers',
@@ -412,7 +436,7 @@ function browserRequestHeaders(headers: Record<string, string>, existingBytes: n
   };
 }
 
-function hasRequestedContentRange(response: Response, existingBytes: number): boolean {
+function hasRequestedContentRange(response: UndiciResponse, existingBytes: number): boolean {
   const contentRange = response.headers.get('content-range');
   const match = contentRange?.match(/^bytes\s+(\d+)-\d+\/(?:\d+|\*)$/i);
   return match?.[1] === String(existingBytes);
@@ -423,7 +447,8 @@ export function buildDashFfmpegArgs(
   audio: DashRepresentation | null,
   headers: Record<string, string>,
   outputPath: string,
-  capturedManifestUrl: string
+  capturedManifestUrl: string,
+  proxyUrl: string
 ): string[] {
   const args = ['-y'];
   const primaryInput = video?.baseUrl;
@@ -437,7 +462,7 @@ export function buildDashFfmpegArgs(
   }
 
   args.push(
-    ...ffmpegNetworkInputArgs(),
+    ...ffmpegNetworkInputArgs(proxyUrl),
     '-headers',
     headersToFfmpeg(requestHeadersForUrl(headers, capturedManifestUrl, primaryInput)),
     '-i',
@@ -445,7 +470,7 @@ export function buildDashFfmpegArgs(
   );
   if (audio) {
     args.push(
-      ...ffmpegNetworkInputArgs(),
+      ...ffmpegNetworkInputArgs(proxyUrl),
       '-headers',
       headersToFfmpeg(requestHeadersForUrl(headers, capturedManifestUrl, audio.baseUrl)),
       '-i',
@@ -468,10 +493,14 @@ export function formatFfmpegError(code: number | null, stderr: string): string {
   return detail ? `${prefix}\nLast ffmpeg messages:\n${detail}` : prefix;
 }
 
-function ffmpegNetworkInputArgs(options: { reconnectAtEof?: boolean } = {}): string[] {
+function ffmpegNetworkInputArgs(proxyUrl: string, options: { reconnectAtEof?: boolean } = {}): string[] {
   const args = [
     '-fflags',
     '+discardcorrupt',
+    '-protocol_whitelist',
+    'http,https,tcp,tls,crypto',
+    '-http_proxy',
+    proxyUrl,
     '-reconnect',
     '1',
     '-reconnect_streamed',

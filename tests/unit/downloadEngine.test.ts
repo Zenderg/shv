@@ -11,6 +11,13 @@ import {
 } from '../../src/server/download-engine/downloadEngine.js';
 import type { MediaCandidate } from '../../src/shared/types.js';
 import type { DashRepresentation } from '../../src/server/download-engine/dash.js';
+import type { PublicMediaSessionLike } from '../../src/server/utils/publicHttpProxy.js';
+
+const unsafeTestSessionFactory = async (): Promise<PublicMediaSessionLike> => ({
+  proxyUrl: 'http://127.0.0.1:1',
+  close: async () => undefined,
+  fetch: (url, init) => globalThis.fetch(url, init as RequestInit) as never
+});
 
 describe('DownloadEngine ffmpeg helpers', () => {
   const video: DashRepresentation = {
@@ -35,7 +42,8 @@ describe('DownloadEngine ffmpeg helpers', () => {
       audio,
       { Referer: 'https://example.test/' },
       '/work/source',
-      'https://media.example.test/manifest.mpd'
+      'https://media.example.test/manifest.mpd',
+      'http://127.0.0.1:9999'
     );
 
     expect(args).toEqual(expect.arrayContaining(['-map', '0:v:0', '-map', '1:a:0', '-c', 'copy', '-f', 'matroska', '/work/source']));
@@ -51,7 +59,8 @@ describe('DownloadEngine ffmpeg helpers', () => {
       audio,
       { Authorization: 'Bearer secret', Cookie: 'session=secret' },
       '/work/source',
-      'https://source.example.test/manifest.mpd'
+      'https://source.example.test/manifest.mpd',
+      'http://127.0.0.1:9999'
     );
     const headerValues = args.flatMap((value, index) => value === '-headers' ? [args[index + 1]] : []);
 
@@ -61,7 +70,7 @@ describe('DownloadEngine ffmpeg helpers', () => {
   });
 
   test('rejects DASH input without a direct media representation', () => {
-    expect(() => buildDashFfmpegArgs(null, null, {}, '/work/source', 'https://source.example.test/manifest.mpd')).toThrow(
+    expect(() => buildDashFfmpegArgs(null, null, {}, '/work/source', 'https://source.example.test/manifest.mpd', 'http://127.0.0.1:9999')).toThrow(
       'DASH manifest did not include a playable media representation'
     );
   });
@@ -70,7 +79,8 @@ describe('DownloadEngine ffmpeg helpers', () => {
     const args = buildHlsFfmpegArgs(
       'https://media.example.test/playlist.m3u8',
       { Referer: 'https://source.example.test/' },
-      '/work/job/source'
+      '/work/job/source',
+      'http://127.0.0.1:9999'
     );
 
     expect(args).toEqual(
@@ -81,6 +91,10 @@ describe('DownloadEngine ffmpeg helpers', () => {
         '1',
         '-reconnect_on_network_error',
         '1',
+        '-protocol_whitelist',
+        'http,https,tcp,tls,crypto',
+        '-http_proxy',
+        'http://127.0.0.1:9999',
         '-max_redirects',
         '0',
         '-http_persistent',
@@ -94,7 +108,7 @@ describe('DownloadEngine ffmpeg helpers', () => {
   });
 
   test('rejects an unsafe ffmpeg input URL before spawning ffmpeg', () => {
-    expect(() => buildHlsFfmpegArgs('file:///etc/passwd', {}, '/work/source')).toThrow(/HTTP or HTTPS/);
+    expect(() => buildHlsFfmpegArgs('file:///etc/passwd', {}, '/work/source', 'http://127.0.0.1:9999')).toThrow(/HTTP or HTTPS/);
   });
 
   test('rejects private HLS and DASH URLs resolved from manifests before requesting them', async () => {
@@ -121,8 +135,8 @@ describe('DownloadEngine ffmpeg helpers', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     try {
-      await expect(new DownloadEngine().download(candidate, path.join(tempDir, 'source'), () => undefined)).rejects.toThrow(/public address/);
-      await expect(new DownloadEngine().download({ ...candidate, kind: 'dash', manifestType: 'dash' }, path.join(tempDir, 'dash-source'), () => undefined)).rejects.toThrow(
+      await expect(new DownloadEngine(undefined, undefined, unsafeTestSessionFactory).download(candidate, path.join(tempDir, 'source'), () => undefined)).rejects.toThrow(/public address/);
+      await expect(new DownloadEngine(undefined, undefined, unsafeTestSessionFactory).download({ ...candidate, kind: 'dash', manifestType: 'dash' }, path.join(tempDir, 'dash-source'), () => undefined)).rejects.toThrow(
         /public address/
       );
       expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -155,8 +169,8 @@ describe('DownloadEngine ffmpeg helpers', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     try {
-      await expect(new DownloadEngine().download(candidate, path.join(tempDir, 'hls-source'), () => undefined)).rejects.toThrow(/public address/);
-      await expect(new DownloadEngine().download({ ...candidate, kind: 'dash', manifestType: 'dash' }, path.join(tempDir, 'dash-source'), () => undefined)).rejects.toThrow(
+      await expect(new DownloadEngine(undefined, undefined, unsafeTestSessionFactory).download(candidate, path.join(tempDir, 'hls-source'), () => undefined)).rejects.toThrow(/public address/);
+      await expect(new DownloadEngine(undefined, undefined, unsafeTestSessionFactory).download({ ...candidate, kind: 'dash', manifestType: 'dash' }, path.join(tempDir, 'dash-source'), () => undefined)).rejects.toThrow(
         /public address/
       );
       expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -192,7 +206,7 @@ describe('DownloadEngine ffmpeg helpers', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     try {
-      const engine = new DownloadEngine(undefined, async (url) => url);
+      const engine = new DownloadEngine(undefined, async (url) => url, unsafeTestSessionFactory);
       await engine.download(candidate, path.join(tempDir, 'cross-origin.mp4'), () => undefined);
       await engine.download(candidate, path.join(tempDir, 'same-origin.mp4'), () => undefined);
 
@@ -302,9 +316,9 @@ class Response:
 
 class Requests:
     @staticmethod
-    def get(url, headers, impersonate, stream, timeout):
+    def get(url, headers, impersonate, stream, timeout, allow_redirects, proxy):
         with open(os.environ["SHV_CURL_CFFI_LOG"], "a") as log:
-            log.write(json.dumps(headers) + "\\n")
+            log.write(json.dumps({"headers": headers, "allow_redirects": allow_redirects, "proxy": proxy}) + "\\n")
         if headers.get("Range") or headers.get("range"):
             return Response({"Content-Range": "bytes 0-2/10"})
         return Response({})
@@ -351,9 +365,15 @@ requests = Requests()
       }
     }
 
-    const requestHeaders = fs.readFileSync(requestLogPath, 'utf8').trim().split('\n').map((line) => JSON.parse(line) as Record<string, string>);
-    expect(requestHeaders[0].Range).toBe('bytes=5-');
-    expect(Object.keys(requestHeaders[1]).some((name) => name.toLowerCase() === 'range')).toBe(false);
+    const requests = fs.readFileSync(requestLogPath, 'utf8').trim().split('\n').map((line) => JSON.parse(line) as {
+      allow_redirects: boolean;
+      headers: Record<string, string>;
+      proxy: string;
+    });
+    expect(requests[0].headers.Range).toBe('bytes=5-');
+    expect(Object.keys(requests[1].headers).some((name) => name.toLowerCase() === 'range')).toBe(false);
+    expect(requests.every((request) => request.allow_redirects === false)).toBe(true);
+    expect(requests.every((request) => request.proxy.startsWith('http://127.0.0.1:'))).toBe(true);
     expect(fs.readFileSync(outputPath)).toEqual(Buffer.from('stale'));
   });
 });

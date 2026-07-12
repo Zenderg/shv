@@ -13,6 +13,8 @@ import { JobCanceledError, isCancellationError, onAbort, throwIfAborted } from '
 import { requestHeadersForUrl } from '../utils/downloadRequestHeaders.js';
 import { assertInsideRoot, titleFromUrl } from '../utils/fileSafety.js';
 import { logJobEvent, safeUrlParts, shortMessage } from '../utils/jobLogger.js';
+import { assertPublicHttpUrlSyntax } from '../utils/networkSafety.js';
+import { PublicMediaSession, type PublicMediaSessionLike } from '../utils/publicHttpProxy.js';
 import type { JobService } from './jobService.js';
 
 class DownloadStalledError extends Error {
@@ -21,6 +23,9 @@ class DownloadStalledError extends Error {
     this.name = 'DownloadStalledError';
   }
 }
+
+type PublicMediaSessionFactory = () => Promise<PublicMediaSessionLike>;
+const MAX_SUBTITLE_REDIRECTS = 5;
 
 export class QueueRunner {
   private readonly activeControllers = new Map<string, AbortController>();
@@ -39,7 +44,8 @@ export class QueueRunner {
     private readonly categories: CategoryService,
     private readonly mediaFiles: MediaFiles,
     private readonly mediaLibrary: MediaLibraryService,
-    private readonly sourceExtractors: SourceExtractor = new NoopSourceExtractor()
+    private readonly sourceExtractors: SourceExtractor = new NoopSourceExtractor(),
+    private readonly createMediaSession: PublicMediaSessionFactory = () => PublicMediaSession.start()
   ) {
     this.maxConcurrentJobs = config.maxConcurrentJobs ?? 2;
   }
@@ -377,22 +383,27 @@ export class QueueRunner {
     const subtitleDir = path.join(workDir, 'subtitles');
     fs.mkdirSync(subtitleDir, { recursive: true });
     const downloaded: Array<SubtitleTrack & { localPath: string }> = [];
-    for (const [index, track] of tracks.entries()) {
-      this.throwIfCanceled(candidate.jobId, signal);
-      const localPath = path.join(subtitleDir, `subtitle-${index + 1}${subtitleExtension(track)}`);
-      if (track.format === 'hls') {
-        await downloadHlsSubtitleTrack(track, localPath, candidate.url, candidate.headers, signal);
-      } else {
-        await downloadSubtitleFile(track, localPath, candidate.url, candidate.headers, signal);
+    const session = await this.createMediaSession();
+    try {
+      for (const [index, track] of tracks.entries()) {
+        this.throwIfCanceled(candidate.jobId, signal);
+        const localPath = path.join(subtitleDir, `subtitle-${index + 1}${subtitleExtension(track)}`);
+        if (track.format === 'hls') {
+          await downloadHlsSubtitleTrack(track, localPath, candidate.url, candidate.headers, session, signal);
+        } else {
+          await downloadSubtitleFile(track, localPath, candidate.url, candidate.headers, session, signal);
+        }
+        downloaded.push({ ...track, localPath });
+        logJobEvent('info', 'subtitle-downloaded', {
+          format: track.format,
+          jobId: candidate.jobId,
+          label: track.label,
+          language: track.language,
+          source: track.source
+        });
       }
-      downloaded.push({ ...track, localPath });
-      logJobEvent('info', 'subtitle-downloaded', {
-        format: track.format,
-        jobId: candidate.jobId,
-        label: track.label,
-        language: track.language,
-        source: track.source
-      });
+    } finally {
+      await session.close();
     }
     return downloaded;
   }
@@ -459,11 +470,15 @@ async function downloadSubtitleFile(
   localPath: string,
   candidateUrl: string,
   candidateHeaders: Record<string, string>,
+  session: PublicMediaSessionLike,
   signal: AbortSignal
 ): Promise<void> {
-  const body = await fetchBinary(
+  const body = await fetchSubtitleBinary(
+    track,
+    candidateUrl,
+    candidateHeaders,
     track.url,
-    subtitleDownloadHeaders(track, candidateUrl, candidateHeaders, track.url),
+    session,
     signal
   );
   fs.writeFileSync(localPath, body);
@@ -474,11 +489,15 @@ async function downloadHlsSubtitleTrack(
   localPath: string,
   candidateUrl: string,
   candidateHeaders: Record<string, string>,
+  session: PublicMediaSessionLike,
   signal: AbortSignal
 ): Promise<void> {
-  const manifest = await fetchText(
+  const manifest = await fetchSubtitleText(
+    track,
+    candidateUrl,
+    candidateHeaders,
     track.url,
-    subtitleDownloadHeaders(track, candidateUrl, candidateHeaders, track.url),
+    session,
     signal
   );
   const baseUrl = track.url;
@@ -492,13 +511,16 @@ async function downloadHlsSubtitleTrack(
       continue;
     }
     segmentIndex += 1;
-    const segmentUrl = new URL(trimmed, baseUrl).toString();
+    const segmentUrl = assertPublicHttpUrlSyntax(new URL(trimmed, baseUrl).toString());
     const segmentExtension = path.extname(new URL(segmentUrl).pathname) || '.vtt';
     const segmentName = `subtitle-segment-${segmentIndex}${segmentExtension}`;
     const segmentPath = path.join(directory, segmentName);
-    const body = await fetchBinary(
+    const body = await fetchSubtitleBinary(
+      track,
+      candidateUrl,
+      candidateHeaders,
       segmentUrl,
-      subtitleDownloadHeaders(track, candidateUrl, candidateHeaders, segmentUrl),
+      session,
       signal
     );
     fs.writeFileSync(segmentPath, body);
@@ -522,20 +544,64 @@ export function subtitleDownloadHeaders(
   };
 }
 
-async function fetchText(url: string, headers: Record<string, string>, signal: AbortSignal): Promise<string> {
-  const response = await fetch(url, { headers, signal });
-  if (!response.ok) {
-    throw new Error(`Subtitle request failed with HTTP ${response.status}: ${safeUrlParts(url).host}${safeUrlParts(url).path}`);
-  }
+async function fetchSubtitleText(
+  track: SubtitleTrack,
+  candidateUrl: string,
+  candidateHeaders: Record<string, string>,
+  url: string,
+  session: PublicMediaSessionLike,
+  signal: AbortSignal
+): Promise<string> {
+  const response = await fetchSubtitleResponse(track, candidateUrl, candidateHeaders, url, session, signal);
   return response.text();
 }
 
-async function fetchBinary(url: string, headers: Record<string, string>, signal: AbortSignal): Promise<Buffer> {
-  const response = await fetch(url, { headers, signal });
-  if (!response.ok) {
-    throw new Error(`Subtitle request failed with HTTP ${response.status}: ${safeUrlParts(url).host}${safeUrlParts(url).path}`);
-  }
+async function fetchSubtitleBinary(
+  track: SubtitleTrack,
+  candidateUrl: string,
+  candidateHeaders: Record<string, string>,
+  url: string,
+  session: PublicMediaSessionLike,
+  signal: AbortSignal
+): Promise<Buffer> {
+  const response = await fetchSubtitleResponse(track, candidateUrl, candidateHeaders, url, session, signal);
   return Buffer.from(await response.arrayBuffer());
+}
+
+async function fetchSubtitleResponse(
+  track: SubtitleTrack,
+  candidateUrl: string,
+  candidateHeaders: Record<string, string>,
+  url: string,
+  session: PublicMediaSessionLike,
+  signal: AbortSignal
+) {
+  let targetUrl = assertPublicHttpUrlSyntax(url);
+  for (let redirectCount = 0; redirectCount <= MAX_SUBTITLE_REDIRECTS; redirectCount += 1) {
+    const response = await session.fetch(targetUrl, {
+      headers: subtitleDownloadHeaders(track, candidateUrl, candidateHeaders, targetUrl),
+      redirect: 'manual',
+      signal
+    });
+    if (![301, 302, 303, 307, 308].includes(response.status)) {
+      if (!response.ok) {
+        await response.body?.cancel();
+        throw new Error(`Subtitle request failed with HTTP ${response.status}: ${safeUrlParts(targetUrl).host}${safeUrlParts(targetUrl).path}`);
+      }
+      return response;
+    }
+    const location = response.headers.get('location');
+    if (!location) {
+      await response.body?.cancel();
+      throw new Error(`Subtitle request returned redirect HTTP ${response.status} without a location`);
+    }
+    await response.body?.cancel();
+    if (redirectCount === MAX_SUBTITLE_REDIRECTS) {
+      throw new Error(`Subtitle request exceeded ${MAX_SUBTITLE_REDIRECTS} redirects`);
+    }
+    targetUrl = assertPublicHttpUrlSyntax(new URL(location, targetUrl).toString());
+  }
+  throw new Error('Subtitle redirect handling failed unexpectedly');
 }
 
 function clamp01(value: number): number {

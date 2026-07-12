@@ -47,7 +47,7 @@ export async function downloadBrowserRequestMedia(input: BrowserRequestDownloadI
         settle(() => reject(new Error(formatBrowserRequestDownloadError(code, `${stdout}\n${stderr}`))));
       }
     });
-    child.stdin.end(JSON.stringify({ headers: input.headers, outputPath: input.outputPath, url: input.url }));
+    child.stdin.end(JSON.stringify({ headers: input.headers, outputPath: input.outputPath, proxyUrl: input.proxyUrl, url: input.url }));
   });
   throwIfAborted(input.signal);
   return { filePath: input.outputPath, bytesWritten: fs.statSync(input.outputPath).size };
@@ -98,6 +98,7 @@ payload = json.loads(sys.stdin.read())
 url = payload["url"]
 headers = payload["headers"]
 output_path = payload["outputPath"]
+proxy_url = payload["proxyUrl"]
 existing_bytes = 0
 range_header = headers.get("Range") or headers.get("range") or ""
 if range_header.startswith("bytes=") and range_header.endswith("-"):
@@ -107,7 +108,7 @@ if range_header.startswith("bytes=") and range_header.endswith("-"):
         existing_bytes = 0
 
 os.makedirs(os.path.dirname(output_path), exist_ok=True)
-response = requests.get(url, headers=headers, impersonate="chrome", stream=True, timeout=30, allow_redirects=False)
+response = requests.get(url, headers=headers, impersonate="chrome", stream=True, timeout=30, allow_redirects=False, proxy=proxy_url)
 retried_without_range = False
 if existing_bytes > 0 and response.status_code == 206:
     content_range = response.headers.get("content-range") or response.headers.get("Content-Range") or ""
@@ -115,7 +116,7 @@ if existing_bytes > 0 and response.status_code == 206:
     if not content_range_match or int(content_range_match.group(1)) != existing_bytes:
         response.close()
         headers = {name: value for name, value in headers.items() if name.lower() != "range"}
-        response = requests.get(url, headers=headers, impersonate="chrome", stream=True, timeout=30, allow_redirects=False)
+        response = requests.get(url, headers=headers, impersonate="chrome", stream=True, timeout=30, allow_redirects=False, proxy=proxy_url)
         retried_without_range = True
 if retried_without_range and response.status_code != 200:
     response.close()

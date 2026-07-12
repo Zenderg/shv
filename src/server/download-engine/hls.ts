@@ -89,7 +89,7 @@ export function parseHlsResourceUrls(manifest: string, baseUrl: string): string[
     for (const match of line.matchAll(/\bURI=(?:"([^"]+)"|([^,\s]+))/g)) {
       const value = match[1] ?? match[2];
       if (value) {
-        urls.add(new URL(value, baseUrl).toString());
+        urls.add(normalizeHttpUrl(new URL(value, baseUrl).toString()));
       }
     }
   }
