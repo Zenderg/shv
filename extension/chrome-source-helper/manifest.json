@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "shv Source Helper",
-  "version": "1.0.44",
+  "version": "1.0.45",
   "description": "Opens source pages in Chromium browsers and captures media candidates for shv.",
   "action": {
     "default_title": "shv sources"
@@ -34,7 +34,6 @@
   ],
   "permissions": [
     "storage",
-    "tabs",
     "cookies",
     "scripting",
     "webNavigation",

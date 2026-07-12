@@ -84,6 +84,10 @@ The app is commonly opened from another LAN device over plain HTTP, for example 
 
 The production UX is the in-page Sources sidebar injected by the extension content script. Do not require users to enable Yandex's `YandexSidePanel` feature flag or depend on Chrome's native `sidePanel` API.
 
+## Permissions
+
+The helper intentionally retains the `<all_urls>` host permission: source pages, their embedded player frames, and media/CDN endpoints are selected by the user and can be on arbitrary HTTP(S) origins. The extension needs that access to observe source-tab media requests, inject the sidebar into source frames, fetch captured HLS manifests with matching cookies, and collect only the cookies relevant to a source session. Static content scripts remain limited to the app origin, and the extension does not request the separate `tabs` permission because its host permission already provides the tab URL access this workflow needs.
+
 The sidebar can be collapsed into a narrow right-edge handle with its arrow button and expanded again with the same control.
 
 The Sources sidebar captures candidates around active playback instead of listing every media-looking request on the page. Start the main video first; the content script reports playback from one visible dominant `<video>`, and the service worker accepts recent network candidates only during a short rolling active window. Byte-range URLs such as `?bytes=0-6402` are ignored because they are chunks, not standalone downloadable sources.
