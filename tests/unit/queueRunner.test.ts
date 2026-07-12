@@ -136,6 +136,157 @@ describe('QueueRunner', () => {
     expect(jobs.requireJob(job.id).status).toBe('canceled');
   });
 
+  test('aborts active work before retrying so cancellation cleanup cannot clobber the pending job', async () => {
+    const { categories, config, jobs } = createServices();
+    const category = categories.create('test');
+    const job = jobs.create('https://example.test/video', category.id);
+    jobs.saveCandidates(job.id, [candidate('https://media.example.test/video.mp4')]);
+    jobs.selectCandidate(job.id, jobs.listCandidates(job.id)[0].id);
+
+    const started = deferred<void>();
+    const downloader = stalledDownloader(started);
+    const runner = new QueueRunner(
+      config,
+      jobs,
+      {} as BrowserAnalyzer,
+      downloader as unknown as DownloadEngine,
+      {} as MediaProcessor,
+      categories,
+      {} as MediaFiles,
+      {} as MediaLibraryService
+    );
+
+    const tick = runner.tick();
+    await started.promise;
+    const retried = await runner.retry(job.id);
+    await tick;
+
+    expect(retried.status).toBe('pending');
+    expect(jobs.requireJob(job.id).status).toBe('pending');
+    expect(jobs.requireJob(job.id).selectedCandidateId).toBeNull();
+    expect(jobs.listCandidates(job.id)).toEqual([]);
+  });
+
+  test('aborts active work before replacing its source', async () => {
+    const { categories, config, jobs } = createServices();
+    const category = categories.create('test');
+    const job = jobs.create('https://example.test/old-source', category.id);
+    jobs.saveCandidates(job.id, [candidate('https://media.example.test/video.mp4')]);
+    jobs.selectCandidate(job.id, jobs.listCandidates(job.id)[0].id);
+
+    const started = deferred<void>();
+    const downloader = stalledDownloader(started);
+    const runner = new QueueRunner(
+      config,
+      jobs,
+      {} as BrowserAnalyzer,
+      downloader as unknown as DownloadEngine,
+      {} as MediaProcessor,
+      categories,
+      {} as MediaFiles,
+      {} as MediaLibraryService
+    );
+
+    const tick = runner.tick();
+    await started.promise;
+    const replacementUrl = 'https://example.test/new-source';
+    const replaced = await runner.replaceSource(job.id, replacementUrl);
+    await tick;
+
+    expect(replaced.status).toBe('pending');
+    expect(jobs.requireJob(job.id)).toMatchObject({ sourceUrl: replacementUrl, status: 'pending' });
+    expect(jobs.listCandidates(job.id)).toEqual([]);
+  });
+
+  test('waits for an aborted run to settle before retrying with available concurrency', async () => {
+    const { categories, config, jobs } = createServices();
+    config.maxConcurrentJobs = 2;
+    const category = categories.create('test');
+    const job = jobs.create('https://example.test/video', category.id);
+    jobs.saveCandidates(job.id, [candidate('https://media.example.test/video.mp4')]);
+    jobs.selectCandidate(job.id, jobs.listCandidates(job.id)[0].id);
+
+    const processingStarted = deferred<void>();
+    const firstAbortObserved = deferred<void>();
+    const secondDownloadStarted = deferred<void>();
+    let downloads = 0;
+    let rejectProcessing: (reason?: unknown) => void = () => {
+      throw new Error('Processing was not aborted');
+    };
+    const downloader = {
+      download: async (_candidate: MediaCandidate, outputPath: string, _onProgress: (progress: number) => void, signal?: AbortSignal) => {
+        downloads += 1;
+        if (downloads === 1) {
+          fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+          fs.writeFileSync(outputPath, 'source-video');
+          return { bytesWritten: 12, filePath: outputPath };
+        }
+        secondDownloadStarted.resolve();
+        return await new Promise<never>((_resolve, reject) => {
+          signal?.addEventListener('abort', () => reject(new JobCanceledError()), { once: true });
+        });
+      }
+    } satisfies Pick<DownloadEngine, 'download'>;
+    const analyzer = {
+      analyze: async () => ({
+        automaticCandidateUrl: 'https://media.example.test/video.mp4',
+        candidates: [candidate('https://media.example.test/video.mp4')],
+        diagnostics: [],
+        screenshotPath: null,
+        titleHint: null
+      })
+    } satisfies Pick<BrowserAnalyzer, 'analyze'>;
+    const processor = {
+      normalize: (_inputPath: string, _outputPath: string, _thumbnailPath: string, _onProgress: (progress: number) => void, signal?: AbortSignal) =>
+        new Promise<never>((_resolve, reject) => {
+          processingStarted.resolve();
+          signal?.addEventListener(
+            'abort',
+            () => {
+              rejectProcessing = reject;
+              firstAbortObserved.resolve();
+            },
+            { once: true }
+          );
+        })
+    } satisfies Pick<MediaProcessor, 'normalize'>;
+    const mediaFiles = {
+      finalVideoPath: () => path.join(config.libraryRoot, 'test', 'video.mp4'),
+      thumbnailPath: () => path.join(config.thumbnailsRoot, `${job.id}.jpg`)
+    } satisfies Pick<MediaFiles, 'finalVideoPath' | 'thumbnailPath'>;
+    const runner = new QueueRunner(
+      config,
+      jobs,
+      analyzer as unknown as BrowserAnalyzer,
+      downloader as unknown as DownloadEngine,
+      processor as unknown as MediaProcessor,
+      categories,
+      mediaFiles as unknown as MediaFiles,
+      {} as MediaLibraryService
+    );
+
+    runner.start();
+    await processingStarted.promise;
+    const retry = runner.retry(job.id);
+    await firstAbortObserved.promise;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(downloads).toBe(1);
+    expect(jobs.requireJob(job.id).status).toBe('processing');
+
+    rejectProcessing(new JobCanceledError());
+    await retry;
+    await secondDownloadStarted.promise;
+
+    expect(downloads).toBe(2);
+    expect(jobs.requireJob(job.id).status).toBe('downloading');
+
+    runner.cancel(job.id);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    runner.stop();
+    expect(jobs.requireJob(job.id).status).toBe('canceled');
+  });
+
   test('starts independent downloads up to the configured concurrency limit', async () => {
     const { categories, config, jobs } = createServices();
     config.maxConcurrentJobs = 2;
@@ -621,6 +772,16 @@ function candidate(url: string) {
     headers: {},
     subtitleTracks: []
   };
+}
+
+function stalledDownloader(started: ReturnType<typeof deferred<void>>) {
+  return {
+    download: (_candidate: MediaCandidate, _outputPath: string, _onProgress: (progress: number) => void, signal?: AbortSignal) =>
+      new Promise<never>((_resolve, reject) => {
+        started.resolve();
+        signal?.addEventListener('abort', () => reject(new JobCanceledError()), { once: true });
+      })
+  } satisfies Pick<DownloadEngine, 'download'>;
 }
 
 function mediaCandidate(url: string): MediaCandidate {
