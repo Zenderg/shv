@@ -29,10 +29,12 @@
     "@tanstack/react-query": "^5.101.2",
     "express": "^4.21.2",
     "fast-xml-parser": "^5.9.3",
+    "ipaddr.js": "^2.4.0",
     "mime-types": "^2.1.35",
     "playwright": "^1.50.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "undici": "^7.28.0",
     "uuid": "^11.0.5",
     "zod": "^3.24.1"
   },

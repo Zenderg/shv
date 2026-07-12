@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 import {
   DownloadEngine,
   buildDashFfmpegArgs,
@@ -11,6 +11,13 @@ import {
 } from '../../src/server/download-engine/downloadEngine.js';
 import type { MediaCandidate } from '../../src/shared/types.js';
 import type { DashRepresentation } from '../../src/server/download-engine/dash.js';
+import type { PublicMediaSessionLike } from '../../src/server/utils/publicHttpProxy.js';
+
+const unsafeTestSessionFactory = async (): Promise<PublicMediaSessionLike> => ({
+  proxyUrl: 'http://127.0.0.1:1',
+  close: async () => undefined,
+  fetch: (url, init) => globalThis.fetch(url, init as RequestInit) as never
+});
 
 describe('DownloadEngine ffmpeg helpers', () => {
   const video: DashRepresentation = {
@@ -35,7 +42,8 @@ describe('DownloadEngine ffmpeg helpers', () => {
       audio,
       { Referer: 'https://example.test/' },
       '/work/source',
-      'https://media.example.test/manifest.mpd'
+      'https://media.example.test/manifest.mpd',
+      'http://127.0.0.1:9999'
     );
 
     expect(args).toEqual(expect.arrayContaining(['-map', '0:v:0', '-map', '1:a:0', '-c', 'copy', '-f', 'matroska', '/work/source']));
@@ -51,7 +59,8 @@ describe('DownloadEngine ffmpeg helpers', () => {
       audio,
       { Authorization: 'Bearer secret', Cookie: 'session=secret' },
       '/work/source',
-      'https://source.example.test/manifest.mpd'
+      'https://source.example.test/manifest.mpd',
+      'http://127.0.0.1:9999'
     );
     const headerValues = args.flatMap((value, index) => value === '-headers' ? [args[index + 1]] : []);
 
@@ -61,7 +70,7 @@ describe('DownloadEngine ffmpeg helpers', () => {
   });
 
   test('rejects DASH input without a direct media representation', () => {
-    expect(() => buildDashFfmpegArgs(null, null, {}, '/work/source', 'https://source.example.test/manifest.mpd')).toThrow(
+    expect(() => buildDashFfmpegArgs(null, null, {}, '/work/source', 'https://source.example.test/manifest.mpd', 'http://127.0.0.1:9999')).toThrow(
       'DASH manifest did not include a playable media representation'
     );
   });
@@ -69,8 +78,8 @@ describe('DownloadEngine ffmpeg helpers', () => {
   test('builds HLS ffmpeg args with reconnects but no EOF reconnects or persistent segment connections', () => {
     const args = buildHlsFfmpegArgs(
       'https://media.example.test/playlist.m3u8',
-      { Referer: 'https://source.example.test/' },
-      '/work/job/source'
+      '/work/job/source',
+      'http://127.0.0.1:9999'
     );
 
     expect(args).toEqual(
@@ -81,6 +90,12 @@ describe('DownloadEngine ffmpeg helpers', () => {
         '1',
         '-reconnect_on_network_error',
         '1',
+        '-protocol_whitelist',
+        'http,https,tcp,tls,crypto',
+        '-http_proxy',
+        'http://127.0.0.1:9999',
+        '-max_redirects',
+        '0',
         '-http_persistent',
         '0',
         '-fflags',
@@ -88,7 +103,120 @@ describe('DownloadEngine ffmpeg helpers', () => {
       ])
     );
     expect(args.indexOf('-http_persistent')).toBeLessThan(args.indexOf('-i'));
+    expect(args[args.indexOf('-headers') + 1]).toBe('');
     expect(args).not.toContain('-reconnect_at_eof');
+  });
+
+  test('rejects an unsafe ffmpeg input URL before spawning ffmpeg', () => {
+    expect(() => buildHlsFfmpegArgs('file:///etc/passwd', '/work/source', 'http://127.0.0.1:9999')).toThrow(/HTTP or HTTPS/);
+  });
+
+  test('rejects private HLS and DASH URLs resolved from manifests before requesting them', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'shv-manifest-url-safety-'));
+    const candidate: MediaCandidate = {
+      bitrate: null,
+      confidence: 0.9,
+      contentType: 'application/vnd.apple.mpegurl',
+      discoveredAt: new Date().toISOString(),
+      durationSeconds: null,
+      headers: {},
+      id: 'candidate-id',
+      jobId: 'job-id',
+      kind: 'hls',
+      manifestType: 'hls',
+      resolution: null,
+      sizeBytes: null,
+      subtitleTracks: [],
+      url: 'https://1.1.1.1/master.m3u8'
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nhttp://127.0.0.1/private.m3u8'))
+      .mockResolvedValueOnce(new Response('<MPD><Period><AdaptationSet mimeType="video/mp4"><Representation bandwidth="1"><BaseURL>http://169.254.169.254/video.mp4</BaseURL></Representation></AdaptationSet></Period></MPD>'));
+    vi.stubGlobal('fetch', fetchMock);
+
+    try {
+      await expect(new DownloadEngine(undefined, undefined, unsafeTestSessionFactory).download(candidate, path.join(tempDir, 'source'), () => undefined)).rejects.toThrow(/public address/);
+      await expect(new DownloadEngine(undefined, undefined, unsafeTestSessionFactory).download({ ...candidate, kind: 'dash', manifestType: 'dash' }, path.join(tempDir, 'dash-source'), () => undefined)).rejects.toThrow(
+        /public address/
+      );
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  test('rejects HLS and DASH redirects to private targets before following them', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'shv-manifest-redirect-safety-'));
+    const candidate: MediaCandidate = {
+      bitrate: null,
+      confidence: 0.9,
+      contentType: 'application/vnd.apple.mpegurl',
+      discoveredAt: new Date().toISOString(),
+      durationSeconds: null,
+      headers: {},
+      id: 'candidate-id',
+      jobId: 'job-id',
+      kind: 'hls',
+      manifestType: 'hls',
+      resolution: null,
+      sizeBytes: null,
+      subtitleTracks: [],
+      url: 'https://1.1.1.1/master.m3u8'
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(null, { headers: { location: 'http://127.0.0.1/private.m3u8' }, status: 302 }))
+      .mockResolvedValueOnce(new Response(null, { headers: { location: 'http://169.254.169.254/video.mp4' }, status: 302 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    try {
+      await expect(new DownloadEngine(undefined, undefined, unsafeTestSessionFactory).download(candidate, path.join(tempDir, 'hls-source'), () => undefined)).rejects.toThrow(/public address/);
+      await expect(new DownloadEngine(undefined, undefined, unsafeTestSessionFactory).download({ ...candidate, kind: 'dash', manifestType: 'dash' }, path.join(tempDir, 'dash-source'), () => undefined)).rejects.toThrow(
+        /public address/
+      );
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(fetchMock.mock.calls.every(([, options]) => options.redirect === 'manual')).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  test('strips captured credentials on cross-origin redirects and keeps them on same-origin redirects', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'shv-header-redirect-safety-'));
+    const candidate: MediaCandidate = {
+      bitrate: null,
+      confidence: 0.9,
+      contentType: 'video/mp4',
+      discoveredAt: new Date().toISOString(),
+      durationSeconds: null,
+      headers: { Authorization: 'Bearer secret', Cookie: 'session=secret' },
+      id: 'candidate-id',
+      jobId: 'job-id',
+      kind: 'direct',
+      manifestType: null,
+      resolution: null,
+      sizeBytes: null,
+      subtitleTracks: [],
+      url: 'https://source.example.test/video.mp4'
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(null, { headers: { location: 'https://cdn.example.test/video.mp4' }, status: 302 }))
+      .mockResolvedValueOnce(new Response('cross-origin'))
+      .mockResolvedValueOnce(new Response(null, { headers: { location: '/final.mp4' }, status: 302 }))
+      .mockResolvedValueOnce(new Response('same-origin'));
+    vi.stubGlobal('fetch', fetchMock);
+
+    try {
+      const engine = new DownloadEngine(undefined, async (url) => url, unsafeTestSessionFactory);
+      await engine.download(candidate, path.join(tempDir, 'cross-origin.mp4'), () => undefined);
+      await engine.download(candidate, path.join(tempDir, 'same-origin.mp4'), () => undefined);
+
+      expect(fetchMock.mock.calls[0][1].headers).toEqual(candidate.headers);
+      expect(fetchMock.mock.calls[1][1].headers).toEqual({});
+      expect(fetchMock.mock.calls[2][1].headers).toEqual(candidate.headers);
+      expect(fetchMock.mock.calls[3][1].headers).toEqual(candidate.headers);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   test('formats ffmpeg HLS network errors without frame spam or signed query strings', () => {
@@ -120,7 +248,7 @@ describe('DownloadEngine ffmpeg helpers', () => {
       fs.writeFileSync(input.outputPath, 'browser bytes');
       input.onProgress(0.5);
       return { bytesWritten: fs.statSync(input.outputPath).size, filePath: input.outputPath };
-    });
+    }, async (url) => url);
     const candidate: MediaCandidate = {
       bitrate: null,
       confidence: 0.86,
@@ -188,9 +316,9 @@ class Response:
 
 class Requests:
     @staticmethod
-    def get(url, headers, impersonate, stream, timeout):
+    def get(url, headers, impersonate, stream, timeout, allow_redirects, proxy):
         with open(os.environ["SHV_CURL_CFFI_LOG"], "a") as log:
-            log.write(json.dumps(headers) + "\\n")
+            log.write(json.dumps({"headers": headers, "allow_redirects": allow_redirects, "proxy": proxy}) + "\\n")
         if headers.get("Range") or headers.get("range"):
             return Response({"Content-Range": "bytes 0-2/10"})
         return Response({})
@@ -237,9 +365,15 @@ requests = Requests()
       }
     }
 
-    const requestHeaders = fs.readFileSync(requestLogPath, 'utf8').trim().split('\n').map((line) => JSON.parse(line) as Record<string, string>);
-    expect(requestHeaders[0].Range).toBe('bytes=5-');
-    expect(Object.keys(requestHeaders[1]).some((name) => name.toLowerCase() === 'range')).toBe(false);
+    const requests = fs.readFileSync(requestLogPath, 'utf8').trim().split('\n').map((line) => JSON.parse(line) as {
+      allow_redirects: boolean;
+      headers: Record<string, string>;
+      proxy: string;
+    });
+    expect(requests[0].headers.Range).toBe('bytes=5-');
+    expect(Object.keys(requests[1].headers).some((name) => name.toLowerCase() === 'range')).toBe(false);
+    expect(requests.every((request) => request.allow_redirects === false)).toBe(true);
+    expect(requests.every((request) => request.proxy.startsWith('http://127.0.0.1:'))).toBe(true);
     expect(fs.readFileSync(outputPath)).toEqual(Buffer.from('stale'));
   });
 });

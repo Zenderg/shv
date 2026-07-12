@@ -128,6 +128,8 @@ Generic sites use the built-in web/media pipeline:
 
 Direct downloads should resume from the existing output size when the server accepts byte ranges. If a resume request is not accepted, the downloader rewrites the output rather than appending incompatible bytes.
 
+Every URL supplied to the downloader, including subtitle, HLS, and DASH URLs derived from manifests, must use HTTP(S). All Node, browser-impersonated, and ffmpeg media traffic passes through a loopback proxy that rejects loopback, link-local, private, multicast, and reserved targets. The proxy rejects a hostname when any DNS answer is unsafe and connects directly to an address from the validated DNS snapshot, preserving the original hostname for HTTP Host and TLS while preventing DNS-rebinding races. Node-managed downloads follow redirects manually and recompute captured headers for each target origin. Browser-impersonated and ffmpeg-owned inputs disable redirects. The HLS ffmpeg fallback receives no captured request headers because ffmpeg refetches a mutable manifest whose child origins can differ from the inspected snapshot.
+
 DRM-protected streams are unsupported. Future work should mark them explicitly rather than attempting key extraction or circumvention.
 
 Site-specific downloader engines are allowed only behind explicit extractors for known complex platforms. YouTube uses `yt-dlp` because `googlevideo` playback URLs can be bound to player/runtime details that are not replayable by the generic downloader.

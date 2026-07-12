@@ -1,11 +1,19 @@
 import fs from 'node:fs';
 import http from 'node:http';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { afterEach, describe, expect, test } from 'vitest';
 import type { MediaCandidate } from '../../src/shared/types.js';
 import { DownloadEngine } from '../../src/server/download-engine/downloadEngine.js';
+import { PublicMediaSession, type PublicMediaSessionLike } from '../../src/server/utils/publicHttpProxy.js';
+
+const unsafeTestSessionFactory = async (): Promise<PublicMediaSessionLike> => ({
+  proxyUrl: 'http://127.0.0.1:1',
+  close: async () => undefined,
+  fetch: (url, init) => globalThis.fetch(url, init as RequestInit) as never
+});
 
 describe('DownloadEngine direct download', () => {
   const servers: http.Server[] = [];
@@ -49,7 +57,7 @@ describe('DownloadEngine direct download', () => {
     };
     const output = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'xxx-download-')), 'video.mp4');
 
-    const result = await new DownloadEngine().download(candidate, output, () => undefined);
+    const result = await new DownloadEngine(undefined, async (url) => url, unsafeTestSessionFactory).download(candidate, output, () => undefined);
 
     expect(result.bytesWritten).toBe(content.length);
     expect(fs.readFileSync(output)).toEqual(content);
@@ -100,7 +108,7 @@ describe('DownloadEngine direct download', () => {
     const output = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'shv-resume-download-')), 'video.mp4');
     fs.writeFileSync(output, 'stale');
 
-    const result = await new DownloadEngine().download(candidate, output, () => undefined);
+    const result = await new DownloadEngine(undefined, async (url) => url, unsafeTestSessionFactory).download(candidate, output, () => undefined);
 
     expect(ranges).toEqual(['bytes=5-', undefined]);
     expect(result.bytesWritten).toBe(content.length);
@@ -144,7 +152,7 @@ describe('DownloadEngine direct download', () => {
     const output = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'shv-resume-download-')), 'video.mp4');
     fs.writeFileSync(output, existing);
 
-    await expect(new DownloadEngine().download(candidate, output, () => undefined)).rejects.toThrow(
+    await expect(new DownloadEngine(undefined, async (url) => url, unsafeTestSessionFactory).download(candidate, output, () => undefined)).rejects.toThrow(
       'Download resume retry returned HTTP 206; expected a complete HTTP 200 response'
     );
     expect(ranges).toEqual([`bytes=${existing.length}-`, undefined]);
@@ -188,7 +196,7 @@ describe('DownloadEngine direct download', () => {
     const output = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'shv-resume-download-')), 'video.mp4');
     fs.writeFileSync(output, existing);
 
-    const result = await new DownloadEngine().download(candidate, output, () => undefined);
+    const result = await new DownloadEngine(undefined, async (url) => url, unsafeTestSessionFactory).download(candidate, output, () => undefined);
 
     expect(result.bytesWritten).toBe(existing.length + remaining.length);
     expect(fs.readFileSync(output)).toEqual(Buffer.concat([existing, remaining]));
@@ -256,7 +264,7 @@ describe('DownloadEngine direct download', () => {
     const output = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'xxx-hls-download-')), 'video.ts');
     const progress: number[] = [];
 
-    const result = await new DownloadEngine().download(candidate, output, (value) => progress.push(value));
+    const result = await new DownloadEngine(undefined, async (url) => url, unsafeTestSessionFactory).download(candidate, output, (value) => progress.push(value));
 
     expect(result.bytesWritten).toBe(firstSegment.length + secondSegment.length);
     expect(fs.readFileSync(output)).toEqual(Buffer.concat([firstSegment, secondSegment]));
@@ -334,7 +342,7 @@ describe('DownloadEngine direct download', () => {
     };
     const output = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'shv-cross-origin-hls-')), 'video.ts');
 
-    await new DownloadEngine().download(candidate, output, () => undefined);
+    await new DownloadEngine(undefined, async (url) => url, unsafeTestSessionFactory).download(candidate, output, () => undefined);
 
     expect(manifestHeaders).toEqual([
       { authorization: 'Bearer secret', cookie: 'session=secret', custom: 'custom-secret' }
@@ -353,13 +361,34 @@ describe('DownloadEngine direct download', () => {
     await createTestSegment(secondSegmentPath, 1200, 10);
     const firstSegment = fs.readFileSync(firstSegmentPath);
     const secondSegment = fs.readFileSync(secondSegmentPath);
+    let forceFfmpegNetworkPath = false;
+    let mediaManifestRequestCount = 0;
+    const observedRequests: Array<{
+      authorization?: string;
+      cookie?: string;
+      custom?: string;
+      host?: string;
+      path?: string;
+    }> = [];
     const server = http.createServer((request, response) => {
+      observedRequests.push({
+        authorization: request.headers.authorization,
+        cookie: request.headers.cookie,
+        custom: request.headers['x-media-token'] as string | undefined,
+        host: request.headers.host,
+        path: request.url
+      });
       switch (request.url) {
         case '/master.m3u8':
           response.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl' });
           response.end(['#EXTM3U', '#EXT-X-STREAM-INF:BANDWIDTH=1000,RESOLUTION=640x360', 'media.m3u8', ''].join('\n'));
           return;
         case '/media.m3u8':
+          mediaManifestRequestCount += 1;
+          const extension = forceFfmpegNetworkPath ? 'm4s' : 'ts';
+          const segmentOrigin = forceFfmpegNetworkPath && mediaManifestRequestCount >= 3
+            ? `http://cdn.example.test:${(server.address() as net.AddressInfo).port}/`
+            : '';
           response.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl' });
           response.end([
             '#EXTM3U',
@@ -367,18 +396,20 @@ describe('DownloadEngine direct download', () => {
             '#EXT-X-PLAYLIST-TYPE:VOD',
             '#EXT-X-MEDIA-SEQUENCE:1',
             '#EXTINF:1.0,',
-            'seg-1.ts',
+            `${segmentOrigin}seg-1.${extension}`,
             '#EXTINF:1.0,',
-            'seg-2.ts',
+            `${segmentOrigin}seg-2.${extension}`,
             '#EXT-X-ENDLIST',
             ''
           ].join('\n'));
           return;
         case '/seg-1.ts':
+        case '/seg-1.m4s':
           response.writeHead(200, { 'content-type': 'video/MP2T', 'content-length': firstSegment.length });
           response.end(firstSegment);
           return;
         case '/seg-2.ts':
+        case '/seg-2.m4s':
           response.writeHead(200, { 'content-type': 'video/MP2T', 'content-length': secondSegment.length });
           response.end(secondSegment);
           return;
@@ -397,7 +428,7 @@ describe('DownloadEngine direct download', () => {
       id: 'candidate',
       jobId: 'job',
       kind: 'hls',
-      url: `http://127.0.0.1:${address.port}/master.m3u8`,
+      url: `http://media.example.test:${address.port}/master.m3u8`,
       contentType: 'application/vnd.apple.mpegurl',
       manifestType: 'hls',
       resolution: null,
@@ -405,15 +436,36 @@ describe('DownloadEngine direct download', () => {
       durationSeconds: null,
       sizeBytes: null,
       confidence: 1,
-      headers: {},
+      headers: {
+        Authorization: 'Bearer manifest-secret',
+        Cookie: 'session=manifest-secret',
+        'X-Media-Token': 'custom-manifest-secret'
+      },
       subtitleTracks: [],
       discoveredAt: new Date().toISOString()
     };
     const output = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'xxx-hls-download-')), 'video.ts');
 
-    await new DownloadEngine().download(candidate, output, () => undefined);
+    const proxySessionFactory = () => PublicMediaSession.start({
+      connect: (_address, port) => net.connect({ host: '127.0.0.1', port }),
+      resolve: async () => [{ address: '93.184.216.34', family: 4 }]
+    });
+    await new DownloadEngine(undefined, undefined, proxySessionFactory).download(candidate, output, () => undefined);
 
     await expect(probeDuration(output)).resolves.toBeCloseTo(2, 0);
+
+    forceFfmpegNetworkPath = true;
+    const ffmpegOutput = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'shv-hls-proxy-')), 'video.mkv');
+    await new DownloadEngine(undefined, undefined, proxySessionFactory).download(candidate, ffmpegOutput, () => undefined);
+    await expect(probeDuration(ffmpegOutput)).resolves.toBeCloseTo(11, 0);
+
+    const ffmpegManifestRequest = observedRequests.filter((request) => request.path === '/media.m3u8').at(-1);
+    expect(ffmpegManifestRequest).toMatchObject({ authorization: undefined, cookie: undefined, custom: undefined });
+    const crossOriginSegmentRequests = observedRequests.filter((request) => request.host?.startsWith('cdn.example.test:'));
+    expect(crossOriginSegmentRequests).toHaveLength(2);
+    expect(crossOriginSegmentRequests.every((request) => (
+      request.authorization === undefined && request.cookie === undefined && request.custom === undefined
+    ))).toBe(true);
   });
 });
 

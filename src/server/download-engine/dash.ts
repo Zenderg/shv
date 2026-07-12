@@ -1,4 +1,5 @@
 import { XMLParser } from 'fast-xml-parser';
+import { normalizeHttpUrl } from '../utils/networkSafety.js';
 
 export interface DashRepresentation {
   id: string | null;
@@ -72,7 +73,7 @@ function parseDashRepresentationsByType(
         bandwidth: Number(xmlAttribute(representation, 'bandwidth') ?? 0),
         width: xmlNumberAttribute(representation, 'width'),
         height: xmlNumberAttribute(representation, 'height'),
-        baseUrl: new URL(baseUrl, manifestUrl).toString()
+        baseUrl: normalizeHttpUrl(new URL(baseUrl, manifestUrl).toString())
       });
     }
   }

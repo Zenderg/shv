@@ -1,3 +1,5 @@
+import { normalizeHttpUrl } from '../utils/networkSafety.js';
+
 export interface HlsVariant {
   uri: string;
   bandwidth: number;
@@ -24,7 +26,7 @@ export function parseHlsVariants(manifest: string, baseUrl: string): HlsVariant[
       continue;
     }
     variants.push({
-      uri: new URL(nextUri, baseUrl).toString(),
+      uri: normalizeHttpUrl(new URL(nextUri, baseUrl).toString()),
       bandwidth: Number(attributes.BANDWIDTH ?? 0),
       resolution: attributes.RESOLUTION ?? null
     });
@@ -70,7 +72,7 @@ export function parseHlsSegments(manifest: string, baseUrl: string): HlsSegment[
     }
     segments.push({
       durationSeconds: pendingDuration,
-      uri: new URL(line, baseUrl).toString()
+      uri: normalizeHttpUrl(new URL(line, baseUrl).toString())
     });
     pendingDuration = null;
   }
@@ -87,7 +89,7 @@ export function parseHlsResourceUrls(manifest: string, baseUrl: string): string[
     for (const match of line.matchAll(/\bURI=(?:"([^"]+)"|([^,\s]+))/g)) {
       const value = match[1] ?? match[2];
       if (value) {
-        urls.add(new URL(value, baseUrl).toString());
+        urls.add(normalizeHttpUrl(new URL(value, baseUrl).toString()));
       }
     }
   }
