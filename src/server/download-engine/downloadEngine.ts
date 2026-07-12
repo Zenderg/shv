@@ -3,9 +3,10 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import type { MediaCandidate } from '../../shared/types.js';
 import { latestFfmpegTime } from '../media-processing/mediaProcessor.js';
-import { canDownloadPlainHlsSegments, parseHlsDurationSeconds, parseHlsSegments, selectBestHlsVariant, type HlsSegment } from './hls.js';
+import { canDownloadPlainHlsSegments, parseHlsDurationSeconds, parseHlsResourceUrls, parseHlsSegments, selectBestHlsVariant, type HlsSegment } from './hls.js';
 import { selectBestDashRenditions, type DashRepresentation } from './dash.js';
 import { JobCanceledError, onAbort, throwIfAborted } from '../utils/cancellation.js';
+import { requestHeadersForUrl, requestHeadersForUrls } from '../utils/downloadRequestHeaders.js';
 import { logJobEvent, safeUrlParts, shortMessage } from '../utils/jobLogger.js';
 
 export interface DownloadResult {
@@ -125,8 +126,11 @@ export class DownloadEngine {
   ): Promise<DownloadResult> {
     const manifest = await fetchText(candidate.url, candidate.headers, signal);
     const variantUrl = selectBestHlsVariant(manifest, candidate.url);
-    const mediaManifest = variantUrl === candidate.url ? manifest : await fetchText(variantUrl, candidate.headers, signal);
+    const mediaManifest = variantUrl === candidate.url
+      ? manifest
+      : await fetchText(variantUrl, requestHeadersForUrl(candidate.headers, candidate.url, variantUrl), signal);
     const segments = parseHlsSegments(mediaManifest, variantUrl);
+    const resourceUrls = parseHlsResourceUrls(mediaManifest, variantUrl);
     const plainSegmentDownload = canDownloadPlainHlsSegments(mediaManifest, segments);
     const durationSeconds = parseHlsDurationSeconds(mediaManifest);
     logJobEvent('info', 'hls-manifest-selected', {
@@ -143,10 +147,11 @@ export class DownloadEngine {
       variant: safeUrlParts(variantUrl)
     });
     if (plainSegmentDownload) {
-      return this.downloadHlsSegments(segments, candidate.headers, outputPath, onProgress, signal);
+      return this.downloadHlsSegments(segments, candidate.url, candidate.headers, outputPath, onProgress, signal);
     }
+    const ffmpegHeaders = requestHeadersForUrls(candidate.headers, candidate.url, [variantUrl, ...resourceUrls]);
     await this.runFfmpeg(
-      buildHlsFfmpegArgs(variantUrl, candidate.headers, outputPath),
+      buildHlsFfmpegArgs(variantUrl, ffmpegHeaders, outputPath),
       onProgress,
       signal,
       durationSeconds
@@ -156,6 +161,7 @@ export class DownloadEngine {
 
   private async downloadHlsSegments(
     segments: HlsSegment[],
+    capturedUrl: string,
     headers: Record<string, string>,
     outputPath: string,
     onProgress: (progress: number) => void,
@@ -181,7 +187,10 @@ export class DownloadEngine {
         const segment = segments[index];
         const segmentPath = path.join(segmentDirectory, `segment-${String(index + 1).padStart(6, '0')}.ts`);
         const stream = fs.createWriteStream(segmentPath, { flags: 'w' });
-        const response = await fetch(segment.uri, { headers, signal });
+        const response = await fetch(segment.uri, {
+          headers: requestHeadersForUrl(headers, capturedUrl, segment.uri),
+          signal
+        });
         if (!response.ok) {
           throw new Error(`HLS segment ${index + 1} request failed with HTTP ${response.status}`);
         }
@@ -248,7 +257,11 @@ export class DownloadEngine {
   ): Promise<DownloadResult> {
     const manifest = await fetchText(candidate.url, candidate.headers, signal);
     const selected = selectBestDashRenditions(manifest, candidate.url);
-    await this.runFfmpeg(buildDashFfmpegArgs(selected.video, selected.audio, candidate.headers, outputPath), onProgress, signal);
+    await this.runFfmpeg(
+      buildDashFfmpegArgs(selected.video, selected.audio, candidate.headers, outputPath, candidate.url),
+      onProgress,
+      signal
+    );
     return { filePath: outputPath, bytesWritten: fs.statSync(outputPath).size };
   }
 
@@ -461,18 +474,34 @@ export function buildDashFfmpegArgs(
   video: DashRepresentation | null,
   audio: DashRepresentation | null,
   headers: Record<string, string>,
-  outputPath: string
+  outputPath: string,
+  capturedManifestUrl: string
 ): string[] {
-  const headerArgs = headersToFfmpeg(headers);
   const args = ['-y'];
   const primaryInput = video?.baseUrl;
   if (!primaryInput) {
     throw new Error('DASH manifest did not include a playable media representation');
   }
 
-  args.push(...ffmpegNetworkInputArgs(), '-headers', headerArgs, '-i', primaryInput);
+  args.push(
+    ...ffmpegNetworkInputArgs(),
+    '-headers',
+    headersToFfmpeg(requestHeadersForUrl(headers, capturedManifestUrl, primaryInput)),
+    '-i',
+    primaryInput
+  );
   if (audio) {
-    args.push(...ffmpegNetworkInputArgs(), '-headers', headerArgs, '-i', audio.baseUrl, '-map', '0:v:0', '-map', '1:a:0');
+    args.push(
+      ...ffmpegNetworkInputArgs(),
+      '-headers',
+      headersToFfmpeg(requestHeadersForUrl(headers, capturedManifestUrl, audio.baseUrl)),
+      '-i',
+      audio.baseUrl,
+      '-map',
+      '0:v:0',
+      '-map',
+      '1:a:0'
+    );
   }
   args.push('-c', 'copy', '-f', 'matroska', outputPath);
   return args;

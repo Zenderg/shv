@@ -10,6 +10,7 @@ import type { MediaLibraryService } from '../media-library/mediaLibraryService.j
 import type { MediaProcessor } from '../media-processing/mediaProcessor.js';
 import { NoopSourceExtractor, type SourceExtractor } from '../source-extractors/sourceExtractorService.js';
 import { JobCanceledError, isCancellationError, onAbort, throwIfAborted } from '../utils/cancellation.js';
+import { requestHeadersForUrl } from '../utils/downloadRequestHeaders.js';
 import { assertInsideRoot, titleFromUrl } from '../utils/fileSafety.js';
 import { logJobEvent, safeUrlParts, shortMessage } from '../utils/jobLogger.js';
 import type { JobService } from './jobService.js';
@@ -362,9 +363,9 @@ export class QueueRunner {
       this.throwIfCanceled(candidate.jobId, signal);
       const localPath = path.join(subtitleDir, `subtitle-${index + 1}${subtitleExtension(track)}`);
       if (track.format === 'hls') {
-        await downloadHlsSubtitleTrack(track, localPath, candidate.headers, signal);
+        await downloadHlsSubtitleTrack(track, localPath, candidate.url, candidate.headers, signal);
       } else {
-        await downloadSubtitleFile(track, localPath, candidate.headers, signal);
+        await downloadSubtitleFile(track, localPath, candidate.url, candidate.headers, signal);
       }
       downloaded.push({ ...track, localPath });
       logJobEvent('info', 'subtitle-downloaded', {
@@ -438,20 +439,30 @@ function subtitleExtension(track: SubtitleTrack): string {
 async function downloadSubtitleFile(
   track: SubtitleTrack,
   localPath: string,
+  candidateUrl: string,
   candidateHeaders: Record<string, string>,
   signal: AbortSignal
 ): Promise<void> {
-  const body = await fetchBinary(track.url, subtitleDownloadHeaders(track, candidateHeaders), signal);
+  const body = await fetchBinary(
+    track.url,
+    subtitleDownloadHeaders(track, candidateUrl, candidateHeaders, track.url),
+    signal
+  );
   fs.writeFileSync(localPath, body);
 }
 
 async function downloadHlsSubtitleTrack(
   track: SubtitleTrack,
   localPath: string,
+  candidateUrl: string,
   candidateHeaders: Record<string, string>,
   signal: AbortSignal
 ): Promise<void> {
-  const manifest = await fetchText(track.url, subtitleDownloadHeaders(track, candidateHeaders), signal);
+  const manifest = await fetchText(
+    track.url,
+    subtitleDownloadHeaders(track, candidateUrl, candidateHeaders, track.url),
+    signal
+  );
   const baseUrl = track.url;
   const directory = path.dirname(localPath);
   let segmentIndex = 0;
@@ -467,7 +478,11 @@ async function downloadHlsSubtitleTrack(
     const segmentExtension = path.extname(new URL(segmentUrl).pathname) || '.vtt';
     const segmentName = `subtitle-segment-${segmentIndex}${segmentExtension}`;
     const segmentPath = path.join(directory, segmentName);
-    const body = await fetchBinary(segmentUrl, subtitleDownloadHeaders(track, candidateHeaders), signal);
+    const body = await fetchBinary(
+      segmentUrl,
+      subtitleDownloadHeaders(track, candidateUrl, candidateHeaders, segmentUrl),
+      signal
+    );
     fs.writeFileSync(segmentPath, body);
     rewrittenLines.push(segmentName);
   }
@@ -477,10 +492,15 @@ async function downloadHlsSubtitleTrack(
   fs.writeFileSync(localPath, `${rewrittenLines.join('\n')}\n`);
 }
 
-function subtitleDownloadHeaders(track: SubtitleTrack, candidateHeaders: Record<string, string>): Record<string, string> {
+export function subtitleDownloadHeaders(
+  track: SubtitleTrack,
+  candidateUrl: string,
+  candidateHeaders: Record<string, string>,
+  targetUrl: string
+): Record<string, string> {
   return {
-    ...candidateHeaders,
-    ...(track.headers ?? {})
+    ...requestHeadersForUrl(candidateHeaders, candidateUrl, targetUrl),
+    ...requestHeadersForUrl(track.headers ?? {}, track.url, targetUrl)
   };
 }
 

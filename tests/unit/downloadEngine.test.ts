@@ -30,7 +30,13 @@ describe('DownloadEngine ffmpeg helpers', () => {
   };
 
   test('maps separate DASH video and audio inputs into one output', () => {
-    const args = buildDashFfmpegArgs(video, audio, { Referer: 'https://example.test/' }, '/work/source');
+    const args = buildDashFfmpegArgs(
+      video,
+      audio,
+      { Referer: 'https://example.test/' },
+      '/work/source',
+      'https://media.example.test/manifest.mpd'
+    );
 
     expect(args).toEqual(expect.arrayContaining(['-map', '0:v:0', '-map', '1:a:0', '-c', 'copy', '-f', 'matroska', '/work/source']));
     expect(args.filter((arg) => arg === '-i')).toHaveLength(2);
@@ -38,8 +44,24 @@ describe('DownloadEngine ffmpeg helpers', () => {
     expect(args).toEqual(expect.arrayContaining(['-reconnect', '1', '-reconnect_on_network_error', '1']));
   });
 
+  test('does not replay captured headers to cross-origin DASH renditions', () => {
+    const sameOriginVideo = { ...video, baseUrl: 'https://source.example.test/video.webm' };
+    const args = buildDashFfmpegArgs(
+      sameOriginVideo,
+      audio,
+      { Authorization: 'Bearer secret', Cookie: 'session=secret' },
+      '/work/source',
+      'https://source.example.test/manifest.mpd'
+    );
+    const headerValues = args.flatMap((value, index) => value === '-headers' ? [args[index + 1]] : []);
+
+    expect(headerValues[0]).toContain('Authorization: Bearer secret');
+    expect(headerValues[0]).toContain('Cookie: session=secret');
+    expect(headerValues[1]).toBe('');
+  });
+
   test('rejects DASH input without a direct media representation', () => {
-    expect(() => buildDashFfmpegArgs(null, null, {}, '/work/source')).toThrow(
+    expect(() => buildDashFfmpegArgs(null, null, {}, '/work/source', 'https://source.example.test/manifest.mpd')).toThrow(
       'DASH manifest did not include a playable media representation'
     );
   });

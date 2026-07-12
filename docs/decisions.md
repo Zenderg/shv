@@ -195,7 +195,7 @@ The older Playwright live-browser screenshot endpoints remain useful diagnostics
 - Showing explicit byte-range chunks such as `?bytes=0-6402` as downloadable sources.
 - Highlighting small preview tiles when the extension cannot credibly map a network-only candidate to a DOM element.
 
-Network candidates must include enough request context for server retry: a limited allowlist of browser headers plus selected cookies on the explicit `Use source` action.
+Network candidates must include enough request context for server retry. Playwright capture preserves replay-safe browser headers while excluding routing, framing, connection, proxy-authentication, and downloader-owned range headers. The extension keeps a narrower browser header allowlist and adds selected cookies only on the explicit `Use source` action.
 
 ## App-Owned Subtitle Selection
 

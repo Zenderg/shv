@@ -80,6 +80,8 @@ SQLite uses explicit migrations under `src/server/storage/migrations.ts`. Core t
 
 The filesystem owns media bytes; SQLite owns the index, queue, candidate, and metadata state.
 
+Captured candidate and subtitle request headers are internal download context. Candidate API responses preserve the candidate shape but strip those headers at the Express DTO boundary so queue and candidate-list reads cannot disclose cookies, authorization values, or custom tokens.
+
 ## Queue Contracts
 
 `QueueRunner` serializes active work:
@@ -133,6 +135,8 @@ Site-specific downloader engines are allowed only behind explicit extractors for
 Some DASH manifests expose video and audio as separate adaptation sets. The downloader must select both the best video representation and the best audio representation, then pass both inputs to ffmpeg with stream copy. Selecting only the video representation silently produces a saved file without sound.
 
 Direct `browser-request` media candidates are intentionally downloaded with the browser-impersonated `curl_cffi` path instead of Node `fetch`. Some CDNs accept the same signed URL, cookies, referer, range, and sec-fetch headers from Chromium's media network stack but return HTTP 403 to Node/undici. Keep this as the single backend for direct `browser-request` media so failures have one debuggable request path.
+
+Captured request headers are origin-bound. The downloader replays them only to the origin of the URL that supplied them; cross-origin HLS variants, segments, keys, init maps, DASH renditions, subtitle playlists, and subtitle segments receive no captured headers. When ffmpeg must own a complex HLS playlist, any cross-origin child resource removes captured headers from the whole ffmpeg input because ffmpeg accepts only one header set for that playlist.
 
 DASH manifests are parsed as XML rather than scanned with regular expressions. Namespace-prefixed and self-closing representation elements are supported, comments are ignored, and escaped query separators such as `&amp;` are decoded before invoking ffmpeg.
 

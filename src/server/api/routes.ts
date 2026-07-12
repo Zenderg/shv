@@ -15,6 +15,7 @@ import type { ExtensionDebugService } from '../extension-debug/extensionDebugSer
 import type { MediaFiles } from '../media-library/mediaFiles.js';
 import type { MediaLibraryService } from '../media-library/mediaLibraryService.js';
 import { buildZipArchive, type ZipEntryInput } from '../utils/zipArchive.js';
+import { candidateResponses, queueSnapshotResponse } from './candidateResponses.js';
 import {
   DEV_SOURCE_EXTENSION_ID,
   PROD_SOURCE_EXTENSION_ID,
@@ -144,7 +145,7 @@ export function createRouter(services: RouteServices): Router {
   });
 
   router.get('/api/queue', (_request, response) => {
-    response.json(services.jobs.snapshot());
+    response.json(queueSnapshotResponse(services.jobs.snapshot()));
   });
 
   router.get('/extension/shv-source-helper.zip', (request, response) => {
@@ -201,12 +202,12 @@ export function createRouter(services: RouteServices): Router {
   );
 
   router.get('/api/jobs/:id/candidates', (request, response) => {
-    response.json(services.jobs.listCandidates(paramId(request)));
+    response.json(candidateResponses(services.jobs.listCandidates(paramId(request))));
   });
 
   router.post('/api/jobs/:id/extension-candidates', (request, response) => {
     const body = z.object({ candidates: z.array(candidateDraftSchema()).max(200) }).parse(request.body);
-    response.json(services.jobs.replaceExtensionCandidates(paramId(request), body.candidates));
+    response.json(candidateResponses(services.jobs.replaceExtensionCandidates(paramId(request), body.candidates)));
   });
 
   router.post('/api/jobs/:id/cookies', (request, response) => {

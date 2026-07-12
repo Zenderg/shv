@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest';
 import {
   canDownloadPlainHlsSegments,
   parseHlsDurationSeconds,
+  parseHlsResourceUrls,
   parseHlsSegments,
   parseHlsVariants,
   selectBestHlsVariant
@@ -82,6 +83,20 @@ https://cdn.example.test/video/seg-2.ts?h=token
 seg-1.ts`;
 
     expect(canDownloadPlainHlsSegments(encryptedManifest, parseHlsSegments(encryptedManifest, 'https://example.test/index.m3u8'))).toBe(false);
+  });
+
+  test('collects segment, key, and init-map URLs for header scoping', () => {
+    const resourceManifest = `#EXTM3U
+#EXT-X-KEY:METHOD=AES-128,URI="https://keys.example.test/key.bin"
+#EXT-X-MAP:URI="init.mp4"
+#EXTINF:4,
+https://cdn.example.test/seg-1.m4s`;
+
+    expect(parseHlsResourceUrls(resourceManifest, 'https://media.example.test/index.m3u8')).toEqual([
+      'https://cdn.example.test/seg-1.m4s',
+      'https://keys.example.test/key.bin',
+      'https://media.example.test/init.mp4'
+    ]);
   });
 
   test('returns null when a playlist has no media segment durations', () => {

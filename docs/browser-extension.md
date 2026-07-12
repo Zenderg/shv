@@ -131,7 +131,7 @@ adds a `Cookie` header to matching media candidates.
 
 The backend merges uploaded cookies into the Netscape-format file at `./data/app/youtube-cookies.txt` on the host so `yt-dlp` can use them for YouTube and other site-specific extractors. Set `YTDLP_COOKIES_FILE` only when the container should use a different mounted cookie-file path. The extension does not upload the whole browser cookie jar.
 
-Captured network candidates keep a limited downloader header allowlist such as `Referer`, `User-Agent`, and `sec-ch-ua*` because some signed media hosts return errors when the server retries the URL without the original browser request context.
+Extension-captured network candidates keep a limited downloader header allowlist such as `Referer`, `User-Agent`, and `sec-ch-ua*` because some signed media hosts return errors when the server retries the URL without the original browser request context.
 
 ## Candidate Selection
 

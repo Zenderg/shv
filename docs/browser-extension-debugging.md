@@ -103,7 +103,7 @@ The service-worker manifest fetch is not identical to the original media pipelin
 
 ## Headers And Cookies
 
-Network candidates keep a downloader header allowlist such as `Referer`, `User-Agent`, and `sec-ch-ua*` because some signed hosts require the original browser request context when the backend retries a selected URL.
+Extension network candidates keep a downloader header allowlist such as `Referer`, `User-Agent`, and `sec-ch-ua*` because some signed hosts require the original browser request context when the backend retries a selected URL.
 
 HLS manifest metadata fetches inside the service worker intentionally use fewer headers: currently `Accept` and `Accept-Language` only, plus `credentials: 'include'`. Do not pass captured headers such as `User-Agent`, `Referer`, `sec-*`, or `Origin` into normal extension `fetch` without checking browser restrictions; several of them are forbidden or fragile in service-worker fetch.
 
