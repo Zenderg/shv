@@ -6,7 +6,7 @@ import { latestFfmpegTime } from '../media-processing/mediaProcessor.js';
 import { canDownloadPlainHlsSegments, parseHlsDurationSeconds, parseHlsResourceUrls, parseHlsSegments, selectBestHlsVariant, type HlsSegment } from './hls.js';
 import { selectBestDashRenditions, type DashRepresentation } from './dash.js';
 import { JobCanceledError, onAbort, throwIfAborted } from '../utils/cancellation.js';
-import { requestHeadersForUrl, requestHeadersForUrls } from '../utils/downloadRequestHeaders.js';
+import { requestHeadersForUrl } from '../utils/downloadRequestHeaders.js';
 import { logJobEvent, safeUrlParts, shortMessage } from '../utils/jobLogger.js';
 import { assertPublicHttpUrlSyntax } from '../utils/networkSafety.js';
 import { PublicMediaSession, type PublicMediaSessionLike } from '../utils/publicHttpProxy.js';
@@ -186,9 +186,8 @@ export class DownloadEngine {
     if (plainSegmentDownload) {
       return this.downloadHlsSegments(segments, candidate.url, candidate.headers, outputPath, onProgress, session, signal);
     }
-    const ffmpegHeaders = requestHeadersForUrls(candidate.headers, candidate.url, [variantUrl, ...resourceUrls]);
     await this.runFfmpeg(
-      buildHlsFfmpegArgs(variantUrl, ffmpegHeaders, outputPath, session.proxyUrl),
+      buildHlsFfmpegArgs(variantUrl, outputPath, session.proxyUrl),
       onProgress,
       signal,
       durationSeconds
@@ -403,7 +402,7 @@ export class DownloadEngine {
   }
 }
 
-export function buildHlsFfmpegArgs(variantUrl: string, headers: Record<string, string>, outputPath: string, proxyUrl: string): string[] {
+export function buildHlsFfmpegArgs(variantUrl: string, outputPath: string, proxyUrl: string): string[] {
   assertPublicHttpUrlSyntax(variantUrl);
   return [
     '-y',
@@ -411,7 +410,7 @@ export function buildHlsFfmpegArgs(variantUrl: string, headers: Record<string, s
     '-http_persistent',
     '0',
     '-headers',
-    headersToFfmpeg(headers),
+    '',
     '-i',
     variantUrl,
     '-c',

@@ -78,7 +78,6 @@ describe('DownloadEngine ffmpeg helpers', () => {
   test('builds HLS ffmpeg args with reconnects but no EOF reconnects or persistent segment connections', () => {
     const args = buildHlsFfmpegArgs(
       'https://media.example.test/playlist.m3u8',
-      { Referer: 'https://source.example.test/' },
       '/work/job/source',
       'http://127.0.0.1:9999'
     );
@@ -104,11 +103,12 @@ describe('DownloadEngine ffmpeg helpers', () => {
       ])
     );
     expect(args.indexOf('-http_persistent')).toBeLessThan(args.indexOf('-i'));
+    expect(args[args.indexOf('-headers') + 1]).toBe('');
     expect(args).not.toContain('-reconnect_at_eof');
   });
 
   test('rejects an unsafe ffmpeg input URL before spawning ffmpeg', () => {
-    expect(() => buildHlsFfmpegArgs('file:///etc/passwd', {}, '/work/source', 'http://127.0.0.1:9999')).toThrow(/HTTP or HTTPS/);
+    expect(() => buildHlsFfmpegArgs('file:///etc/passwd', '/work/source', 'http://127.0.0.1:9999')).toThrow(/HTTP or HTTPS/);
   });
 
   test('rejects private HLS and DASH URLs resolved from manifests before requesting them', async () => {

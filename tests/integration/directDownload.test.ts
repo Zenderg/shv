@@ -362,14 +362,33 @@ describe('DownloadEngine direct download', () => {
     const firstSegment = fs.readFileSync(firstSegmentPath);
     const secondSegment = fs.readFileSync(secondSegmentPath);
     let forceFfmpegNetworkPath = false;
+    let mediaManifestRequestCount = 0;
+    const observedRequests: Array<{
+      authorization?: string;
+      cookie?: string;
+      custom?: string;
+      host?: string;
+      path?: string;
+    }> = [];
     const server = http.createServer((request, response) => {
+      observedRequests.push({
+        authorization: request.headers.authorization,
+        cookie: request.headers.cookie,
+        custom: request.headers['x-media-token'] as string | undefined,
+        host: request.headers.host,
+        path: request.url
+      });
       switch (request.url) {
         case '/master.m3u8':
           response.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl' });
           response.end(['#EXTM3U', '#EXT-X-STREAM-INF:BANDWIDTH=1000,RESOLUTION=640x360', 'media.m3u8', ''].join('\n'));
           return;
         case '/media.m3u8':
+          mediaManifestRequestCount += 1;
           const extension = forceFfmpegNetworkPath ? 'm4s' : 'ts';
+          const segmentOrigin = forceFfmpegNetworkPath && mediaManifestRequestCount >= 3
+            ? `http://cdn.example.test:${(server.address() as net.AddressInfo).port}/`
+            : '';
           response.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl' });
           response.end([
             '#EXTM3U',
@@ -377,9 +396,9 @@ describe('DownloadEngine direct download', () => {
             '#EXT-X-PLAYLIST-TYPE:VOD',
             '#EXT-X-MEDIA-SEQUENCE:1',
             '#EXTINF:1.0,',
-            `seg-1.${extension}`,
+            `${segmentOrigin}seg-1.${extension}`,
             '#EXTINF:1.0,',
-            `seg-2.${extension}`,
+            `${segmentOrigin}seg-2.${extension}`,
             '#EXT-X-ENDLIST',
             ''
           ].join('\n'));
@@ -417,7 +436,11 @@ describe('DownloadEngine direct download', () => {
       durationSeconds: null,
       sizeBytes: null,
       confidence: 1,
-      headers: {},
+      headers: {
+        Authorization: 'Bearer manifest-secret',
+        Cookie: 'session=manifest-secret',
+        'X-Media-Token': 'custom-manifest-secret'
+      },
       subtitleTracks: [],
       discoveredAt: new Date().toISOString()
     };
@@ -435,6 +458,14 @@ describe('DownloadEngine direct download', () => {
     const ffmpegOutput = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'shv-hls-proxy-')), 'video.mkv');
     await new DownloadEngine(undefined, undefined, proxySessionFactory).download(candidate, ffmpegOutput, () => undefined);
     await expect(probeDuration(ffmpegOutput)).resolves.toBeCloseTo(11, 0);
+
+    const ffmpegManifestRequest = observedRequests.filter((request) => request.path === '/media.m3u8').at(-1);
+    expect(ffmpegManifestRequest).toMatchObject({ authorization: undefined, cookie: undefined, custom: undefined });
+    const crossOriginSegmentRequests = observedRequests.filter((request) => request.host?.startsWith('cdn.example.test:'));
+    expect(crossOriginSegmentRequests).toHaveLength(2);
+    expect(crossOriginSegmentRequests.every((request) => (
+      request.authorization === undefined && request.cookie === undefined && request.custom === undefined
+    ))).toBe(true);
   });
 });
 
