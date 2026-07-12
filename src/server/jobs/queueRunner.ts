@@ -24,6 +24,7 @@ class DownloadStalledError extends Error {
 
 export class QueueRunner {
   private readonly activeControllers = new Map<string, AbortController>();
+  private readonly activeRuns = new Map<string, Promise<void>>();
   private readonly maxConcurrentJobs: number;
   private draining: Promise<void> | null = null;
   private started = false;
@@ -62,13 +63,13 @@ export class QueueRunner {
     return this.jobs.cancel(jobId);
   }
 
-  retry(jobId: string) {
-    this.activeControllers.get(jobId)?.abort();
+  async retry(jobId: string) {
+    await this.abortAndWait(jobId);
     return this.jobs.retry(jobId);
   }
 
-  replaceSource(jobId: string, sourceUrl: string) {
-    this.activeControllers.get(jobId)?.abort();
+  async replaceSource(jobId: string, sourceUrl: string) {
+    await this.abortAndWait(jobId);
     return this.jobs.replaceSource(jobId, sourceUrl);
   }
 
@@ -112,9 +113,14 @@ export class QueueRunner {
       if (!job) {
         break;
       }
-      started.push(this.process(job.id).finally(() => {
+      const run = this.process(job.id).finally(() => {
+        if (this.activeRuns.get(job.id) === run) {
+          this.activeRuns.delete(job.id);
+        }
         this.requestDrain();
-      }));
+      });
+      this.activeRuns.set(job.id, run);
+      started.push(run);
     }
     return started;
   }
@@ -264,6 +270,12 @@ export class QueueRunner {
         this.activeControllers.delete(jobId);
       }
     }
+  }
+
+  private async abortAndWait(jobId: string): Promise<void> {
+    const run = this.activeRuns.get(jobId);
+    this.activeControllers.get(jobId)?.abort();
+    await run;
   }
 
   private transitionIfRunning(

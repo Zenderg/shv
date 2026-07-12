@@ -16,11 +16,11 @@ describe('extension candidate route', () => {
   test('delegates retry and source replacement to the queue runner', async () => {
     const calls: Array<{ id: string; sourceUrl?: string; type: 'replace-source' | 'retry' }> = [];
     const queueRunner = {
-      retry: (id: string) => {
+      retry: async (id: string) => {
         calls.push({ id, type: 'retry' });
         return { id, status: 'pending' } as DownloadJob;
       },
-      replaceSource: (id: string, sourceUrl: string) => {
+      replaceSource: async (id: string, sourceUrl: string) => {
         calls.push({ id, sourceUrl, type: 'replace-source' });
         return { id, sourceUrl, status: 'pending' } as DownloadJob;
       }

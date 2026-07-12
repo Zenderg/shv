@@ -98,7 +98,7 @@ Runnable, active, problem, and canceled jobs are returned by `/api/queue`; only 
 
 Automatic analysis chooses a candidate only when the submitted source URL's direct probe classifies it, or its redirect target, as a confident media source. Confident candidates discovered later through HTML inspection, Playwright network capture, or extension capture still move the job to `needs_manual_selection` so the user explicitly confirms which page source to download.
 
-Manual selection supports choosing a candidate or replacing the job source URL via `/api/jobs/:id/replace-source`. Retrying or replacing the source of an active job aborts its current pipeline before resetting it to `pending`, so stale async work cannot complete the old source.
+Manual selection supports choosing a candidate or replacing the job source URL via `/api/jobs/:id/replace-source`. Retrying or replacing the source of an active job aborts and waits for its current pipeline to settle before resetting it to `pending`, so stale async work cannot complete the old source or overlap the new run.
 
 When the selected candidate has supported subtitle tracks (`webvtt`, `srt`, `ass`, or subtitle HLS), manual selection
 pauses at `needs_subtitle_selection`. The queue UI then calls `/api/jobs/:id/select-subtitle-track` with either one

@@ -190,9 +190,12 @@ export function createRouter(services: RouteServices): Router {
     response.status(201).json(services.jobs.create(body.sourceUrl, body.categoryId));
   });
 
-  router.post('/api/jobs/:id/retry', (request, response) => {
-    response.json(services.queueRunner.retry(paramId(request)));
-  });
+  router.post(
+    '/api/jobs/:id/retry',
+    asyncRoute(async (request, response) => {
+      response.json(await services.queueRunner.retry(paramId(request)));
+    })
+  );
 
   router.post(
     '/api/jobs/:id/cancel',
@@ -249,10 +252,13 @@ export function createRouter(services: RouteServices): Router {
     response.json(services.jobs.selectSubtitleTrack(paramId(request), body.subtitleTrackUrl));
   });
 
-  router.post('/api/jobs/:id/replace-source', (request, response) => {
-    const body = z.object({ sourceUrl: httpUrlSchema }).parse(request.body);
-    response.json(services.queueRunner.replaceSource(paramId(request), body.sourceUrl));
-  });
+  router.post(
+    '/api/jobs/:id/replace-source',
+    asyncRoute(async (request, response) => {
+      const body = z.object({ sourceUrl: httpUrlSchema }).parse(request.body);
+      response.json(await services.queueRunner.replaceSource(paramId(request), body.sourceUrl));
+    })
+  );
 
   router.get('/api/jobs/:id/screenshot', (request, response) => {
     const screenshotPath = path.join(services.config.appDataRoot, 'manual-screenshots', `${paramId(request)}.png`);
