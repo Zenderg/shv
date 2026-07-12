@@ -55,6 +55,145 @@ describe('DownloadEngine direct download', () => {
     expect(fs.readFileSync(output)).toEqual(content);
   });
 
+  test('restarts a direct download when a partial response starts at the wrong offset', async () => {
+    const content = Buffer.from('complete-fixture-video');
+    const partial = Buffer.from('corrupt-partial');
+    const ranges: Array<string | undefined> = [];
+    const server = http.createServer((request, response) => {
+      ranges.push(request.headers.range);
+      if (ranges.length === 1) {
+        response.writeHead(206, {
+          'content-length': partial.length,
+          'content-range': `bytes 0-${partial.length - 1}/${content.length}`
+        });
+        response.end(partial);
+        return;
+      }
+      response.writeHead(200, {
+        'content-length': content.length
+      });
+      response.end(content);
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') {
+      throw new Error('Server did not expose a port');
+    }
+
+    const candidate: MediaCandidate = {
+      id: 'candidate',
+      jobId: 'job',
+      kind: 'direct',
+      url: `http://127.0.0.1:${address.port}/video.mp4`,
+      contentType: 'video/mp4',
+      manifestType: null,
+      resolution: null,
+      bitrate: null,
+      durationSeconds: null,
+      sizeBytes: content.length,
+      confidence: 1,
+      headers: {},
+      subtitleTracks: [],
+      discoveredAt: new Date().toISOString()
+    };
+    const output = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'shv-resume-download-')), 'video.mp4');
+    fs.writeFileSync(output, 'stale');
+
+    const result = await new DownloadEngine().download(candidate, output, () => undefined);
+
+    expect(ranges).toEqual(['bytes=5-', undefined]);
+    expect(result.bytesWritten).toBe(content.length);
+    expect(fs.readFileSync(output)).toEqual(content);
+  });
+
+  test('rejects a partial response returned after a resume retry', async () => {
+    const existing = Buffer.from('stale');
+    const ranges: Array<string | undefined> = [];
+    const server = http.createServer((request, response) => {
+      ranges.push(request.headers.range);
+      response.writeHead(206, {
+        'content-length': 3,
+        'content-range': 'bytes 0-2/10'
+      });
+      response.end('bad');
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') {
+      throw new Error('Server did not expose a port');
+    }
+
+    const candidate: MediaCandidate = {
+      id: 'candidate',
+      jobId: 'job',
+      kind: 'direct',
+      url: `http://127.0.0.1:${address.port}/video.mp4`,
+      contentType: 'video/mp4',
+      manifestType: null,
+      resolution: null,
+      bitrate: null,
+      durationSeconds: null,
+      sizeBytes: 10,
+      confidence: 1,
+      headers: {},
+      subtitleTracks: [],
+      discoveredAt: new Date().toISOString()
+    };
+    const output = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'shv-resume-download-')), 'video.mp4');
+    fs.writeFileSync(output, existing);
+
+    await expect(new DownloadEngine().download(candidate, output, () => undefined)).rejects.toThrow(
+      'Download resume retry returned HTTP 206; expected a complete HTTP 200 response'
+    );
+    expect(ranges).toEqual([`bytes=${existing.length}-`, undefined]);
+    expect(fs.readFileSync(output)).toEqual(existing);
+  });
+
+  test('appends a direct download only when the partial response starts at the requested offset', async () => {
+    const existing = Buffer.from('stale');
+    const remaining = Buffer.from('-remaining-video');
+    const server = http.createServer((request, response) => {
+      expect(request.headers.range).toBe(`bytes=${existing.length}-`);
+      response.writeHead(206, {
+        'content-length': remaining.length,
+        'content-range': `bytes ${existing.length}-${existing.length + remaining.length - 1}/${existing.length + remaining.length}`
+      });
+      response.end(remaining);
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') {
+      throw new Error('Server did not expose a port');
+    }
+
+    const candidate: MediaCandidate = {
+      id: 'candidate',
+      jobId: 'job',
+      kind: 'direct',
+      url: `http://127.0.0.1:${address.port}/video.mp4`,
+      contentType: 'video/mp4',
+      manifestType: null,
+      resolution: null,
+      bitrate: null,
+      durationSeconds: null,
+      sizeBytes: existing.length + remaining.length,
+      confidence: 1,
+      headers: {},
+      subtitleTracks: [],
+      discoveredAt: new Date().toISOString()
+    };
+    const output = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'shv-resume-download-')), 'video.mp4');
+    fs.writeFileSync(output, existing);
+
+    const result = await new DownloadEngine().download(candidate, output, () => undefined);
+
+    expect(result.bytesWritten).toBe(existing.length + remaining.length);
+    expect(fs.readFileSync(output)).toEqual(Buffer.concat([existing, remaining]));
+  });
+
   test('downloads plain HLS media segments without requiring ffmpeg demuxing', async () => {
     const firstSegment = Buffer.from('first-ts-segment');
     const secondSegment = Buffer.from('second-ts-segment');

@@ -75,7 +75,17 @@ export class DownloadEngine {
       headers.Range = `bytes=${existingBytes}-`;
     }
 
-    const response = await fetch(candidate.url, { headers, signal });
+    let response = await fetch(candidate.url, { headers, signal });
+    let retriedWithoutRange = false;
+    if (existingBytes > 0 && response.status === 206 && !hasRequestedContentRange(response, existingBytes)) {
+      await response.body?.cancel();
+      response = await fetch(candidate.url, { headers: withoutRangeHeader(headers), signal });
+      retriedWithoutRange = true;
+    }
+    if (retriedWithoutRange && response.status !== 200) {
+      await response.body?.cancel();
+      throw new Error(`Download resume retry returned HTTP ${response.status}; expected a complete HTTP 200 response`);
+    }
     if (!response.ok && response.status !== 206) {
       throw new Error(`Download failed with HTTP ${response.status}`);
     }
@@ -83,9 +93,10 @@ export class DownloadEngine {
       throw new Error('Download response did not include a body');
     }
 
-    const total = Number(response.headers.get('content-length') ?? candidate.sizeBytes ?? 0) + (response.status === 206 ? existingBytes : 0);
-    const stream = fs.createWriteStream(outputPath, { flags: response.status === 206 ? 'a' : 'w' });
-    let written = response.status === 206 ? existingBytes : 0;
+    const append = response.status === 206 && existingBytes > 0;
+    const total = Number(response.headers.get('content-length') ?? candidate.sizeBytes ?? 0) + (append ? existingBytes : 0);
+    const stream = fs.createWriteStream(outputPath, { flags: append ? 'a' : 'w' });
+    let written = append ? existingBytes : 0;
 
     const reader = response.body.getReader();
     const removeAbortListener = onAbort(signal, () => {
@@ -101,7 +112,7 @@ export class DownloadEngine {
         }
         const chunk = value;
         written += chunk.byteLength;
-        stream.write(chunk);
+        await writeChunk(stream, chunk);
         if (total > 0) {
           onProgress(Math.min(0.95, written / total));
         }
@@ -394,6 +405,16 @@ function browserRequestHeaders(headers: Record<string, string>, existingBytes: n
   };
 }
 
+function hasRequestedContentRange(response: Response, existingBytes: number): boolean {
+  const contentRange = response.headers.get('content-range');
+  const match = contentRange?.match(/^bytes\s+(\d+)-\d+\/(?:\d+|\*)$/i);
+  return match?.[1] === String(existingBytes);
+}
+
+function withoutRangeHeader(headers: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(Object.entries(headers).filter(([name]) => name.toLowerCase() !== 'range'));
+}
+
 function progressFromBrowserRequestLine(line: string): number | null {
   try {
     const message = JSON.parse(line) as { progress?: unknown };
@@ -414,6 +435,7 @@ function formatBrowserRequestDownloadError(code: number | null, log: string): st
 const browserRequestDownloadScript = String.raw`
 import json
 import os
+import re
 import sys
 
 from curl_cffi import requests
@@ -437,6 +459,18 @@ if range_header.startswith("bytes=") and range_header.endswith("-"):
 
 os.makedirs(os.path.dirname(output_path), exist_ok=True)
 response = requests.get(url, headers=headers, impersonate="chrome", stream=True, timeout=30)
+retried_without_range = False
+if existing_bytes > 0 and response.status_code == 206:
+    content_range = response.headers.get("content-range") or response.headers.get("Content-Range") or ""
+    content_range_match = re.match(r"^bytes\\s+(\\d+)-\\d+/(?:\\d+|\\*)$", content_range, re.IGNORECASE)
+    if not content_range_match or int(content_range_match.group(1)) != existing_bytes:
+        response.close()
+        headers = {name: value for name, value in headers.items() if name.lower() != "range"}
+        response = requests.get(url, headers=headers, impersonate="chrome", stream=True, timeout=30)
+        retried_without_range = True
+if retried_without_range and response.status_code != 200:
+    response.close()
+    raise RuntimeError(f"Resume retry returned HTTP {response.status_code}; expected a complete HTTP 200 response")
 if response.status_code < 200 or response.status_code >= 300:
     raise RuntimeError(f"HTTP {response.status_code}")
 

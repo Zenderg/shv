@@ -162,4 +162,84 @@ describe('DownloadEngine ffmpeg helpers', () => {
     });
     expect(progress).toContain(0.5);
   });
+
+  test('rejects a partial response returned after a browser-request resume retry', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'shv-browser-request-retry-'));
+    const moduleDirectory = path.join(tempDir, 'python');
+    const outputPath = path.join(tempDir, 'source');
+    const requestLogPath = path.join(tempDir, 'requests.jsonl');
+    fs.mkdirSync(moduleDirectory);
+    fs.writeFileSync(path.join(moduleDirectory, 'curl_cffi.py'), `
+import json
+import os
+
+
+class Response:
+    def __init__(self, headers):
+        self.status_code = 206
+        self.headers = headers
+
+    def close(self):
+        pass
+
+    def iter_content(self, chunk_size):
+        return [b"bad"]
+
+
+class Requests:
+    @staticmethod
+    def get(url, headers, impersonate, stream, timeout):
+        with open(os.environ["SHV_CURL_CFFI_LOG"], "a") as log:
+            log.write(json.dumps(headers) + "\\n")
+        if headers.get("Range") or headers.get("range"):
+            return Response({"Content-Range": "bytes 0-2/10"})
+        return Response({})
+
+
+requests = Requests()
+`);
+    fs.writeFileSync(outputPath, 'stale');
+    const originalPythonPath = process.env.PYTHONPATH;
+    const originalRequestLogPath = process.env.SHV_CURL_CFFI_LOG;
+    process.env.PYTHONPATH = [moduleDirectory, originalPythonPath].filter(Boolean).join(path.delimiter);
+    process.env.SHV_CURL_CFFI_LOG = requestLogPath;
+    const candidate: MediaCandidate = {
+      bitrate: null,
+      confidence: 0.86,
+      contentType: 'video/mp4',
+      discoveredAt: new Date().toISOString(),
+      durationSeconds: null,
+      headers: {},
+      id: 'candidate-id',
+      jobId: 'job-id',
+      kind: 'browser-request',
+      manifestType: null,
+      resolution: null,
+      sizeBytes: 10,
+      subtitleTracks: [],
+      url: 'https://media.example.test/video.mp4'
+    };
+
+    try {
+      await expect(new DownloadEngine().download(candidate, outputPath, () => undefined)).rejects.toThrow(
+        'Resume retry returned HTTP 206; expected a complete HTTP 200 response'
+      );
+    } finally {
+      if (originalPythonPath === undefined) {
+        delete process.env.PYTHONPATH;
+      } else {
+        process.env.PYTHONPATH = originalPythonPath;
+      }
+      if (originalRequestLogPath === undefined) {
+        delete process.env.SHV_CURL_CFFI_LOG;
+      } else {
+        process.env.SHV_CURL_CFFI_LOG = originalRequestLogPath;
+      }
+    }
+
+    const requestHeaders = fs.readFileSync(requestLogPath, 'utf8').trim().split('\n').map((line) => JSON.parse(line) as Record<string, string>);
+    expect(requestHeaders[0].Range).toBe('bytes=5-');
+    expect(Object.keys(requestHeaders[1]).some((name) => name.toLowerCase() === 'range')).toBe(false);
+    expect(fs.readFileSync(outputPath)).toEqual(Buffer.from('stale'));
+  });
 });
