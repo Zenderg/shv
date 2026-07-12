@@ -136,6 +136,64 @@ describe('QueueRunner', () => {
     expect(jobs.requireJob(job.id).status).toBe('canceled');
   });
 
+  test('starts independent downloads up to the configured concurrency limit', async () => {
+    const { categories, config, jobs } = createServices();
+    config.maxConcurrentJobs = 2;
+    const category = categories.create('test');
+    const jobsToRun = ['one', 'two', 'three'].map((name) => {
+      const job = jobs.create(`https://example.test/${name}`, category.id);
+      jobs.saveCandidates(job.id, [candidate(`https://media.example.test/${name}.mp4`)]);
+      jobs.selectCandidate(job.id, jobs.listCandidates(job.id)[0].id);
+      return job;
+    });
+    const startedTwo = deferred<void>();
+    const startedThree = deferred<void>();
+    const started: string[] = [];
+    const jobIdByCandidateUrl = new Map(
+      jobsToRun.map((job) => [`https://media.example.test/${new URL(job.sourceUrl).pathname.slice(1)}.mp4`, job.id])
+    );
+    const downloader = {
+      download: (selected: MediaCandidate, _outputPath: string, _onProgress: (progress: number) => void, signal?: AbortSignal) =>
+        new Promise<never>((_resolve, reject) => {
+          started.push(selected.url);
+          if (started.length === 2) {
+            startedTwo.resolve();
+          }
+          if (started.length === 3) {
+            startedThree.resolve();
+          }
+          signal?.addEventListener('abort', () => reject(new JobCanceledError()), { once: true });
+        })
+    } satisfies Pick<DownloadEngine, 'download'>;
+    const runner = new QueueRunner(
+      config,
+      jobs,
+      {} as BrowserAnalyzer,
+      downloader as unknown as DownloadEngine,
+      {} as MediaProcessor,
+      categories,
+      {} as MediaFiles,
+      {} as MediaLibraryService
+    );
+
+    runner.start();
+    await startedTwo.promise;
+
+    expect(started).toHaveLength(2);
+    expect(new Set(started)).toHaveLength(2);
+
+    for (const candidateUrl of started) {
+      runner.cancel(jobIdByCandidateUrl.get(candidateUrl)!);
+    }
+    await startedThree.promise;
+    runner.cancel(jobIdByCandidateUrl.get(started[2])!);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    runner.stop();
+
+    expect(started).toHaveLength(3);
+    expect(jobsToRun.map((job) => jobs.requireJob(job.id).status)).toEqual(['canceled', 'canceled', 'canceled']);
+  });
+
   test('removes job-owned artifacts when a running job is canceled', async () => {
     const { categories, config, jobs } = createServices();
     const category = categories.create('test');

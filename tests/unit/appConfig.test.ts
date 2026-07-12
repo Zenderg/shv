@@ -46,6 +46,12 @@ describe('loadAppConfig', () => {
     expect(config.downloadStallTimeoutMs).toBe(45_000);
   });
 
+  test('defaults and validates the concurrent job limit', () => {
+    expect(loadAppConfig({ APP_DATA_ROOT: '/data/app' } as NodeJS.ProcessEnv).maxConcurrentJobs).toBe(2);
+    expect(loadAppConfig({ APP_DATA_ROOT: '/data/app', MAX_CONCURRENT_JOBS: '3' } as NodeJS.ProcessEnv).maxConcurrentJobs).toBe(3);
+    expect(loadAppConfig({ APP_DATA_ROOT: '/data/app', MAX_CONCURRENT_JOBS: '1.5' } as NodeJS.ProcessEnv).maxConcurrentJobs).toBe(2);
+  });
+
   test('defaults to the production source extension profile', () => {
     const config = loadAppConfig({
       APP_DATA_ROOT: '/data/app'

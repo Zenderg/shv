@@ -15,6 +15,7 @@ export interface AppConfig {
   chromiumExecutablePath: string | undefined;
   ytDlpCookiesPath: string | undefined;
   downloadStallTimeoutMs?: number;
+  maxConcurrentJobs?: number;
 }
 
 export function loadAppConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -36,13 +37,19 @@ export function loadAppConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     databasePath: path.join(appDataRoot, 'shv.sqlite'),
     chromiumExecutablePath,
     ytDlpCookiesPath,
-    downloadStallTimeoutMs: positiveNumber(env.DOWNLOAD_STALL_TIMEOUT_MS, 120_000)
+    downloadStallTimeoutMs: positiveNumber(env.DOWNLOAD_STALL_TIMEOUT_MS, 120_000),
+    maxConcurrentJobs: positiveInteger(env.MAX_CONCURRENT_JOBS, 2)
   };
 }
 
 function positiveNumber(value: string | undefined, fallback: number): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function positiveInteger(value: string | undefined, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 function normalizePublicOrigin(value: string | undefined): string | undefined {

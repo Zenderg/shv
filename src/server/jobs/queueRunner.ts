@@ -24,8 +24,8 @@ class DownloadStalledError extends Error {
 
 export class QueueRunner {
   private readonly activeControllers = new Map<string, AbortController>();
+  private readonly maxConcurrentJobs: number;
   private draining: Promise<void> | null = null;
-  private running = false;
   private started = false;
   private wakeRequested = false;
 
@@ -39,7 +39,9 @@ export class QueueRunner {
     private readonly mediaFiles: MediaFiles,
     private readonly mediaLibrary: MediaLibraryService,
     private readonly sourceExtractors: SourceExtractor = new NoopSourceExtractor()
-  ) {}
+  ) {
+    this.maxConcurrentJobs = config.maxConcurrentJobs ?? 2;
+  }
 
   start(): void {
     if (this.started) {
@@ -67,7 +69,7 @@ export class QueueRunner {
   }
 
   async tick(): Promise<void> {
-    await this.runNext();
+    await Promise.all(this.startAvailableJobs());
   }
 
   private readonly requestDrain = (): void => {
@@ -78,7 +80,7 @@ export class QueueRunner {
     if (this.draining) {
       return;
     }
-    this.draining = this.drain().finally(() => {
+    this.draining = Promise.resolve().then(() => this.drain()).finally(() => {
       this.draining = null;
       if (this.wakeRequested) {
         this.requestDrain();
@@ -86,31 +88,25 @@ export class QueueRunner {
     });
   };
 
-  private async drain(): Promise<void> {
+  private drain(): void {
     do {
       this.wakeRequested = false;
-      while (this.started && (await this.runNext())) {
-        // Keep draining jobs that were already queued before the previous job completed.
-      }
+      this.startAvailableJobs();
     } while (this.started && this.wakeRequested);
   }
 
-  private async runNext(): Promise<boolean> {
-    if (this.running) {
-      return false;
+  private startAvailableJobs(): Promise<void>[] {
+    const started: Promise<void>[] = [];
+    while (this.activeControllers.size < this.maxConcurrentJobs) {
+      const job = this.jobs.nextRunnableJob();
+      if (!job) {
+        break;
+      }
+      started.push(this.process(job.id).finally(() => {
+        this.requestDrain();
+      }));
     }
-    const job = this.jobs.nextRunnableJob();
-    if (!job) {
-      return false;
-    }
-
-    this.running = true;
-    try {
-      await this.process(job.id);
-    } finally {
-      this.running = false;
-    }
-    return true;
+    return started;
   }
 
   private async process(jobId: string): Promise<void> {
