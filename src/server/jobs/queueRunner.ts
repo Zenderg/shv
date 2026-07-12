@@ -62,6 +62,16 @@ export class QueueRunner {
     return this.jobs.cancel(jobId);
   }
 
+  retry(jobId: string) {
+    this.activeControllers.get(jobId)?.abort();
+    return this.jobs.retry(jobId);
+  }
+
+  replaceSource(jobId: string, sourceUrl: string) {
+    this.activeControllers.get(jobId)?.abort();
+    return this.jobs.replaceSource(jobId, sourceUrl);
+  }
+
   delete(jobId: string): void {
     this.activeControllers.get(jobId)?.abort();
     cleanupJobArtifacts(this.config, jobId);
@@ -235,7 +245,7 @@ export class QueueRunner {
     } catch (error) {
       if (isCancellationError(error) || signal.aborted || this.jobs.get(jobId)?.status === 'canceled' || !this.jobs.get(jobId)) {
         cleanupCanceledArtifacts(this.config, jobId, finalPath, thumbnailPath);
-        if (this.jobs.get(jobId)) {
+        if (this.jobs.get(jobId)?.status !== 'pending') {
           this.jobs.cancel(jobId);
         }
         logJobEvent('info', 'job-canceled', { jobId });

@@ -191,7 +191,7 @@ export function createRouter(services: RouteServices): Router {
   });
 
   router.post('/api/jobs/:id/retry', (request, response) => {
-    response.json(services.jobs.retry(paramId(request)));
+    response.json(services.queueRunner.retry(paramId(request)));
   });
 
   router.post(
@@ -251,7 +251,7 @@ export function createRouter(services: RouteServices): Router {
 
   router.post('/api/jobs/:id/replace-source', (request, response) => {
     const body = z.object({ sourceUrl: httpUrlSchema }).parse(request.body);
-    response.json(services.jobs.replaceSource(paramId(request), body.sourceUrl));
+    response.json(services.queueRunner.replaceSource(paramId(request), body.sourceUrl));
   });
 
   router.get('/api/jobs/:id/screenshot', (request, response) => {

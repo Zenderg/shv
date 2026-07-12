@@ -8,10 +8,41 @@ import { createRouter, errorHandler } from '../../src/server/api/routes.js';
 import type { AppConfig } from '../../src/server/config/appConfig.js';
 import { ExtensionDebugService } from '../../src/server/extension-debug/extensionDebugService.js';
 import { JobService } from '../../src/server/jobs/jobService.js';
+import type { QueueRunner } from '../../src/server/jobs/queueRunner.js';
 import { openDatabase } from '../../src/server/storage/database.js';
-import type { SubtitleTrack } from '../../src/shared/types.js';
+import type { DownloadJob, SubtitleTrack } from '../../src/shared/types.js';
 
 describe('extension candidate route', () => {
+  test('delegates retry and source replacement to the queue runner', async () => {
+    const calls: Array<{ id: string; sourceUrl?: string; type: 'replace-source' | 'retry' }> = [];
+    const queueRunner = {
+      retry: (id: string) => {
+        calls.push({ id, type: 'retry' });
+        return { id, status: 'pending' } as DownloadJob;
+      },
+      replaceSource: (id: string, sourceUrl: string) => {
+        calls.push({ id, sourceUrl, type: 'replace-source' });
+        return { id, sourceUrl, status: 'pending' } as DownloadJob;
+      }
+    } satisfies Pick<QueueRunner, 'replaceSource' | 'retry'>;
+    const { app, job } = createAppWithJob(queueRunner);
+
+    await request(app)
+      .post(`/api/jobs/${job.id}/retry`)
+      .set('X-SHV-CSRF', 'test-csrf-token')
+      .expect(200);
+    await request(app)
+      .post(`/api/jobs/${job.id}/replace-source`)
+      .set('X-SHV-CSRF', 'test-csrf-token')
+      .send({ sourceUrl: 'https://example.test/replacement' })
+      .expect(200);
+
+    expect(calls).toEqual([
+      { id: job.id, type: 'retry' },
+      { id: job.id, sourceUrl: 'https://example.test/replacement', type: 'replace-source' }
+    ]);
+  });
+
   test('rejects non-http URLs before they can enter job or candidate flows', async () => {
     const { app, job } = createAppWithJob();
     const fileUrl = 'file:///etc/passwd';
@@ -158,7 +189,7 @@ describe('extension candidate route', () => {
   });
 });
 
-function createAppWithJob() {
+function createAppWithJob(queueRunner: Pick<QueueRunner, 'replaceSource' | 'retry'> = {} as never) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'xxx-extension-candidates-'));
   const db = openDatabase(path.join(root, 'db.sqlite'));
   const jobs = new JobService(db);
@@ -173,7 +204,7 @@ function createAppWithJob() {
     liveBrowser: {} as never,
     mediaFiles: {} as never,
     mediaLibrary: {} as never,
-    queueRunner: {} as never
+    queueRunner: queueRunner as QueueRunner
   }));
   app.use(errorHandler);
   const categoryId = '7b2d8d17-a7dd-4f1d-b143-82ed9b70dbd6';

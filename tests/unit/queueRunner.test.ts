@@ -136,6 +136,68 @@ describe('QueueRunner', () => {
     expect(jobs.requireJob(job.id).status).toBe('canceled');
   });
 
+  test('aborts active work before retrying so cancellation cleanup cannot clobber the pending job', async () => {
+    const { categories, config, jobs } = createServices();
+    const category = categories.create('test');
+    const job = jobs.create('https://example.test/video', category.id);
+    jobs.saveCandidates(job.id, [candidate('https://media.example.test/video.mp4')]);
+    jobs.selectCandidate(job.id, jobs.listCandidates(job.id)[0].id);
+
+    const started = deferred<void>();
+    const downloader = stalledDownloader(started);
+    const runner = new QueueRunner(
+      config,
+      jobs,
+      {} as BrowserAnalyzer,
+      downloader as unknown as DownloadEngine,
+      {} as MediaProcessor,
+      categories,
+      {} as MediaFiles,
+      {} as MediaLibraryService
+    );
+
+    const tick = runner.tick();
+    await started.promise;
+    const retried = runner.retry(job.id);
+    await tick;
+
+    expect(retried.status).toBe('pending');
+    expect(jobs.requireJob(job.id).status).toBe('pending');
+    expect(jobs.requireJob(job.id).selectedCandidateId).toBeNull();
+    expect(jobs.listCandidates(job.id)).toEqual([]);
+  });
+
+  test('aborts active work before replacing its source', async () => {
+    const { categories, config, jobs } = createServices();
+    const category = categories.create('test');
+    const job = jobs.create('https://example.test/old-source', category.id);
+    jobs.saveCandidates(job.id, [candidate('https://media.example.test/video.mp4')]);
+    jobs.selectCandidate(job.id, jobs.listCandidates(job.id)[0].id);
+
+    const started = deferred<void>();
+    const downloader = stalledDownloader(started);
+    const runner = new QueueRunner(
+      config,
+      jobs,
+      {} as BrowserAnalyzer,
+      downloader as unknown as DownloadEngine,
+      {} as MediaProcessor,
+      categories,
+      {} as MediaFiles,
+      {} as MediaLibraryService
+    );
+
+    const tick = runner.tick();
+    await started.promise;
+    const replacementUrl = 'https://example.test/new-source';
+    const replaced = runner.replaceSource(job.id, replacementUrl);
+    await tick;
+
+    expect(replaced.status).toBe('pending');
+    expect(jobs.requireJob(job.id)).toMatchObject({ sourceUrl: replacementUrl, status: 'pending' });
+    expect(jobs.listCandidates(job.id)).toEqual([]);
+  });
+
   test('starts independent downloads up to the configured concurrency limit', async () => {
     const { categories, config, jobs } = createServices();
     config.maxConcurrentJobs = 2;
@@ -621,6 +683,16 @@ function candidate(url: string) {
     headers: {},
     subtitleTracks: []
   };
+}
+
+function stalledDownloader(started: ReturnType<typeof deferred<void>>) {
+  return {
+    download: (_candidate: MediaCandidate, _outputPath: string, _onProgress: (progress: number) => void, signal?: AbortSignal) =>
+      new Promise<never>((_resolve, reject) => {
+        started.resolve();
+        signal?.addEventListener('abort', () => reject(new JobCanceledError()), { once: true });
+      })
+  } satisfies Pick<DownloadEngine, 'download'>;
 }
 
 function mediaCandidate(url: string): MediaCandidate {
