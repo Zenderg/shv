@@ -194,9 +194,14 @@ export function createRouter(services: RouteServices): Router {
     response.json(services.jobs.retry(paramId(request)));
   });
 
-  router.post('/api/jobs/:id/cancel', (request, response) => {
-    response.json(services.queueRunner.cancel(paramId(request)));
-  });
+  router.post(
+    '/api/jobs/:id/cancel',
+    asyncRoute(async (request, response) => {
+      const jobId = paramId(request);
+      await services.liveBrowser.stop(jobId);
+      response.json(services.queueRunner.cancel(jobId));
+    })
+  );
 
   router.delete(
     '/api/jobs/:id',
