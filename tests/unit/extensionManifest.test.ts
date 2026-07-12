@@ -37,6 +37,7 @@ describe('chrome source helper manifest', () => {
 
   it('uses programmatic injection for source tabs instead of running on every page', () => {
     expect(manifest.permissions ?? []).toContain('scripting');
+    expect(manifest.permissions ?? []).not.toContain('tabs');
     expect(manifest.host_permissions ?? []).toContain('<all_urls>');
   });
 
