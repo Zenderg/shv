@@ -40,7 +40,10 @@ SOURCE_EXTENSION_PROFILE=dev docker compose up -d --build
 That profile expects the development extension id and package. Stop the dev-profile container before returning to the
 default production profile.
 
-The Compose service runs with a read-only root filesystem. Persistent application state belongs in the mounted `./data` folders; `/tmp` is an in-memory temporary filesystem for Chromium and other transient runtime files.
+The Compose service runs with a read-only root filesystem. Persistent application state belongs in the mounted `./data`
+folders; `/tmp` is an in-memory temporary filesystem for Chromium and other transient runtime files. The container
+entrypoint may start as root only to perform the persistent-volume ownership migration, then it launches Tini and the
+application as the unprivileged `node` user.
 
 ## Codex Sandbox Notes
 

@@ -103,4 +103,10 @@ Then run:
 docker compose up -d
 ```
 
+Images from `v1.4.3` onward automatically migrate persistent files created by older root-running images to the
+unprivileged `node` runtime user. Startup scans `/data/library`, `/data/app`, and `/work` and changes only legacy
+root-owned entries. The scan is idempotent and also handles restored backups or rollback followed by another upgrade.
+If the mounted filesystem is read-only or rejects `chown`, startup stops with a mount-permission diagnostic; grant the
+container permission to change ownership instead of running the application as root.
+
 The application remains intended for a trusted home LAN or VPN. Do not expose it directly to the public internet.

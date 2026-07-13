@@ -8,6 +8,7 @@ RUN apt-get update \
     ca-certificates \
     ffmpeg \
     fonts-liberation \
+    gosu \
     python3 \
     python3-pip \
     tini \
@@ -32,13 +33,14 @@ FROM production-dependencies AS runtime
 
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/extension ./extension
+COPY --chmod=755 docker-entrypoint.sh /usr/local/bin/shv-entrypoint
 
 ENV NODE_ENV=production
 EXPOSE 8080
-HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 CMD node -e "fetch('http://127.0.0.1:8080/api/health').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5m --retries=3 CMD ["gosu", "node", "node", "-e", "fetch('http://127.0.0.1:8080/api/health').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"]
 RUN mkdir -p /data/library /data/app /work \
   && chown -R node:node /data /work /ms-playwright
 VOLUME ["/data/library", "/data/app", "/work"]
-ENTRYPOINT ["tini", "--"]
-USER node
+USER root
+ENTRYPOINT ["shv-entrypoint"]
 CMD ["npm", "run", "start"]

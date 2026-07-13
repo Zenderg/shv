@@ -10,6 +10,13 @@ The product contract lives in [docs/product.md](product.md). This document is th
 - `/data/app`: SQLite database, thumbnails, browser profile data, manual-selection screenshots, diagnostics, and downloader cookies.
 - `/work`: temporary download and media-processing scratch space.
 
+The container entrypoint owns the persistent-volume compatibility boundary. Before each start, it idempotently
+reassigns legacy root-owned files within all three mounted roots, verifies that the runtime paths and SQLite file are
+writable, and then starts both Tini and Node as the unprivileged `node` user. The scan stays on each mounted filesystem,
+does not follow symlinks, and leaves entries owned by other non-root users unchanged. Running the scan every time also
+covers rollback/re-upgrade and restored-backup cases. Storage that rejects `chown` or remains unwritable fails before
+application initialization with an explicit mount-permission error.
+
 Every file operation that touches user media goes through path-containment helpers in `src/server/utils/fileSafety.ts`.
 
 `/work` and `/data/library` may live on different Docker-mounted filesystems. Moving finished media between them must handle `EXDEV` by copying and removing the source rather than assuming `rename` can cross that boundary.
