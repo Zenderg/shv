@@ -2,7 +2,7 @@ import { describe, expect, test } from 'vitest';
 import { queueJobPresentation } from '../../src/web/src/features/queue/queuePresentation.js';
 
 describe('queue job presentation', () => {
-  test.each(['analyzing', 'downloading', 'processing'])('%s is the only kind of state that shows progress', (status) => {
+  test.each(['analyzing', 'downloading', 'processing', 'adding_subtitles'])('%s is an active state that shows progress', (status) => {
     expect(queueJobPresentation({ errorCode: null, status })).toMatchObject({
       showProgress: true,
       tone: 'active'

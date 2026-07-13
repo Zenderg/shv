@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 import type { BrowserAnalyzer } from '../../src/server/browser-analyzer/browserAnalyzer.js';
 import { CategoryService } from '../../src/server/categories/categoryService.js';
 import type { AppConfig } from '../../src/server/config/appConfig.js';
@@ -13,6 +13,7 @@ import type { MediaLibraryService } from '../../src/server/media-library/mediaLi
 import type { MediaProcessor } from '../../src/server/media-processing/mediaProcessor.js';
 import { openDatabase } from '../../src/server/storage/database.js';
 import { JobCanceledError } from '../../src/server/utils/cancellation.js';
+import { activityUpdate, progressUpdate, type TaskProgressCallback } from '../../src/server/utils/taskProgress.js';
 import type { MediaCandidate, SubtitleTrack } from '../../src/shared/types.js';
 
 describe('QueueRunner', () => {
@@ -214,7 +215,7 @@ describe('QueueRunner', () => {
       throw new Error('Processing was not aborted');
     };
     const downloader = {
-      download: async (_candidate: MediaCandidate, outputPath: string, _onProgress: (progress: number) => void, signal?: AbortSignal) => {
+      download: async (_candidate: MediaCandidate, outputPath: string, _onProgress: TaskProgressCallback, signal?: AbortSignal) => {
         downloads += 1;
         if (downloads === 1) {
           fs.mkdirSync(path.dirname(outputPath), { recursive: true });
@@ -237,7 +238,7 @@ describe('QueueRunner', () => {
       })
     } satisfies Pick<BrowserAnalyzer, 'analyze'>;
     const processor = {
-      normalize: (_inputPath: string, _outputPath: string, _thumbnailPath: string, _onProgress: (progress: number) => void, signal?: AbortSignal) =>
+      normalize: (_inputPath: string, _outputPath: string, _thumbnailPath: string, _onProgress: TaskProgressCallback, signal?: AbortSignal) =>
         new Promise<never>((_resolve, reject) => {
           processingStarted.resolve();
           signal?.addEventListener(
@@ -304,7 +305,7 @@ describe('QueueRunner', () => {
       jobsToRun.map((job) => [`https://media.example.test/${new URL(job.sourceUrl).pathname.slice(1)}.mp4`, job.id])
     );
     const downloader = {
-      download: (selected: MediaCandidate, _outputPath: string, _onProgress: (progress: number) => void, signal?: AbortSignal) =>
+      download: (selected: MediaCandidate, _outputPath: string, _onProgress: TaskProgressCallback, signal?: AbortSignal) =>
         new Promise<never>((_resolve, reject) => {
           started.push(selected.url);
           if (started.length === 2) {
@@ -491,7 +492,7 @@ describe('QueueRunner', () => {
     expect(failed.errorMessage).toContain('Download stalled');
   });
 
-  test('keeps a download alive when progress advances in tiny increments', async () => {
+  test('keeps an indeterminate download alive on activity without writing heartbeat noise to SQLite', async () => {
     const { categories, config, jobs } = createServices();
     config.downloadStallTimeoutMs = 20;
     const category = categories.create('test');
@@ -499,14 +500,15 @@ describe('QueueRunner', () => {
     jobs.saveCandidates(job.id, [candidate('https://media.example.test/video.mp4')]);
     jobs.selectCandidate(job.id, jobs.listCandidates(job.id)[0].id);
 
+    const updateProgress = vi.spyOn(jobs, 'updateProgress');
     const downloader = {
       download: async (_candidate, outputPath, onProgress, signal?: AbortSignal) => {
-        for (const progress of [0.0005, 0.001, 0.0015, 0.002, 0.0025]) {
+        for (let index = 0; index < 5; index += 1) {
           await delay(10);
           if (signal?.aborted) {
             throw new JobCanceledError();
           }
-          onProgress(progress);
+          onProgress(activityUpdate());
         }
         fs.mkdirSync(path.dirname(outputPath), { recursive: true });
         fs.writeFileSync(outputPath, 'source-video');
@@ -556,6 +558,76 @@ describe('QueueRunner', () => {
     const completed = jobs.requireJob(job.id);
     expect(completed.status).toBe('completed');
     expect(completed.errorMessage).toBeNull();
+    expect(updateProgress).not.toHaveBeenCalled();
+  });
+
+  test('publishes determinate progress while burning the selected subtitle track', async () => {
+    const { categories, config, jobs } = createServices();
+    const category = categories.create('test');
+    const subtitleUrl = 'https://media.example.test/subtitles/ru.vtt';
+    const job = jobs.create('https://example.test/video', category.id);
+    jobs.saveCandidates(job.id, [{
+      ...candidate('https://media.example.test/video.mp4'),
+      subtitleTracks: [subtitleTrack(subtitleUrl, { format: 'webvtt', isSelected: false })]
+    }]);
+    const selected = jobs.listCandidates(job.id)[0];
+    jobs.selectCandidate(job.id, selected.id);
+    jobs.selectSubtitleTrack(job.id, subtitleUrl);
+
+    const updateProgress = vi.spyOn(jobs, 'updateProgress');
+    const downloader = {
+      download: async (_candidate, outputPath) => {
+        fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+        fs.writeFileSync(outputPath, 'source-video');
+        return { bytesWritten: 12, filePath: outputPath };
+      }
+    } satisfies Pick<DownloadEngine, 'download'>;
+    const processor = {
+      normalize: async (_inputPath, outputPath, _thumbnailPath) => {
+        fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+        fs.writeFileSync(outputPath, 'normalized');
+        return normalizedMedia(outputPath);
+      },
+      burnSubtitle: async (inputPath, _track, onProgress: TaskProgressCallback) => {
+        expect(jobs.requireJob(job.id)).toMatchObject({
+          progressLabel: 'Downloading subtitles',
+          status: 'adding_subtitles'
+        });
+        onProgress(activityUpdate('Adding subtitles'));
+        onProgress(progressUpdate(0.5));
+        return { ...normalizedMedia(inputPath), browserFriendly: true };
+      }
+    } satisfies Pick<MediaProcessor, 'normalize' | 'burnSubtitle'>;
+    const mediaFiles = {
+      reserveFinalVideoPath: () => reservedVideoPath(path.join(config.libraryRoot, 'test', 'video.mp4')),
+      thumbnailPath: () => path.join(config.thumbnailsRoot, `${job.id}.jpg`)
+    } satisfies Pick<MediaFiles, 'reserveFinalVideoPath' | 'thumbnailPath'>;
+    const mediaLibrary = {
+      create: () => mediaItem(category.id, job.id, job.sourceUrl)
+    } satisfies Pick<MediaLibraryService, 'create'>;
+    const session = {
+      close: async () => undefined,
+      fetch: async () => new Response('WEBVTT\n\n'),
+      proxyUrl: 'http://127.0.0.1:1'
+    };
+    const runner = new QueueRunner(
+      config,
+      jobs,
+      {} as BrowserAnalyzer,
+      downloader as unknown as DownloadEngine,
+      processor as unknown as MediaProcessor,
+      categories,
+      mediaFiles as unknown as MediaFiles,
+      mediaLibrary as unknown as MediaLibraryService,
+      undefined,
+      async () => session as never
+    );
+
+    await runner.tick();
+
+    expect(jobs.requireJob(job.id).status).toBe('completed');
+    expect(updateProgress).toHaveBeenCalledWith(job.id, 'adding_subtitles', null, 'Adding subtitles');
+    expect(updateProgress).toHaveBeenCalledWith(job.id, 'adding_subtitles', 0.5, 'Adding subtitles');
   });
 
   test('deletes a queued job and removes job-owned artifacts', () => {
@@ -840,7 +912,7 @@ function candidate(url: string) {
 
 function stalledDownloader(started: ReturnType<typeof deferred<void>>) {
   return {
-    download: (_candidate: MediaCandidate, _outputPath: string, _onProgress: (progress: number) => void, signal?: AbortSignal) =>
+    download: (_candidate: MediaCandidate, _outputPath: string, _onProgress: TaskProgressCallback, signal?: AbortSignal) =>
       new Promise<never>((_resolve, reject) => {
         started.resolve();
         signal?.addEventListener('abort', () => reject(new JobCanceledError()), { once: true });

@@ -3,6 +3,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import type { SubtitleTrack } from '../../shared/types.js';
 import { JobCanceledError, onAbort, throwIfAborted } from '../utils/cancellation.js';
+import { activityUpdate, progressUpdate, type TaskProgressCallback } from '../utils/taskProgress.js';
 
 export interface ProbeResult {
   durationSeconds: number | null;
@@ -22,7 +23,6 @@ export interface NormalizeResult extends ProbeResult {
   remuxRejectionReason?: string;
 }
 
-type ProgressCallback = (progress: number) => void;
 type MoveFileSystem = Pick<typeof fs, 'copyFileSync' | 'renameSync' | 'rmSync'>;
 interface TranscodeOptions {
   preserveInputTimestamps?: boolean;
@@ -33,23 +33,25 @@ export class MediaProcessor {
     inputPath: string,
     outputPath: string,
     thumbnailPath: string,
-    onProgress: ProgressCallback = () => undefined,
+    onProgress: TaskProgressCallback = () => undefined,
     signal?: AbortSignal
   ): Promise<NormalizeResult> {
     fs.mkdirSync(path.dirname(outputPath), { recursive: true });
     fs.mkdirSync(path.dirname(thumbnailPath), { recursive: true });
 
     throwIfAborted(signal);
+    onProgress(activityUpdate('Inspecting video'));
     const probe = await this.probe(inputPath);
     let processingStrategy: NormalizeResult['processingStrategy'] = 'transcoded';
     let remuxRejectionReason: string | undefined;
     if (probe.browserFriendly && path.resolve(inputPath) !== path.resolve(outputPath)) {
       throwIfAborted(signal);
+      onProgress(activityUpdate('Moving video'));
       moveFile(inputPath, outputPath);
       processingStrategy = 'moved';
-      onProgress(0.84);
     } else if (shouldRemuxToBrowserFriendlyMp4(probe)) {
       try {
+        onProgress(activityUpdate('Remuxing video'));
         await this.remuxToMp4(inputPath, outputPath, probe.durationSeconds, onProgress, signal);
         const remuxProbe = await this.probe(outputPath);
         if (hasSuspiciousDurationInflation(probe.durationSeconds, remuxProbe.durationSeconds)) {
@@ -63,6 +65,7 @@ export class MediaProcessor {
         }
         remuxRejectionReason = shortProcessingMessage(error);
         fs.rmSync(outputPath, { force: true });
+        onProgress(activityUpdate('Transcoding video'));
         await this.transcode(inputPath, outputPath, probe.durationSeconds, onProgress, signal, {
           preserveInputTimestamps: shouldPreserveInputTimestampsAfterRemuxRejection(remuxRejectionReason)
         });
@@ -74,6 +77,7 @@ export class MediaProcessor {
         fs.rmSync(inputPath, { force: true });
       }
     } else if (!probe.browserFriendly) {
+      onProgress(activityUpdate('Transcoding video'));
       await this.transcode(inputPath, outputPath, probe.durationSeconds, onProgress, signal);
       const transcodeProbe = await this.probe(outputPath);
       assertNoSuspiciousDurationInflation('transcode', probe.durationSeconds, transcodeProbe.durationSeconds, outputPath);
@@ -84,11 +88,12 @@ export class MediaProcessor {
     }
 
     throwIfAborted(signal);
-    onProgress(0.92);
+    onProgress(activityUpdate('Creating thumbnail'));
     await this.thumbnail(outputPath, thumbnailPath, signal);
+    onProgress(activityUpdate('Finalizing video'));
     const finalProbe = await this.probe(outputPath);
     throwIfAborted(signal);
-    onProgress(1);
+    onProgress(progressUpdate(1, 'Finalizing video'));
     return {
       ...finalProbe,
       outputPath,
@@ -133,9 +138,16 @@ export class MediaProcessor {
     };
   }
 
-  async burnSubtitle(inputPath: string, subtitleTrack: SubtitleTrack & { localPath: string }, signal?: AbortSignal): Promise<ProbeResult> {
+  async burnSubtitle(
+    inputPath: string,
+    subtitleTrack: SubtitleTrack & { localPath: string },
+    onProgress: TaskProgressCallback = () => undefined,
+    signal?: AbortSignal
+  ): Promise<ProbeResult> {
     const temporaryPath = temporarySubtitledPath(inputPath);
-    await run('ffmpeg', buildBurnSubtitleArgs(inputPath, temporaryPath, subtitleTrack), signal);
+    const probe = await this.probe(inputPath);
+    onProgress(activityUpdate('Adding subtitles'));
+    await runProgressFfmpeg(buildBurnSubtitleArgs(inputPath, temporaryPath, subtitleTrack), probe.durationSeconds, onProgress, signal);
     moveFile(temporaryPath, inputPath);
     return this.probe(inputPath);
   }
@@ -144,7 +156,7 @@ export class MediaProcessor {
     inputPath: string,
     outputPath: string,
     durationSeconds: number | null,
-    onProgress: ProgressCallback,
+    onProgress: TaskProgressCallback,
     signal?: AbortSignal,
     options: TranscodeOptions = {}
   ): Promise<void> {
@@ -153,12 +165,14 @@ export class MediaProcessor {
       const removeAbortListener = onAbort(signal, () => child.kill('SIGTERM'));
       const stderr: Buffer[] = [];
       let progressLog = '';
+      let lastReportedTime = -1;
       child.stderr.on('data', (chunk: Buffer) => {
         stderr.push(chunk);
         progressLog = `${progressLog}${chunk.toString('utf8')}`.slice(-12000);
         const current = latestFfmpegTime(progressLog);
-        if (durationSeconds && current != null) {
-          onProgress(Math.min(0.9, (current / durationSeconds) * 0.9));
+        if (current != null && current > lastReportedTime) {
+          lastReportedTime = current;
+          onProgress(durationSeconds ? progressUpdate(Math.min(0.99, current / durationSeconds)) : activityUpdate());
         }
       });
       child.on('error', (error) => {
@@ -172,7 +186,7 @@ export class MediaProcessor {
           return;
         }
         if (code === 0) {
-          onProgress(0.9);
+          onProgress(progressUpdate(1));
           resolve();
         } else {
           reject(new Error(`ffmpeg exited with code ${code}: ${Buffer.concat(stderr).toString('utf8')}`));
@@ -185,7 +199,7 @@ export class MediaProcessor {
     inputPath: string,
     outputPath: string,
     durationSeconds: number | null,
-    onProgress: ProgressCallback,
+    onProgress: TaskProgressCallback,
     signal?: AbortSignal
   ): Promise<void> {
     await new Promise<void>((resolve, reject) => {
@@ -210,12 +224,14 @@ export class MediaProcessor {
       const removeAbortListener = onAbort(signal, () => child.kill('SIGTERM'));
       const stderr: Buffer[] = [];
       let progressLog = '';
+      let lastReportedTime = -1;
       child.stderr.on('data', (chunk: Buffer) => {
         stderr.push(chunk);
         progressLog = `${progressLog}${chunk.toString('utf8')}`.slice(-12000);
         const current = latestFfmpegTime(progressLog);
-        if (durationSeconds && current != null) {
-          onProgress(Math.min(0.9, (current / durationSeconds) * 0.9));
+        if (current != null && current > lastReportedTime) {
+          lastReportedTime = current;
+          onProgress(durationSeconds ? progressUpdate(Math.min(0.99, current / durationSeconds)) : activityUpdate());
         }
       });
       child.on('error', (error) => {
@@ -229,7 +245,7 @@ export class MediaProcessor {
           return;
         }
         if (code === 0) {
-          onProgress(0.9);
+          onProgress(progressUpdate(1));
           resolve();
         } else {
           reject(new Error(`ffmpeg exited with code ${code}: ${Buffer.concat(stderr).toString('utf8')}`));
@@ -243,12 +259,56 @@ export class MediaProcessor {
   }
 }
 
+async function runProgressFfmpeg(
+  args: string[],
+  durationSeconds: number | null,
+  onProgress: TaskProgressCallback,
+  signal?: AbortSignal
+): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'] });
+    const removeAbortListener = onAbort(signal, () => child.kill('SIGTERM'));
+    const stderr: Buffer[] = [];
+    let progressLog = '';
+    let lastReportedTime = -1;
+    child.stderr.on('data', (chunk: Buffer) => {
+      stderr.push(chunk);
+      progressLog = `${progressLog}${chunk.toString('utf8')}`.slice(-12000);
+      const current = latestFfmpegTime(progressLog);
+      if (current != null && current > lastReportedTime) {
+        lastReportedTime = current;
+        onProgress(durationSeconds ? progressUpdate(Math.min(0.99, current / durationSeconds)) : activityUpdate());
+      }
+    });
+    child.on('error', (error) => {
+      removeAbortListener();
+      reject(error);
+    });
+    child.on('close', (code) => {
+      removeAbortListener();
+      if (signal?.aborted) {
+        reject(new JobCanceledError());
+        return;
+      }
+      if (code === 0) {
+        onProgress(progressUpdate(1));
+        resolve();
+      } else {
+        reject(new Error(`ffmpeg exited with code ${code}: ${Buffer.concat(stderr).toString('utf8')}`));
+      }
+    });
+  });
+}
+
 export function buildBurnSubtitleArgs(inputPath: string, outputPath: string, subtitleTrack: SubtitleTrack & { localPath: string }): string[] {
   return [
     '-hide_banner',
     '-y',
     '-i',
     inputPath,
+    '-nostats',
+    '-progress',
+    'pipe:2',
     '-map',
     '0:v:0',
     '-map',

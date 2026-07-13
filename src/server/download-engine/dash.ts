@@ -40,6 +40,22 @@ export function selectBestDashRenditions(manifest: string, manifestUrl: string):
   };
 }
 
+export function parseDashDurationSeconds(manifest: string): number | null {
+  const document = parseDashManifest(manifest);
+  const mpd = xmlChildNodes(document, 'MPD')[0];
+  if (!mpd || xmlAttribute(mpd, 'type')?.toLowerCase() === 'dynamic') {
+    return null;
+  }
+
+  const presentationDuration = parseXmlDurationSeconds(xmlAttribute(mpd, 'mediaPresentationDuration'));
+  if (presentationDuration !== null) {
+    return presentationDuration;
+  }
+
+  const periods = xmlChildNodes(mpd, 'Period');
+  return periods.length === 1 ? parseXmlDurationSeconds(xmlAttribute(periods[0], 'duration')) : null;
+}
+
 function parseDashManifest(manifest: string): XmlNode {
   const document = dashXmlParser.parse(manifest, true) as unknown;
   if (!isXmlNode(document)) {
@@ -120,6 +136,15 @@ function xmlText(value: unknown): string | null {
 
   const trimmed = text.trim();
   return trimmed === '' ? null : trimmed;
+}
+
+function parseXmlDurationSeconds(value: string | null): number | null {
+  if (!value) return null;
+  const match = value.match(/^P(?:(\d+(?:\.\d+)?)D)?(?:T(?:(\d+(?:\.\d+)?)H)?(?:(\d+(?:\.\d+)?)M)?(?:(\d+(?:\.\d+)?)S)?)?$/);
+  if (!match || match.slice(1).every((part) => part === undefined)) return null;
+  const [, days = '0', hours = '0', minutes = '0', seconds = '0'] = match;
+  const total = Number(days) * 86_400 + Number(hours) * 3_600 + Number(minutes) * 60 + Number(seconds);
+  return Number.isFinite(total) && total > 0 ? total : null;
 }
 
 export function selectBestDashRepresentation(manifest: string, manifestUrl: string): DashRepresentation | null {

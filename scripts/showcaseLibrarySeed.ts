@@ -269,8 +269,8 @@ function seedShowcaseJobs(db: Db, categories: Map<string, Category>): DownloadJo
     db.prepare(
       `INSERT INTO download_jobs (
         id, source_url, category_id, status, selected_candidate_id, title_hint, error_code,
-        error_message, progress, created_at, updated_at, started_at, completed_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        error_message, progress, stage_progress, progress_label, created_at, updated_at, started_at, completed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       id,
       job.sourceUrl,
@@ -281,6 +281,8 @@ function seedShowcaseJobs(db: Db, categories: Map<string, Category>): DownloadJo
       job.errorCode,
       job.errorMessage,
       job.progress,
+      null,
+      null,
       now,
       now,
       now,
@@ -298,7 +300,8 @@ function seedShowcaseJobs(db: Db, categories: Map<string, Category>): DownloadJo
       errorCode: job.errorCode,
       errorMessage: job.errorMessage,
       id,
-      progress: job.progress,
+      stageProgress: null,
+      progressLabel: null,
       selectedCandidateId: null,
       sourceUrl: job.sourceUrl,
       startedAt: now,

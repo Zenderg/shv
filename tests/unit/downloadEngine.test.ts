@@ -12,6 +12,7 @@ import {
 import type { MediaCandidate } from '../../src/shared/types.js';
 import type { DashRepresentation } from '../../src/server/download-engine/dash.js';
 import type { PublicMediaSessionLike } from '../../src/server/utils/publicHttpProxy.js';
+import { progressUpdate, type TaskProgressUpdate } from '../../src/server/utils/taskProgress.js';
 
 const unsafeTestSessionFactory = async (): Promise<PublicMediaSessionLike> => ({
   proxyUrl: 'http://127.0.0.1:1',
@@ -259,7 +260,7 @@ describe('DownloadEngine ffmpeg helpers', () => {
     const engine = new DownloadEngine(async (input) => {
       calls.push(input);
       fs.writeFileSync(input.outputPath, 'browser bytes');
-      input.onProgress(0.5);
+      input.onProgress(progressUpdate(0.5));
       return { bytesWritten: fs.statSync(input.outputPath).size, filePath: input.outputPath };
     }, async (url) => url);
     const candidate: MediaCandidate = {
@@ -282,7 +283,7 @@ describe('DownloadEngine ffmpeg helpers', () => {
       subtitleTracks: [],
       url: 'https://media.example.test/video.mp4'
     };
-    const progress: number[] = [];
+    const progress: TaskProgressUpdate[] = [];
 
     const result = await engine.download(candidate, outputPath, (value) => progress.push(value));
 
@@ -301,7 +302,7 @@ describe('DownloadEngine ffmpeg helpers', () => {
       'Sec-Fetch-Site': 'cross-site',
       'User-Agent': 'Mozilla/5.0 test'
     });
-    expect(progress).toContain(0.5);
+    expect(progress).toContainEqual(progressUpdate(0.5));
   });
 
   test('rejects a partial response returned after a browser-request resume retry', async () => {

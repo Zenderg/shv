@@ -85,10 +85,25 @@ describe('JobService', () => {
 
     const recovered = service.requireJob(job.id);
     expect(recovered.status).toBe('pending');
-    expect(recovered.progress).toBe(0);
+    expect(recovered.stageProgress).toBeNull();
+    expect(recovered.progressLabel).toBeNull();
     expect(recovered.startedAt).toBeNull();
     expect(recovered.completedAt).toBeNull();
     expect(recovered.errorMessage).toBeNull();
+  });
+
+  test('recovers interrupted subtitle processing and rejects late progress writes', () => {
+    const { service, categoryId } = createJobService();
+    const job = service.create('https://example.test/page', categoryId);
+    service.transition(job.id, 'adding_subtitles', 0.4, { progressLabel: 'Adding subtitles' });
+
+    service.recoverInterruptedJobs();
+
+    const recovered = service.requireJob(job.id);
+    expect(recovered.status).toBe('pending');
+    expect(recovered.stageProgress).toBeNull();
+    expect(service.updateProgress(job.id, 'adding_subtitles', 0.8, 'Adding subtitles')).toBe(false);
+    expect(service.requireJob(job.id).stageProgress).toBeNull();
   });
 
   test('clears terminal timestamps when a job is made runnable again', () => {

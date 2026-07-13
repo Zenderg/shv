@@ -62,9 +62,10 @@ export class JobService extends EventEmitter {
     this.db
       .prepare(
         `UPDATE download_jobs
-         SET status = 'pending', progress = 0, error_code = NULL, error_message = NULL,
+         SET status = 'pending', progress = 0, stage_progress = NULL, progress_label = NULL,
+             error_code = NULL, error_message = NULL,
              started_at = NULL, completed_at = NULL, updated_at = ?
-         WHERE status IN ('analyzing', 'downloading', 'processing')`
+         WHERE status IN ('analyzing', 'downloading', 'processing', 'adding_subtitles')`
       )
       .run(now);
     this.emitRunnable();
@@ -83,7 +84,7 @@ export class JobService extends EventEmitter {
     return job;
   }
 
-  transition(id: string, status: JobStatus, progress: number, extra: Partial<DownloadJob> = {}): DownloadJob {
+  transition(id: string, status: JobStatus, stageProgress: number | null, extra: Partial<DownloadJob> = {}): DownloadJob {
     const now = nowIso();
     const existing = this.requireJob(id);
     const startedAt =
@@ -99,13 +100,16 @@ export class JobService extends EventEmitter {
     this.db
       .prepare(
         `UPDATE download_jobs
-         SET status = ?, progress = ?, title_hint = ?, error_code = ?, error_message = ?,
+         SET status = ?, progress = ?, stage_progress = ?, progress_label = ?,
+             title_hint = ?, error_code = ?, error_message = ?,
              selected_candidate_id = ?, started_at = ?, completed_at = ?, updated_at = ?
          WHERE id = ?`
       )
       .run(
         status,
-        progress,
+        stageProgress ?? 0,
+        stageProgress,
+        extra.progressLabel !== undefined ? extra.progressLabel : existing.progressLabel,
         extra.titleHint ?? existing.titleHint,
         extra.errorCode ?? null,
         extra.errorMessage ?? null,
@@ -120,6 +124,22 @@ export class JobService extends EventEmitter {
       this.emitRunnable();
     }
     return job;
+  }
+
+  updateProgress(
+    id: string,
+    expectedStatus: JobStatus,
+    stageProgress: number | null,
+    progressLabel: string | null
+  ): boolean {
+    const result = this.db
+      .prepare(
+        `UPDATE download_jobs
+         SET progress = ?, stage_progress = ?, progress_label = ?, updated_at = ?
+         WHERE id = ? AND status = ?`
+      )
+      .run(stageProgress ?? 0, stageProgress, progressLabel, nowIso(), id, expectedStatus);
+    return result.changes > 0;
   }
 
   saveCandidates(jobId: string, candidates: CandidateDraft[]): MediaCandidate[] {
@@ -241,10 +261,11 @@ export class JobService extends EventEmitter {
       throw new Error('Candidate not found for job');
     }
     const status = supportedSubtitleTracks(candidate).length > 0 ? 'needs_subtitle_selection' : 'pending';
-    return this.transition(jobId, status, status === 'needs_subtitle_selection' ? 0.21 : 0, {
+    return this.transition(jobId, status, null, {
       selectedCandidateId: candidateId,
       errorCode: null,
-      errorMessage: null
+      errorMessage: null,
+      progressLabel: null
     });
   }
 
@@ -266,10 +287,11 @@ export class JobService extends EventEmitter {
       isSelected: subtitleTrackUrl ? sameUrl(track.url, subtitleTrackUrl) : false
     }));
     this.updateCandidateSubtitleTracks(candidate.id, subtitleTracks);
-    return this.transition(jobId, 'pending', 0, {
+    return this.transition(jobId, 'pending', null, {
       selectedCandidateId: candidate.id,
       errorCode: null,
-      errorMessage: null
+      errorMessage: null,
+      progressLabel: null
     });
   }
 
@@ -279,6 +301,7 @@ export class JobService extends EventEmitter {
       .prepare(
         `UPDATE download_jobs
          SET source_url = ?, selected_candidate_id = NULL, status = 'pending', progress = 0,
+             stage_progress = NULL, progress_label = NULL,
              error_code = NULL, error_message = NULL, updated_at = ?
          WHERE id = ?`
       )
@@ -296,7 +319,8 @@ export class JobService extends EventEmitter {
       this.db
         .prepare(
           `UPDATE download_jobs
-           SET status = 'pending', progress = 0, error_code = NULL, error_message = NULL,
+           SET status = 'pending', progress = 0, stage_progress = NULL, progress_label = NULL,
+               error_code = NULL, error_message = NULL,
                selected_candidate_id = NULL, started_at = NULL, completed_at = NULL, updated_at = ?
            WHERE id = ?`
         )
@@ -314,7 +338,7 @@ export class JobService extends EventEmitter {
 
   cancel(jobId: string): DownloadJob {
     const job = this.requireJob(jobId);
-    return this.transition(jobId, 'canceled', job.progress);
+    return this.transition(jobId, 'canceled', job.stageProgress, { progressLabel: null });
   }
 
   delete(jobId: string): void {

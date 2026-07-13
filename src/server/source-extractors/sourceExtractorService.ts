@@ -3,10 +3,11 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import type { DownloadResult } from '../download-engine/downloadEngine.js';
 import { JobCanceledError, onAbort, throwIfAborted } from '../utils/cancellation.js';
+import { activityUpdate, progressUpdate, type TaskProgressCallback } from '../utils/taskProgress.js';
 
 export interface SourceExtractor {
   canHandle(sourceUrl: string): boolean;
-  download(sourceUrl: string, outputPath: string, onProgress: (progress: number) => void, signal?: AbortSignal): Promise<DownloadResult>;
+  download(sourceUrl: string, outputPath: string, onProgress: TaskProgressCallback, signal?: AbortSignal): Promise<DownloadResult>;
 }
 
 export interface YtDlpSourceExtractorOptions {
@@ -33,7 +34,7 @@ export class YtDlpSourceExtractor implements SourceExtractor {
   async download(
     sourceUrl: string,
     outputPath: string,
-    onProgress: (progress: number) => void,
+    onProgress: TaskProgressCallback,
     signal?: AbortSignal
   ): Promise<DownloadResult> {
     fs.mkdirSync(path.dirname(outputPath), { recursive: true });
@@ -118,7 +119,7 @@ function outputArtifactPaths(outputPath: string): string[] {
   return fs.readdirSync(directory).filter((name) => name.startsWith(`${basename}.`)).map((name) => path.join(directory, name));
 }
 
-async function runYtDlp(args: string[], onProgress: (progress: number) => void, signal?: AbortSignal): Promise<void> {
+async function runYtDlp(args: string[], onProgress: TaskProgressCallback, signal?: AbortSignal): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const child = spawn('yt-dlp', args, { stdio: ['ignore', 'pipe', 'pipe'] });
     const removeAbortListener = onAbort(signal, () => child.kill('SIGTERM'));
@@ -128,7 +129,9 @@ async function runYtDlp(args: string[], onProgress: (progress: number) => void, 
       log = `${log}${text}`.slice(-8000);
       const progress = parseYtDlpProgress(text);
       if (progress != null) {
-        onProgress(Math.min(0.95, progress));
+        onProgress(progressUpdate(Math.min(0.99, progress)));
+      } else if (/\[(?:download|Merger|ExtractAudio|Fixup)\]/.test(text)) {
+        onProgress(activityUpdate());
       }
     };
     child.stdout.on('data', appendLog);
@@ -144,7 +147,7 @@ async function runYtDlp(args: string[], onProgress: (progress: number) => void, 
         return;
       }
       if (code === 0) {
-        onProgress(0.95);
+        onProgress(progressUpdate(1));
         resolve();
         return;
       }

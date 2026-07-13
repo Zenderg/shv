@@ -91,13 +91,18 @@ Saved media metadata must describe the final normalized file, not just the disco
 
 ## Queue Contract
 
-The queue runs one active job at a time:
+The queue runs up to two active jobs by default; deployment may configure another bounded concurrency limit:
 
 ```text
-pending -> analyzing -> downloading -> processing -> completed
+pending -> analyzing -> downloading -> processing -> [adding_subtitles] -> completed
 ```
 
-A job may also become `needs_manual_selection`, `needs_subtitle_selection`, `failed`, or `canceled`.
+A job may also become `needs_manual_selection`, `needs_subtitle_selection`, `failed`, or `canceled`. `adding_subtitles`
+appears only when the user selected a subtitle track.
+
+The queue shows progress for the current active stage. It shows a percentage only when the source exposes enough
+information to calculate one reliably; otherwise it shows an indeterminate active indicator. A missing percentage must
+not make a healthy transfer look stalled or cause the backend to abort it while bytes or media timestamps are advancing.
 
 `needs_subtitle_selection` is a normal user-input state, not an error. It appears after source selection when the chosen
 candidate has supported subtitle tracks. Continuing from that state either marks exactly one subtitle track selected or

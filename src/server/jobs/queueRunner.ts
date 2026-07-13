@@ -15,6 +15,7 @@ import { assertInsideRoot, titleFromUrl } from '../utils/fileSafety.js';
 import { logJobEvent, safeUrlParts, shortMessage } from '../utils/jobLogger.js';
 import { assertPublicHttpUrlSyntax } from '../utils/networkSafety.js';
 import { PublicMediaSession, type PublicMediaSessionLike } from '../utils/publicHttpProxy.js';
+import type { TaskProgressCallback, TaskProgressUpdate } from '../utils/taskProgress.js';
 import type { JobService } from './jobService.js';
 
 class DownloadStalledError extends Error {
@@ -26,6 +27,8 @@ class DownloadStalledError extends Error {
 
 type PublicMediaSessionFactory = () => Promise<PublicMediaSessionLike>;
 const MAX_SUBTITLE_REDIRECTS = 5;
+const PROGRESS_PERSIST_INTERVAL_MS = 750;
+const PROGRESS_PERSIST_DELTA = 0.01;
 
 export class QueueRunner {
   private readonly activeControllers = new Map<string, AbortController>();
@@ -141,7 +144,7 @@ export class QueueRunner {
     let finalPathReservation: ReservedVideoPath | null = null;
     try {
       this.throwIfCanceled(jobId, signal);
-      let job = this.jobs.transition(jobId, 'analyzing', 0.05);
+      let job = this.jobs.transition(jobId, 'analyzing', null, { progressLabel: 'Analyzing source' });
       logJobEvent('info', 'job-started', { jobId, source: safeUrlParts(job.sourceUrl) });
       const category = this.categories.get(job.categoryId);
       if (!category) {
@@ -158,12 +161,16 @@ export class QueueRunner {
         const analysis = await this.analyzer.analyze(job.sourceUrl, job.id, signal);
         this.throwIfCanceled(job.id, signal);
         const candidates = this.jobs.saveCandidates(job.id, analysis.candidates);
-        job = this.jobs.transition(job.id, 'analyzing', 0.18, { titleHint: analysis.titleHint ?? titleFromUrl(job.sourceUrl) });
+        job = this.jobs.transition(job.id, 'analyzing', null, {
+          progressLabel: 'Analyzing source',
+          titleHint: analysis.titleHint ?? titleFromUrl(job.sourceUrl)
+        });
         selected = chooseAutomaticCandidate(candidates, analysis.automaticCandidateUrl);
         if (!selected) {
-          this.jobs.transition(job.id, 'needs_manual_selection', 0.2, {
+          this.jobs.transition(job.id, 'needs_manual_selection', null, {
             errorCode: 'manual_selection_required',
-            errorMessage: analysis.diagnostics.join('\n') || 'Choose a detected media candidate to continue.'
+            errorMessage: analysis.diagnostics.join('\n') || 'Choose a detected media candidate to continue.',
+            progressLabel: null
           });
           logJobEvent('warn', 'job-needs-manual-selection', {
             candidates: candidates.length,
@@ -176,7 +183,10 @@ export class QueueRunner {
 
       this.throwIfCanceled(job.id, signal);
       const selectedCandidateId = selected?.id ?? job.selectedCandidateId;
-      job = this.jobs.transition(job.id, 'downloading', 0.22, { selectedCandidateId });
+      job = this.jobs.transition(job.id, 'downloading', null, {
+        progressLabel: 'Downloading',
+        selectedCandidateId
+      });
       workDir = path.join(this.config.workRoot, job.id);
       fs.mkdirSync(workDir, { recursive: true });
       const downloadPath = path.join(workDir, 'source');
@@ -204,21 +214,33 @@ export class QueueRunner {
         fs.copyFileSync(downloadPath, `${downloadPath}.preserved`);
         logJobEvent('info', 'download-preserved', { jobId: job.id, path: `${downloadPath}.preserved` });
       }
-      this.jobs.transition(job.id, 'processing', 0.82, { selectedCandidateId });
+      this.jobs.transition(job.id, 'processing', null, {
+        progressLabel: 'Inspecting video',
+        selectedCandidateId
+      });
       logJobEvent('info', 'processing-started', { jobId: job.id });
       const title = job.titleHint ?? titleFromUrl(job.sourceUrl);
       finalPathReservation = this.mediaFiles.reserveFinalVideoPath(category, `${title}.mp4`);
       finalPath = finalPathReservation.path;
       const mediaId = job.id;
       thumbnailPath = this.mediaFiles.thumbnailPath(mediaId);
-      const normalized = await this.processor.normalize(downloadPath, finalPath, thumbnailPath, (progress) => {
-        this.transitionIfRunning(job.id, 'processing', 0.82 + progress * 0.16, { selectedCandidateId }, signal);
-      }, signal);
+      const processingProgress = this.createProgressReporter(job.id, 'processing', signal);
+      const normalized = await this.processor.normalize(downloadPath, finalPath, thumbnailPath, processingProgress, signal);
+      const hasSelectedSubtitles = selected ? subtitleTracksForDownload(selected).length > 0 : false;
+      if (hasSelectedSubtitles) {
+        this.jobs.transition(job.id, 'adding_subtitles', null, {
+          progressLabel: 'Downloading subtitles',
+          selectedCandidateId
+        });
+      }
       const subtitleTracks = selected ? await this.downloadSubtitleTracks(selected, workDir, signal) : [];
+      const subtitleProgress = hasSelectedSubtitles
+        ? this.createProgressReporter(job.id, 'adding_subtitles', signal)
+        : null;
       const processed = subtitleTracks.length > 0
         ? {
             ...normalized,
-            ...(await this.processor.burnSubtitle(normalized.outputPath, subtitleTracks[0], signal))
+            ...(await this.processor.burnSubtitle(normalized.outputPath, subtitleTracks[0], subtitleProgress ?? (() => undefined), signal))
           }
         : normalized;
       logJobEvent('info', 'processing-completed', {
@@ -254,7 +276,7 @@ export class QueueRunner {
       } else {
         fs.rmSync(workDir, { recursive: true, force: true });
       }
-      this.jobs.transition(job.id, 'completed', 1, { selectedCandidateId });
+      this.jobs.transition(job.id, 'completed', 1, { progressLabel: null, selectedCandidateId });
       logJobEvent('info', 'job-completed', { jobId: job.id, title });
     } catch (error) {
       if (isCancellationError(error) || signal.aborted || this.jobs.get(jobId)?.status === 'canceled' || !this.jobs.get(jobId)) {
@@ -268,9 +290,10 @@ export class QueueRunner {
       if (!this.jobs.get(jobId)) {
         return;
       }
-      this.jobs.transition(jobId, 'failed', 0, {
+      this.jobs.transition(jobId, 'failed', null, {
         errorCode: 'pipeline_failed',
-        errorMessage: error instanceof Error ? error.message : String(error)
+        errorMessage: error instanceof Error ? error.message : String(error),
+        progressLabel: null
       });
       logJobEvent('error', 'job-failed', { error: shortMessage(error), jobId });
     } finally {
@@ -287,31 +310,65 @@ export class QueueRunner {
     await run;
   }
 
-  private transitionIfRunning(
+  private createProgressReporter(
     jobId: string,
-    status: Parameters<JobService['transition']>[1],
-    progress: number,
-    extra: Parameters<JobService['transition']>[3],
+    status: Parameters<JobService['updateProgress']>[1],
     signal: AbortSignal
-  ): void {
-    const job = this.jobs.get(jobId);
-    if (signal.aborted || !job || job.status === 'canceled') {
-      return;
-    }
-    this.jobs.transition(jobId, status, progress, extra);
+  ): TaskProgressCallback {
+    const initial = this.jobs.get(jobId);
+    let currentProgress = initial?.stageProgress ?? null;
+    let currentLabel = initial?.progressLabel ?? null;
+    let lastPersistedProgress = currentProgress;
+    let lastPersistedLabel = currentLabel;
+    let lastPersistedAt = Date.now();
+
+    return (update: TaskProgressUpdate) => {
+      if (signal.aborted) return;
+
+      if (update.label !== undefined && update.label !== currentLabel) {
+        currentLabel = update.label;
+        currentProgress = null;
+      }
+      if (update.kind === 'progress') {
+        const next = clamp01(update.fraction);
+        currentProgress = currentProgress === null ? next : Math.max(currentProgress, next);
+      }
+
+      const now = Date.now();
+      const labelChanged = currentLabel !== lastPersistedLabel;
+      const determinateChanged = (currentProgress === null) !== (lastPersistedProgress === null);
+      const progressChanged = currentProgress !== lastPersistedProgress;
+      const progressDelta = currentProgress !== null && lastPersistedProgress !== null
+        ? currentProgress - lastPersistedProgress
+        : 0;
+      const shouldPersist = labelChanged
+        || determinateChanged
+        || progressDelta >= PROGRESS_PERSIST_DELTA
+        || currentProgress === 1
+        || (progressChanged && now - lastPersistedAt >= PROGRESS_PERSIST_INTERVAL_MS);
+      if (!shouldPersist) return;
+
+      if (this.jobs.updateProgress(jobId, status, currentProgress, currentLabel)) {
+        lastPersistedAt = now;
+        lastPersistedLabel = currentLabel;
+        lastPersistedProgress = currentProgress;
+      }
+    };
   }
 
   private async runDownloadStage<T>(
     jobId: string,
     parentSignal: AbortSignal,
-    run: (onProgress: (progress: number) => void, signal: AbortSignal) => Promise<T>
+    run: (onProgress: TaskProgressCallback, signal: AbortSignal) => Promise<T>
   ): Promise<T> {
     const downloadController = new AbortController();
     const timeoutMs = downloadStallTimeoutMs(this.config);
     let lastProgress = 0;
     let lastLoggedBucket = -1;
+    let lastActivityAt = Date.now();
     let timeout: NodeJS.Timeout | null = null;
     let settled = false;
+    const persistProgress = this.createProgressReporter(jobId, 'downloading', parentSignal);
 
     const clearTimer = () => {
       if (timeout) {
@@ -320,9 +377,14 @@ export class QueueRunner {
       }
     };
     let finishReject: (reason?: unknown) => void = () => undefined;
-    const resetTimer = () => {
+    const scheduleWatchdog = (delayMs = timeoutMs) => {
       clearTimer();
       timeout = setTimeout(() => {
+        const idleMs = Date.now() - lastActivityAt;
+        if (idleMs < timeoutMs) {
+          scheduleWatchdog(timeoutMs - idleMs);
+          return;
+        }
         const error = new DownloadStalledError(jobId, timeoutMs, lastProgress);
         logJobEvent('warn', 'download-stalled', {
           jobId,
@@ -331,7 +393,7 @@ export class QueueRunner {
         });
         downloadController.abort();
         finishReject(error);
-      }, timeoutMs);
+      }, Math.max(1, delayMs));
     };
 
     return await new Promise<T>((resolve, reject) => {
@@ -350,23 +412,22 @@ export class QueueRunner {
         downloadController.abort();
         finishReject(new JobCanceledError());
       });
-      const onProgress = (progress: number) => {
-        const nextProgress = clamp01(progress);
-        const advanced = nextProgress > lastProgress;
-        lastProgress = Math.max(lastProgress, nextProgress);
-        const overallProgress = 0.22 + lastProgress * 0.55;
-        this.transitionIfRunning(jobId, 'downloading', overallProgress, {}, parentSignal);
-        const bucket = Math.floor(lastProgress * 10);
-        if (bucket !== lastLoggedBucket || lastProgress >= 0.95) {
-          lastLoggedBucket = bucket;
-          logJobEvent('info', 'download-progress', { jobId, progress: progressForLog(lastProgress) });
-        }
-        if (advanced) {
-          resetTimer();
+      const onProgress: TaskProgressCallback = (update) => {
+        lastActivityAt = Date.now();
+        if (update.kind === 'progress') {
+          lastProgress = Math.max(lastProgress, clamp01(update.fraction));
+          persistProgress({ ...update, fraction: lastProgress });
+          const bucket = Math.floor(lastProgress * 10);
+          if (bucket !== lastLoggedBucket || lastProgress >= 0.95) {
+            lastLoggedBucket = bucket;
+            logJobEvent('info', 'download-progress', { jobId, progress: progressForLog(lastProgress) });
+          }
+        } else {
+          persistProgress(update);
         }
       };
 
-      resetTimer();
+      scheduleWatchdog();
       run(onProgress, downloadController.signal).then(
         (result) => settle(() => resolve(result)),
         (error) => settle(() => reject(error))
@@ -608,6 +669,7 @@ async function fetchSubtitleResponse(
 }
 
 function clamp01(value: number): number {
+  if (!Number.isFinite(value)) return 0;
   return Math.min(1, Math.max(0, value));
 }
 

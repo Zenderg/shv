@@ -11,6 +11,7 @@ export async function endWriteStream(stream: fs.WriteStream): Promise<void> {
 export async function stitchDownloadedHlsSegments(
   segments: Array<{ durationSeconds: number | null; filePath: string }>,
   outputPath: string,
+  onActivity: () => void,
   signal?: AbortSignal
 ): Promise<void> {
   const listPath = `${outputPath}.ffconcat`;
@@ -26,6 +27,9 @@ export async function stitchDownloadedHlsSegments(
     await runFfmpegCommand([
       '-hide_banner',
       '-y',
+      '-nostats',
+      '-progress',
+      'pipe:1',
       '-f',
       'concat',
       '-safe',
@@ -37,7 +41,7 @@ export async function stitchDownloadedHlsSegments(
       '-f',
       'mpegts',
       outputPath
-    ], signal);
+    ], onActivity, signal);
   } finally {
     fs.rmSync(listPath, { force: true });
   }
@@ -46,6 +50,7 @@ export async function stitchDownloadedHlsSegments(
 export async function concatenateDownloadedHlsSegments(
   segments: Array<{ filePath: string }>,
   outputPath: string,
+  onActivity: () => void,
   signal?: AbortSignal
 ): Promise<void> {
   const output = fs.createWriteStream(outputPath, { flags: 'w' });
@@ -58,6 +63,7 @@ export async function concatenateDownloadedHlsSegments(
         output.on('error', reject);
         input.on('end', resolve);
         input.on('data', (chunk) => {
+          onActivity();
           input.pause();
           output.write(chunk, (error) => {
             if (error) {
@@ -76,11 +82,14 @@ export async function concatenateDownloadedHlsSegments(
   await endWriteStream(output);
 }
 
-async function runFfmpegCommand(args: string[], signal?: AbortSignal): Promise<void> {
+async function runFfmpegCommand(args: string[], onActivity: () => void, signal?: AbortSignal): Promise<void> {
   await new Promise<void>((resolve, reject) => {
-    const child = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'] });
+    const child = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
     const removeAbortListener = onAbort(signal, () => child.kill('SIGTERM'));
     let stderr = '';
+    child.stdout.on('data', () => {
+      onActivity();
+    });
     child.stderr.on('data', (chunk: Buffer) => {
       stderr = `${stderr}${chunk.toString('utf8')}`.slice(-4000);
     });

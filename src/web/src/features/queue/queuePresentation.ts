@@ -45,6 +45,12 @@ const STATUS_PRESENTATIONS: Record<string, Omit<QueueJobPresentation, 'notice'>>
     showProgress: true,
     tone: 'active'
   },
+  adding_subtitles: {
+    icon: 'subtitles',
+    label: 'Adding subtitles',
+    showProgress: true,
+    tone: 'active'
+  },
   needs_manual_selection: {
     icon: 'waiting',
     label: 'Choose a source',

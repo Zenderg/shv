@@ -1,6 +1,6 @@
 # Architecture
 
-`shv` is a Dockerized TypeScript modular monolith. One Express process serves JSON APIs, static frontend assets, video streams, thumbnails, extension packages, and a single-worker download queue.
+`shv` is a Dockerized TypeScript modular monolith. One Express process serves JSON APIs, static frontend assets, video streams, thumbnails, extension packages, and a bounded-concurrency download queue.
 
 The product contract lives in [docs/product.md](product.md). This document is the source of truth for current implementation structure, module boundaries, storage ownership, and runtime contracts. Put product scope in [docs/product.md](product.md), durable rationale in [docs/decisions.md](decisions.md), and local workflow notes in [docs/development.md](development.md).
 
@@ -97,9 +97,11 @@ Captured candidate and subtitle request headers are internal download context. C
 analyze -> download -> process -> library insert
 ```
 
-On server startup, interrupted `analyzing`, `downloading`, and `processing` jobs are reset to `pending` so a Docker restart cannot leave a queue item permanently stuck in an active state.
+On server startup, interrupted `analyzing`, `downloading`, `processing`, and `adding_subtitles` jobs are reset to `pending` so a Docker restart cannot leave a queue item permanently stuck in an active state.
 
-The queue UI shows total job progress and progress within the current stage. Download progress comes from the download engine; processing progress comes from ffmpeg transcode timestamps when transcoding is required.
+The queue UI shows one honest current-stage indicator rather than a synthetic whole-pipeline percentage. A stage is determinate only when the backend has a trustworthy denominator, such as response size, HLS/DASH duration, or media duration. Otherwise the native progress indicator stays indeterminate while the stage label explains the active work.
+
+Download callbacks distinguish confirmed activity from calculable progress. Every received media chunk or advancing ffmpeg `out_time` refreshes the in-memory stall watchdog, including direct responses without `Content-Length`, large HLS segments, browser-impersonated downloads without a total size, and DASH inputs without a known duration. Activity-only heartbeats do not write SQLite. Determinate stage progress is persisted at bounded intervals or meaningful deltas, and guarded by the expected job status so late callbacks cannot overwrite a later phase or cancellation.
 
 Runnable, active, problem, and canceled jobs are returned by `/api/queue`; only `completed` jobs leave the active queue UI automatically.
 
@@ -155,7 +157,7 @@ HLS/DASH downloads write to an extensionless work file, so ffmpeg remux calls pa
 
 Plain, unencrypted HLS media playlists whose segments are ordinary `.ts` files are downloaded by the built-in segment downloader. This preserves browser-captured request headers and avoids ffmpeg HLS replay quirks with signed CDN playlists. Complex HLS playlists such as encrypted, byte-range, or fMP4/init-map streams stay on the ffmpeg fallback path.
 
-HLS progress should come from media-playlist `#EXTINF` durations when using the built-in segment downloader, or from ffmpeg's structured `-progress` output when using the fallback path. Do not infer progress from stderr activity.
+HLS progress should come from media-playlist `#EXTINF` durations when using the built-in segment downloader, or from ffmpeg's structured `-progress` output when using the fallback path. DASH progress uses static MPD `mediaPresentationDuration`, a sole `Period@duration`, or trusted candidate duration in that order. Dynamic, ambiguous, or duration-less manifests remain indeterminate while structured ffmpeg progress still supplies activity heartbeats. Do not infer remote-download activity from arbitrary stderr output.
 
 For HLS segment reliability, keep the ffmpeg reconnect options enabled and keep HLS `http_persistent` disabled. Some signed segment CDNs can invalidate or truncate keepalive/TLS sessions mid-download, producing partial segments and corrupt audio packets.
 
@@ -173,11 +175,13 @@ Do not replace that with trimming flags such as `-shortest` or `-t`. The transco
 
 Keep the post-transcode duration guard so a future ffmpeg behavior change fails the job instead of saving another inflated MP4.
 
-Selected subtitles are downloaded during the processing phase after the media source has been normalized. `QueueRunner`
+Selected subtitles are downloaded in the explicit `adding_subtitles` phase after the media source has been normalized. `QueueRunner`
 downloads only selected supported tracks. For plain subtitle files it preserves the captured request context; for subtitle
 HLS playlists it downloads and concatenates the subtitle segments first. Current output uses a single chosen subtitle
 track and burns it into the video with ffmpeg's `subtitles` filter. The saved MP4 should therefore show subtitles by
-default and should not be expected to expose switchable subtitle streams in the app's HTML5 player.
+default and should not be expected to expose switchable subtitle streams in the app's HTML5 player. Subtitle download
+and burn-in share that queue phase; burn-in percentage comes from structured ffmpeg timestamps
+instead of leaving the preceding processing phase frozen near completion.
 
 ## Browser Analyzer And Extension Contracts
 

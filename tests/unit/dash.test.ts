@@ -1,5 +1,10 @@
 import { describe, expect, test } from 'vitest';
-import { parseDashRepresentations, selectBestDashRepresentation, selectBestDashRenditions } from '../../src/server/download-engine/dash.js';
+import {
+  parseDashDurationSeconds,
+  parseDashRepresentations,
+  selectBestDashRepresentation,
+  selectBestDashRenditions
+} from '../../src/server/download-engine/dash.js';
 
 describe('DASH parsing', () => {
   const manifest = `<?xml version="1.0"?>
@@ -142,5 +147,22 @@ describe('DASH parsing', () => {
 </MPD>`;
 
     expect(parseDashRepresentations(blankBaseManifest, 'https://example.test/manifest.mpd')).toEqual([]);
+  });
+
+  test('reads an exact static MPD presentation duration', () => {
+    expect(parseDashDurationSeconds('<MPD mediaPresentationDuration="PT2M3.5S"><Period /></MPD>')).toBe(123.5);
+    expect(parseDashDurationSeconds('<MPD mediaPresentationDuration="P1DT2H"><Period /></MPD>')).toBe(93_600);
+  });
+
+  test('uses the sole period duration when the MPD duration is absent', () => {
+    expect(parseDashDurationSeconds('<MPD><Period duration="PT45S" /></MPD>')).toBe(45);
+  });
+
+  test('keeps dynamic, ambiguous, zero, and unsupported durations indeterminate', () => {
+    expect(parseDashDurationSeconds('<MPD type="dynamic" mediaPresentationDuration="PT30S"><Period /></MPD>')).toBeNull();
+    expect(parseDashDurationSeconds('<MPD><Period duration="PT10S" /><Period duration="PT20S" /></MPD>')).toBeNull();
+    expect(parseDashDurationSeconds('<MPD mediaPresentationDuration="PT0S"><Period /></MPD>')).toBeNull();
+    expect(parseDashDurationSeconds('<MPD mediaPresentationDuration="P1M"><Period /></MPD>')).toBeNull();
+    expect(parseDashDurationSeconds('<MPD mediaPresentationDuration="not-a-duration"><Period /></MPD>')).toBeNull();
   });
 });

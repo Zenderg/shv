@@ -116,7 +116,7 @@ With the Docker Compose app running, refresh README screenshots with:
 npm run showcase:screenshots
 ```
 
-The screenshot command writes PNG files under `docs/assets` and defaults to `http://127.0.0.1:8080`. Override the target with `SHV_SCREENSHOT_BASE_URL` when needed.
+The screenshot command writes PNG files under `docs/assets`, filters API responses to showcase-owned media and jobs so local user data cannot leak into documentation, and defaults to `http://127.0.0.1:8080`. Override the target with `SHV_SCREENSHOT_BASE_URL` when needed.
 
 ## Extension Preview
 
@@ -174,7 +174,7 @@ Design the library UI touch-first. Phones and tablets are supported browsing sur
 
 ## Environment And Diagnostics
 
-`DOWNLOAD_STALL_TIMEOUT_MS` controls how long a download may sit without progress before the runner aborts that transfer and marks the job failed. The default is 120000 milliseconds. Raise it for very slow sources; lower it when production should fail faster than the UI polling loop can make obvious.
+`DOWNLOAD_STALL_TIMEOUT_MS` controls how long a download may sit without confirmed transfer activity before the runner aborts it and marks the job failed. The default is 120000 milliseconds. Activity includes received media chunks and advancing structured ffmpeg timestamps even when a percentage cannot be calculated. Raise the timeout for sources that can legitimately stop delivering data for long periods; lower it when production should fail faster than the UI polling loop can make obvious.
 
 Set `PRESERVE_WORK_DIR=1` only during local/media diagnostics when the intermediate `WORK_ROOT/<jobId>/source.preserved` file is needed for ffprobe or ffmpeg experiments. Do not enable it by default in production because preserved source files can be large.
 

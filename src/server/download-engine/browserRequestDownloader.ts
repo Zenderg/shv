@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { JobCanceledError, onAbort, throwIfAborted } from '../utils/cancellation.js';
+import { activityUpdate, progressUpdate, type TaskProgressUpdate } from '../utils/taskProgress.js';
 import type { BrowserRequestDownloadInput, DownloadResult } from './downloadEngine.js';
 
 export async function downloadBrowserRequestMedia(input: BrowserRequestDownloadInput): Promise<DownloadResult> {
@@ -28,7 +29,7 @@ export async function downloadBrowserRequestMedia(input: BrowserRequestDownloadI
         lineBuffer = lineBuffer.slice(newlineIndex + 1);
         if (line) {
           const progress = progressFromBrowserRequestLine(line);
-          if (progress != null) input.onProgress(progress);
+          if (progress) input.onProgress(progress);
         }
         newlineIndex = lineBuffer.indexOf('\n');
       }
@@ -41,7 +42,7 @@ export async function downloadBrowserRequestMedia(input: BrowserRequestDownloadI
       if (input.signal?.aborted) {
         settle(() => reject(new JobCanceledError()));
       } else if (code === 0) {
-        input.onProgress(0.95);
+        input.onProgress(progressUpdate(1));
         settle(resolve);
       } else {
         settle(() => reject(new Error(formatBrowserRequestDownloadError(code, `${stdout}\n${stderr}`))));
@@ -53,11 +54,14 @@ export async function downloadBrowserRequestMedia(input: BrowserRequestDownloadI
   return { filePath: input.outputPath, bytesWritten: fs.statSync(input.outputPath).size };
 }
 
-function progressFromBrowserRequestLine(line: string): number | null {
+function progressFromBrowserRequestLine(line: string): TaskProgressUpdate | null {
   try {
-    const message = JSON.parse(line) as { progress?: unknown };
+    const message = JSON.parse(line) as { activity?: unknown; progress?: unknown };
     const progress = typeof message.progress === 'number' ? message.progress : null;
-    return progress == null || !Number.isFinite(progress) ? null : Math.min(0.95, Math.max(0, progress));
+    if (progress != null && Number.isFinite(progress)) {
+      return progressUpdate(Math.min(0.99, Math.max(0, progress)));
+    }
+    return message.activity === true ? activityUpdate() : null;
   } catch {
     return null;
   }
@@ -90,8 +94,11 @@ import sys
 from curl_cffi import requests
 
 
-def report(progress):
-    print(json.dumps({"progress": progress}), flush=True)
+def report(progress=None):
+    message = {"activity": True}
+    if progress is not None:
+        message["progress"] = progress
+    print(json.dumps(message), flush=True)
 
 
 payload = json.loads(sys.stdin.read())
@@ -145,11 +152,13 @@ with open(output_path, mode + "") as output:
         output.write(chunk)
         written += len(chunk)
         if total > 0 and not reported_cap and (written - last_report >= 1048576 or written >= total):
-            progress = min(0.95, written / total)
+            progress = min(0.99, written / total)
             report(progress)
-            reported_cap = progress >= 0.95
+            reported_cap = progress >= 0.99
             last_report = written
+        else:
+            report()
 
 if total > 0 and not reported_cap:
-    report(min(0.95, written / total))
+    report(min(0.99, written / total))
 `;

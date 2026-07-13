@@ -5,6 +5,7 @@ export type JobStatus =
   | 'needs_subtitle_selection'
   | 'downloading'
   | 'processing'
+  | 'adding_subtitles'
   | 'completed'
   | 'failed'
   | 'canceled';
@@ -44,7 +45,8 @@ export interface DownloadJob {
   titleHint: string | null;
   errorCode: string | null;
   errorMessage: string | null;
-  progress: number;
+  stageProgress: number | null;
+  progressLabel: string | null;
   createdAt: string;
   updatedAt: string;
   startedAt: string | null;

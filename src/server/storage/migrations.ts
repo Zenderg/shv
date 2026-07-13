@@ -93,6 +93,14 @@ export const migrations: Migration[] = [
     sql: `
       ALTER TABLE media_candidates ADD COLUMN subtitle_tracks_json TEXT NOT NULL DEFAULT '[]';
     `
+  },
+  {
+    id: 4,
+    name: 'honest_stage_progress',
+    sql: `
+      ALTER TABLE download_jobs ADD COLUMN stage_progress REAL;
+      ALTER TABLE download_jobs ADD COLUMN progress_label TEXT;
+    `
   }
 ];
 

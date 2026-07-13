@@ -32,7 +32,7 @@ export function QueuePanel({
       {jobs.length === 0 ? <p className="queueEmpty muted">No jobs in queue.</p> : null}
       {jobs.map((job) => {
         const presentation = queueJobPresentation(job);
-        const canCancel = ['pending', 'analyzing', 'downloading', 'processing'].includes(job.status);
+        const canCancel = ['pending', 'analyzing', 'downloading', 'processing', 'adding_subtitles'].includes(job.status);
         const canRetry = job.status === 'failed' || job.status === 'canceled';
         const actionLabel = busyJobIds[job.id];
         const actionBusy = Boolean(actionLabel);
@@ -122,8 +122,7 @@ function JobProgress({ job, title }: { job: DownloadJob; title: string }) {
   const stage = jobStageProgress(job);
   return (
     <div className="progressStack">
-      <ProgressRow id={`queue-job-${job.id}-overall-progress`} label="Overall progress" title={title} value={job.progress} />
-      <p className="jobStageSummary">{stage.label}: {formatProgressPercent(stage.value)}</p>
+      <ProgressRow id={`queue-job-${job.id}-stage-progress`} label={stage.label} title={title} value={stage.value} />
     </div>
   );
 }
@@ -189,16 +188,15 @@ function SubtitleSelection({
   );
 }
 
-function ProgressRow({ id, label, title, value }: { id: string; label: string; title: string; value: number }) {
-  const normalized = clamp01(value);
+function ProgressRow({ id, label, title, value }: { id: string; label: string; title: string; value: number | null }) {
   const labelId = `${id}-label`;
   return (
     <div className="progressRow">
       <div>
         <span id={labelId}>{label}</span>
-        <strong>{formatProgressPercent(normalized)}</strong>
+        <strong>{value === null ? 'In progress' : formatProgressPercent(value)}</strong>
       </div>
-      <progress aria-labelledby={`${labelId} ${id}-context`} max={1} value={normalized} />
+      <progress aria-labelledby={`${labelId} ${id}-context`} max={1} {...(value === null ? {} : { value })} />
       <span className="queueProgressContext" id={`${id}-context`}>{title}</span>
     </div>
   );

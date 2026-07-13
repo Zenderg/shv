@@ -4,12 +4,13 @@ import { spawn } from 'node:child_process';
 import type { MediaCandidate } from '../../shared/types.js';
 import { latestFfmpegTime } from '../media-processing/mediaProcessor.js';
 import { canDownloadPlainHlsSegments, parseHlsDurationSeconds, parseHlsResourceUrls, parseHlsSegments, selectBestHlsVariant, type HlsSegment } from './hls.js';
-import { selectBestDashRenditions } from './dash.js';
+import { parseDashDurationSeconds, selectBestDashRenditions } from './dash.js';
 import { JobCanceledError, onAbort, throwIfAborted } from '../utils/cancellation.js';
 import { requestHeadersForUrl } from '../utils/downloadRequestHeaders.js';
 import { logJobEvent, safeUrlParts, shortMessage } from '../utils/jobLogger.js';
 import { assertPublicHttpUrlSyntax } from '../utils/networkSafety.js';
 import { PublicMediaSession, type PublicHttpProxyOptions, type PublicMediaSessionLike } from '../utils/publicHttpProxy.js';
+import { activityUpdate, progressUpdate, type TaskProgressCallback } from '../utils/taskProgress.js';
 import type { Response as UndiciResponse } from 'undici';
 import { downloadBrowserRequestMedia } from './browserRequestDownloader.js';
 import { buildDashFfmpegArgs, buildHlsFfmpegArgs, formatFfmpegError } from './downloadFfmpeg.js';
@@ -26,7 +27,7 @@ export interface BrowserRequestDownloadInput {
   url: string;
   headers: Record<string, string>;
   outputPath: string;
-  onProgress: (progress: number) => void;
+  onProgress: TaskProgressCallback;
   proxyUrl: string;
   signal?: AbortSignal;
 }
@@ -47,7 +48,7 @@ export class DownloadEngine {
   async download(
     candidate: MediaCandidate,
     outputPath: string,
-    onProgress: (progress: number) => void,
+    onProgress: TaskProgressCallback,
     signal?: AbortSignal
   ): Promise<DownloadResult> {
     fs.mkdirSync(path.dirname(outputPath), { recursive: true });
@@ -73,7 +74,7 @@ export class DownloadEngine {
   private async downloadBrowserRequestDirect(
     candidate: MediaCandidate,
     outputPath: string,
-    onProgress: (progress: number) => void,
+    onProgress: TaskProgressCallback,
     session: PublicMediaSessionLike,
     signal?: AbortSignal
   ): Promise<DownloadResult> {
@@ -91,7 +92,7 @@ export class DownloadEngine {
   private async downloadDirect(
     candidate: MediaCandidate,
     outputPath: string,
-    onProgress: (progress: number) => void,
+    onProgress: TaskProgressCallback,
     session: PublicMediaSessionLike,
     signal?: AbortSignal
   ): Promise<DownloadResult> {
@@ -121,7 +122,7 @@ export class DownloadEngine {
     }
 
     const append = response.status === 206 && existingBytes > 0;
-    const total = Number(response.headers.get('content-length') ?? candidate.sizeBytes ?? 0) + (append ? existingBytes : 0);
+    const total = responseTotalBytes(response, append ? existingBytes : 0, candidate.sizeBytes);
     const stream = fs.createWriteStream(outputPath, { flags: append ? 'a' : 'w' });
     let written = append ? existingBytes : 0;
 
@@ -141,7 +142,9 @@ export class DownloadEngine {
         written += chunk.byteLength;
         await writeChunk(stream, chunk);
         if (total > 0) {
-          onProgress(Math.min(0.95, written / total));
+          onProgress(progressUpdate(Math.min(0.99, written / total)));
+        } else {
+          onProgress(activityUpdate());
         }
       }
     } finally {
@@ -153,13 +156,15 @@ export class DownloadEngine {
       stream.end((error?: Error | null) => (error ? reject(error) : resolve()));
     });
 
+    onProgress(progressUpdate(1));
+
     return { filePath: outputPath, bytesWritten: fs.statSync(outputPath).size };
   }
 
   private async downloadHls(
     candidate: MediaCandidate,
     outputPath: string,
-    onProgress: (progress: number) => void,
+    onProgress: TaskProgressCallback,
     session: PublicMediaSessionLike,
     signal?: AbortSignal
   ): Promise<DownloadResult> {
@@ -204,7 +209,7 @@ export class DownloadEngine {
     capturedUrl: string,
     headers: Record<string, string>,
     outputPath: string,
-    onProgress: (progress: number) => void,
+    onProgress: TaskProgressCallback,
     session: PublicMediaSessionLike,
     signal?: AbortSignal
   ): Promise<DownloadResult> {
@@ -250,6 +255,7 @@ export class DownloadEngine {
               break;
             }
             await writeChunk(stream, value);
+            onProgress(activityUpdate());
           }
         } finally {
           removeAbortListener();
@@ -258,11 +264,11 @@ export class DownloadEngine {
         downloadedSegments.push({ durationSeconds: segment.durationSeconds, filePath: segmentPath });
 
         completedDuration += segment.durationSeconds ?? 0;
-        onProgress(Math.min(0.95, progressForIndex(index) * 0.95));
+        onProgress(progressUpdate(Math.min(0.99, progressForIndex(index))));
       }
 
       try {
-        await stitchDownloadedHlsSegments(downloadedSegments, outputPath, signal);
+        await stitchDownloadedHlsSegments(downloadedSegments, outputPath, () => onProgress(activityUpdate()), signal);
         logJobEvent('info', 'hls-segments-stitched', {
           jobId: jobIdFromOutputPath(outputPath),
           method: 'ffmpeg-concat',
@@ -276,7 +282,7 @@ export class DownloadEngine {
           segmentCount: downloadedSegments.length
         });
         fs.rmSync(outputPath, { force: true });
-        await concatenateDownloadedHlsSegments(downloadedSegments, outputPath, signal);
+        await concatenateDownloadedHlsSegments(downloadedSegments, outputPath, () => onProgress(activityUpdate()), signal);
       }
     } catch (error) {
       throw error;
@@ -284,19 +290,20 @@ export class DownloadEngine {
       fs.rmSync(segmentDirectory, { recursive: true, force: true });
     }
 
-    onProgress(0.95);
+    onProgress(progressUpdate(1));
     return { filePath: outputPath, bytesWritten: fs.statSync(outputPath).size };
   }
 
   private async downloadDash(
     candidate: MediaCandidate,
     outputPath: string,
-    onProgress: (progress: number) => void,
+    onProgress: TaskProgressCallback,
     session: PublicMediaSessionLike,
     signal?: AbortSignal
   ): Promise<DownloadResult> {
     const manifest = await this.fetchText(candidate.url, candidate.url, candidate.headers, session, signal);
     const selected = selectBestDashRenditions(manifest, candidate.url);
+    const durationSeconds = parseDashDurationSeconds(manifest) ?? positiveDuration(candidate.durationSeconds);
     if (selected.video) {
       await this.validatePublicUrl(selected.video.baseUrl);
     }
@@ -323,7 +330,8 @@ export class DownloadEngine {
           video: videoSession.proxyUrl
         }),
         onProgress,
-        signal
+        signal,
+        durationSeconds
       );
     } finally {
       await Promise.all(inputSessions.map((inputSession) => inputSession.close()));
@@ -333,7 +341,7 @@ export class DownloadEngine {
 
   private async runFfmpeg(
     args: string[],
-    onProgress: (progress: number) => void,
+    onProgress: TaskProgressCallback,
     signal?: AbortSignal,
     durationSeconds?: number | null
   ): Promise<void> {
@@ -342,11 +350,13 @@ export class DownloadEngine {
       const removeAbortListener = onAbort(signal, () => child.kill('SIGTERM'));
       let stderr = '';
       let progressLog = '';
+      let lastReportedTime = -1;
       child.stdout.on('data', (chunk: Buffer) => {
         progressLog = `${progressLog}${chunk.toString('utf8')}`.slice(-12000);
         const current = latestFfmpegTime(progressLog);
-        if (durationSeconds && current != null) {
-          onProgress(Math.min(0.95, current / durationSeconds));
+        if (current != null && current > lastReportedTime) {
+          lastReportedTime = current;
+          onProgress(durationSeconds ? progressUpdate(Math.min(0.99, current / durationSeconds)) : activityUpdate());
         }
       });
       child.stderr.on('data', (chunk: Buffer) => {
@@ -363,7 +373,7 @@ export class DownloadEngine {
           return;
         }
         if (code === 0) {
-          onProgress(0.95);
+          onProgress(progressUpdate(1));
           resolve();
         } else {
           reject(new Error(formatFfmpegError(code, stderr)));
@@ -444,6 +454,24 @@ function hasRequestedContentRange(response: UndiciResponse, existingBytes: numbe
   const contentRange = response.headers.get('content-range');
   const match = contentRange?.match(/^bytes\s+(\d+)-\d+\/(?:\d+|\*)$/i);
   return match?.[1] === String(existingBytes);
+}
+
+function responseTotalBytes(response: UndiciResponse, resumedBytes: number, candidateSizeBytes: number | null): number {
+  const contentRange = response.headers.get('content-range');
+  const rangeTotalMatch = contentRange?.match(/\/([0-9]+)$/);
+  const rangeTotal = rangeTotalMatch ? Number(rangeTotalMatch[1]) : 0;
+  if (Number.isFinite(rangeTotal) && rangeTotal > 0) return rangeTotal;
+
+  const contentLength = Number(response.headers.get('content-length') ?? 0);
+  if (Number.isFinite(contentLength) && contentLength > 0) {
+    return response.status === 206 ? resumedBytes + contentLength : contentLength;
+  }
+
+  return Number.isFinite(candidateSizeBytes) && (candidateSizeBytes ?? 0) > 0 ? candidateSizeBytes ?? 0 : 0;
+}
+
+function positiveDuration(value: number | null): number | null {
+  return value !== null && Number.isFinite(value) && value > 0 ? value : null;
 }
 
 function originLockedProxyOptions(url: string): PublicHttpProxyOptions {

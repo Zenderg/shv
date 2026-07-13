@@ -186,12 +186,6 @@
   padding: 10px 12px;
 }
 
-.jobStageSummary {
-  color: var(--color-muted);
-  font-size: 12px;
-  margin: 0;
-}
-
 .jobActions {
   display: flex;
   flex-wrap: wrap;

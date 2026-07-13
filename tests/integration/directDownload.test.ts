@@ -7,6 +7,7 @@ import { spawn } from 'node:child_process';
 import { afterEach, describe, expect, test } from 'vitest';
 import type { MediaCandidate } from '../../src/shared/types.js';
 import { DownloadEngine, buildHlsFfmpegArgs } from '../../src/server/download-engine/downloadEngine.js';
+import type { TaskProgressUpdate } from '../../src/server/utils/taskProgress.js';
 import {
   PublicMediaSession,
   type PublicHttpProxyOptions,
@@ -65,6 +66,31 @@ describe('DownloadEngine direct download', () => {
 
     expect(result.bytesWritten).toBe(content.length);
     expect(fs.readFileSync(output)).toEqual(content);
+  });
+
+  test('reports activity and completes when a direct response has no total size', async () => {
+    const server = http.createServer((_request, response) => {
+      response.writeHead(200, { 'content-type': 'video/mp4' });
+      response.write('first');
+      setTimeout(() => response.end('second'), 15);
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('Server did not expose a port');
+
+    const candidate: MediaCandidate = {
+      id: 'candidate', jobId: 'job', kind: 'direct', url: `http://127.0.0.1:${address.port}/video.mp4`,
+      contentType: 'video/mp4', manifestType: null, resolution: null, bitrate: null, durationSeconds: null,
+      sizeBytes: null, confidence: 1, headers: {}, subtitleTracks: [], discoveredAt: new Date().toISOString()
+    };
+    const output = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'shv-unknown-total-')), 'video.mp4');
+    const updates: TaskProgressUpdate[] = [];
+
+    await new DownloadEngine(undefined, async (url) => url, unsafeTestSessionFactory).download(candidate, output, (update) => updates.push(update));
+
+    expect(updates).toContainEqual({ kind: 'activity' });
+    expect(updates.at(-1)).toEqual({ kind: 'progress', fraction: 1 });
   });
 
   test('restarts a direct download when a partial response starts at the wrong offset', async () => {
@@ -206,6 +232,34 @@ describe('DownloadEngine direct download', () => {
     expect(fs.readFileSync(output)).toEqual(Buffer.concat([existing, remaining]));
   });
 
+  test('does not count resumed bytes twice when only the candidate total is known', async () => {
+    const existing = Buffer.from('12345');
+    const remaining = Buffer.from('67890');
+    const server = http.createServer((request, response) => {
+      expect(request.headers.range).toBe(`bytes=${existing.length}-`);
+      response.writeHead(206, { 'content-range': `bytes ${existing.length}-9/*` });
+      response.end(remaining);
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('Server did not expose a port');
+
+    const candidate: MediaCandidate = {
+      id: 'candidate', jobId: 'job', kind: 'direct', url: `http://127.0.0.1:${address.port}/video.mp4`,
+      contentType: 'video/mp4', manifestType: null, resolution: null, bitrate: null, durationSeconds: null,
+      sizeBytes: 10, confidence: 1, headers: {}, subtitleTracks: [], discoveredAt: new Date().toISOString()
+    };
+    const output = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'shv-resume-total-')), 'video.mp4');
+    fs.writeFileSync(output, existing);
+    const updates: TaskProgressUpdate[] = [];
+
+    await new DownloadEngine(undefined, async (url) => url, unsafeTestSessionFactory).download(candidate, output, (update) => updates.push(update));
+
+    expect(updates).toContainEqual({ kind: 'progress', fraction: 0.99 });
+    expect(fs.readFileSync(output)).toEqual(Buffer.concat([existing, remaining]));
+  });
+
   test('downloads plain HLS media segments without requiring ffmpeg demuxing', async () => {
     const firstSegment = Buffer.from('first-ts-segment');
     const secondSegment = Buffer.from('second-ts-segment');
@@ -266,13 +320,13 @@ describe('DownloadEngine direct download', () => {
       discoveredAt: new Date().toISOString()
     };
     const output = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'xxx-hls-download-')), 'video.ts');
-    const progress: number[] = [];
+    const progress: TaskProgressUpdate[] = [];
 
     const result = await new DownloadEngine(undefined, async (url) => url, unsafeTestSessionFactory).download(candidate, output, (value) => progress.push(value));
 
     expect(result.bytesWritten).toBe(firstSegment.length + secondSegment.length);
     expect(fs.readFileSync(output)).toEqual(Buffer.concat([firstSegment, secondSegment]));
-    expect(progress.at(-1)).toBe(0.95);
+    expect(progress.at(-1)).toEqual({ kind: 'progress', fraction: 1 });
   });
 
   test('does not replay captured headers to cross-origin HLS variants or segments', async () => {
