@@ -500,8 +500,6 @@ function ffmpegNetworkInputArgs(proxyUrl: string, options: { reconnectAtEof?: bo
     'http,https,tcp,tls,crypto',
     '-http_proxy',
     proxyUrl,
-    '-max_redirects',
-    '0',
     '-reconnect',
     '1',
     '-reconnect_streamed',
