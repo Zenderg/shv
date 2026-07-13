@@ -55,11 +55,11 @@ export function ensureDirInside(root: string, target: string): string {
   return safeTarget;
 }
 
-export function uniquePath(directory: string, desiredName: string): string {
+export function uniquePath(directory: string, desiredName: string, reservedPaths: ReadonlySet<string> = new Set()): string {
   const parsed = path.parse(sanitizeName(desiredName));
   let candidate = path.join(directory, `${parsed.name}${parsed.ext}`);
   let index = 2;
-  while (fs.existsSync(candidate)) {
+  while (fs.existsSync(candidate) || reservedPaths.has(candidate)) {
     candidate = path.join(directory, `${parsed.name}-${index}${parsed.ext}`);
     index += 1;
   }
