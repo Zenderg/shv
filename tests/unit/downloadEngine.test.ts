@@ -50,6 +50,8 @@ describe('DownloadEngine ffmpeg helpers', () => {
     expect(args.filter((arg) => arg === '-i')).toHaveLength(2);
     expect(args).toEqual(expect.arrayContaining(['https://media.example.test/video.webm', 'https://media.example.test/audio.webm']));
     expect(args).toEqual(expect.arrayContaining(['-reconnect', '1', '-reconnect_on_network_error', '1']));
+    expect(args.filter((arg) => arg === '-max_redirects')).toHaveLength(2);
+    expect(args.filter((arg, index) => arg === '-max_redirects' && args[index + 1] === '0')).toHaveLength(2);
   });
 
   test('does not replay captured headers to cross-origin DASH renditions', () => {
