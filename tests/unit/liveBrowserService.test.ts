@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
+import type { BrowserContext, Page } from 'playwright';
 import type { AppConfig } from '../../src/server/config/appConfig.js';
 import { JobService } from '../../src/server/jobs/jobService.js';
 import { LiveBrowserService } from '../../src/server/browser-live/liveBrowserService.js';
@@ -67,6 +68,61 @@ describe('LiveBrowserService', () => {
     expect(state.running).toBe(false);
   });
 
+  test('stops and waits for a browser session that is still launching', async () => {
+    const { config, db, jobs } = createServices();
+    const job = jobs.create('https://example.test/watch', createCategory(db));
+    const launch = deferred<BrowserContext>();
+    playwrightMocks.launchPersistentContext.mockReturnValueOnce(launch.promise);
+    const service = new LiveBrowserService(config, jobs);
+
+    const started = service.start(job.id);
+    await vi.waitFor(() => expect(playwrightMocks.launchPersistentContext).toHaveBeenCalledTimes(1));
+    const stopped = service.stop(job.id);
+    const stopSettled = vi.fn();
+    void stopped.then(stopSettled);
+
+    await Promise.resolve();
+    expect(stopSettled).not.toHaveBeenCalled();
+
+    launch.resolve({
+      close: playwrightMocks.contextClose,
+      newPage: playwrightMocks.newPage
+    } as unknown as BrowserContext);
+
+    await stopped;
+    await expect(started).resolves.toMatchObject({ jobId: job.id, running: false });
+    expect(playwrightMocks.contextClose).toHaveBeenCalledTimes(1);
+    expect(playwrightMocks.newPage).not.toHaveBeenCalled();
+    expect(playwrightMocks.pageGoto).not.toHaveBeenCalled();
+    await expect(service.state(job.id)).resolves.toMatchObject({ running: false });
+  });
+
+  test('closes the browser context while a page is still being created', async () => {
+    const { config, db, jobs } = createServices();
+    const job = jobs.create('https://example.test/watch', createCategory(db));
+    const page = deferred<Page>();
+    playwrightMocks.newPage.mockReturnValueOnce(page.promise);
+    const service = new LiveBrowserService(config, jobs);
+
+    const started = service.start(job.id);
+    await vi.waitFor(() => expect(playwrightMocks.newPage).toHaveBeenCalledTimes(1));
+    const stopped = service.stop(job.id);
+
+    await vi.waitFor(() => expect(playwrightMocks.contextClose).toHaveBeenCalledTimes(1));
+    page.resolve({
+      content: playwrightMocks.pageContent,
+      goto: playwrightMocks.pageGoto,
+      on: playwrightMocks.pageOn,
+      title: playwrightMocks.pageTitle,
+      url: playwrightMocks.pageUrl,
+      waitForTimeout: playwrightMocks.waitForTimeout
+    } as unknown as Page);
+
+    await stopped;
+    await expect(started).resolves.toMatchObject({ jobId: job.id, running: false });
+    expect(playwrightMocks.pageGoto).not.toHaveBeenCalled();
+  });
+
   test('captures complete replay-safe request headers for detected media', async () => {
     const { config, db, jobs } = createServices();
     const job = jobs.create('https://example.test/watch', createCategory(db));
@@ -127,4 +183,12 @@ function createCategory(db: Db): string {
     new Date().toISOString()
   );
   return categoryId;
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
 }

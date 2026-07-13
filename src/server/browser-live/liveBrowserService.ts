@@ -33,6 +33,8 @@ interface LiveBrowserSession {
 
 export class LiveBrowserService {
   private readonly starting = new Map<string, Promise<LiveBrowserState>>();
+  private readonly startingContexts = new Map<string, BrowserContext>();
+  private readonly stoppedStarts = new Set<string>();
   private readonly sessions = new Map<string, LiveBrowserSession>();
 
   constructor(
@@ -50,8 +52,11 @@ export class LiveBrowserService {
       return pending;
     }
 
+    this.stoppedStarts.delete(jobId);
     const starting = this.createSession(jobId).finally(() => {
       this.starting.delete(jobId);
+      this.startingContexts.delete(jobId);
+      this.stoppedStarts.delete(jobId);
     });
     this.starting.set(jobId, starting);
     return starting;
@@ -73,7 +78,22 @@ export class LiveBrowserService {
       args: ['--no-sandbox', '--disable-dev-shm-usage'],
       viewport: { width: 1366, height: 900 }
     });
-    const page = await context.newPage();
+    this.startingContexts.set(jobId, context);
+    if (this.stoppedStarts.has(jobId)) {
+      return this.stopStartingContext(jobId, context);
+    }
+    let page: Page;
+    try {
+      page = await context.newPage();
+    } catch (error) {
+      if (this.stoppedStarts.has(jobId)) {
+        return this.stopStartingContext(jobId, context);
+      }
+      throw error;
+    }
+    if (this.stoppedStarts.has(jobId)) {
+      return this.stopStartingContext(jobId, context);
+    }
     const session: LiveBrowserSession = {
       candidates,
       context,
@@ -128,12 +148,20 @@ export class LiveBrowserService {
   }
 
   async stop(jobId: string): Promise<void> {
-    const session = this.sessions.get(jobId);
-    if (!session) {
-      return;
+    const starting = this.starting.get(jobId);
+    const startingContext = this.startingContexts.get(jobId);
+    if (starting) {
+      this.stoppedStarts.add(jobId);
     }
-    this.sessions.delete(jobId);
-    await session.context.close().catch(() => undefined);
+    const session = this.sessions.get(jobId);
+    if (session) {
+      this.sessions.delete(jobId);
+      await session.context.close().catch(() => undefined);
+    }
+    if (startingContext && startingContext !== session?.context) {
+      await startingContext.close().catch(() => undefined);
+    }
+    await starting?.catch(() => undefined);
   }
 
   async state(jobId: string): Promise<LiveBrowserState> {
@@ -203,6 +231,11 @@ export class LiveBrowserService {
       throw new Error('Live browser session did not start');
     }
     return session;
+  }
+
+  private async stopStartingContext(jobId: string, context: BrowserContext): Promise<LiveBrowserState> {
+    await context.close().catch(() => undefined);
+    return this.state(jobId);
   }
 
   private async collectHtmlCandidates(session: LiveBrowserSession): Promise<void> {
