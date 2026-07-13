@@ -9,12 +9,14 @@ export interface MobileNavigationProps {
   activeProblems: number;
   addDisabled?: boolean;
   categories: Category[];
+  extensionUpdateAvailable: boolean;
   onAdd: () => void;
   onChooseCategory: (categoryId: string) => void;
   onCreateCategory: () => void;
   onDeleteCategory: (category: Category) => void;
   onRenameCategory: (category: Category) => void;
   onShowQueue: () => void;
+  onUpdateExtension: () => void;
   page: 'library' | 'queue';
   queueBadgeCount: number;
   selectedCategoryId: string;
@@ -24,12 +26,14 @@ export function MobileNavigation({
   activeProblems,
   addDisabled,
   categories,
+  extensionUpdateAvailable,
   onAdd,
   onChooseCategory,
   onCreateCategory,
   onDeleteCategory,
   onRenameCategory,
   onShowQueue,
+  onUpdateExtension,
   page,
   queueBadgeCount,
   selectedCategoryId
@@ -49,7 +53,9 @@ export function MobileNavigation({
           activeProblems={activeProblems}
           addDisabled={addDisabled ?? categories.length === 0}
           categoryName={selectedCategory?.name ?? null}
+          extensionUpdateAvailable={extensionUpdateAvailable}
           onAdd={onAdd}
+          onUpdateExtension={onUpdateExtension}
           page={page}
           queueBadgeCount={queueBadgeCount}
         />

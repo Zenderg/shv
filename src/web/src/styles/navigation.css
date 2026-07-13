@@ -201,6 +201,7 @@
 }
 
 .mobileHeaderIconButton,
+.mobileExtensionUpdateButton,
 .mobileDrawerClose,
 .mobileCategoryMenuButton {
   background: var(--color-sidebar-surface);
@@ -214,6 +215,8 @@
 
 .mobileHeaderIconButton:hover,
 .mobileHeaderIconButton:focus-visible,
+.mobileExtensionUpdateButton:hover,
+.mobileExtensionUpdateButton:focus-visible,
 .mobileDrawerClose:hover,
 .mobileDrawerClose:focus-visible,
 .mobileCategoryMenuButton:hover,
@@ -221,6 +224,12 @@
 .mobileCategoryMenuButton[data-state="open"] {
   background: var(--color-surface-muted);
   color: var(--color-accent);
+}
+
+.mobileExtensionUpdateButton {
+  background: var(--color-warning-bg);
+  border: 1px solid var(--color-warning-border);
+  color: var(--color-warning-text);
 }
 
 .mobileHeaderTitle {
@@ -243,6 +252,11 @@
   color: var(--color-subtle);
   font-size: 12px;
   margin-top: 2px;
+}
+
+.mobileHeaderActions {
+  display: flex;
+  gap: 8px;
 }
 
 .mobileAddButton {

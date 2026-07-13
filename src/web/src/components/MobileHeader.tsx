@@ -1,18 +1,22 @@
 import * as Dialog from '@radix-ui/react-dialog';
-import { MenuIcon, PlusIcon } from './icons';
+import { MenuIcon, PlusIcon, UpdateIcon } from './icons';
 
 export function MobileHeader({
   activeProblems,
   addDisabled = false,
   categoryName,
+  extensionUpdateAvailable,
   onAdd,
+  onUpdateExtension,
   page,
   queueBadgeCount
 }: {
   activeProblems: number;
   addDisabled?: boolean;
   categoryName: string | null;
+  extensionUpdateAvailable: boolean;
   onAdd: () => void;
+  onUpdateExtension: () => void;
   page: 'library' | 'queue';
   queueBadgeCount: number;
 }) {
@@ -29,10 +33,23 @@ export function MobileHeader({
           {queueBadgeCount} queued{activeProblems ? `, ${activeProblems} need attention` : ''}
         </span>
       </div>
-      <button className="mobileAddButton" disabled={addDisabled} onClick={onAdd} type="button">
-        <PlusIcon />
-        <span>Add</span>
-      </button>
+      <div className="mobileHeaderActions">
+        {extensionUpdateAvailable ? (
+          <button
+            aria-label="Update browser extension"
+            className="mobileExtensionUpdateButton"
+            onClick={onUpdateExtension}
+            title="Update browser extension"
+            type="button"
+          >
+            <UpdateIcon />
+          </button>
+        ) : null}
+        <button className="mobileAddButton" disabled={addDisabled} onClick={onAdd} type="button">
+          <PlusIcon />
+          <span>Add</span>
+        </button>
+      </div>
     </header>
   );
 }

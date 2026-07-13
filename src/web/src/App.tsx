@@ -32,7 +32,7 @@ type AppPage = 'library' | 'queue';
 
 type ExtensionDialogState =
   | { kind: 'none' }
-  | { job: DownloadJob; kind: 'issue'; status: Exclude<ExtensionStatus, { kind: 'ready' }> };
+  | { job: DownloadJob | null; kind: 'issue'; status: Exclude<ExtensionStatus, { kind: 'ready' }> };
 
 const EMPTY_QUEUE: QueueSnapshot = { jobs: [], candidatesByJobId: {} };
 
@@ -47,6 +47,7 @@ export function App() {
   const [dialogError, setDialogError] = useState<string | null>(null);
   const [extensionDialog, setExtensionDialog] = useState<ExtensionDialogState>({ kind: 'none' });
   const [extensionDialogError, setExtensionDialogError] = useState<string | null>(null);
+  const [extensionStatus, setExtensionStatus] = useState<ExtensionStatus | null>(null);
   const [openCategoryMenuId, setOpenCategoryMenuId] = useState<string | null>(null);
   const [page, setPage] = useState<AppPage>('library');
   const [queueActionJobIds, setQueueActionJobIds] = useState<Record<string, string>>({});
@@ -80,6 +81,23 @@ export function App() {
     window.addEventListener('message', handleSourceHelperEvent);
     return () => window.removeEventListener('message', handleSourceHelperEvent);
   }, [queryClient]);
+
+  useEffect(() => {
+    const profile = runtimeConfigQuery.data?.sourceExtensionProfile;
+    if (!profile) {
+      return;
+    }
+    let active = true;
+    setExtensionStatus(null);
+    void checkSourceExtension(profile).then((status) => {
+      if (active) {
+        setExtensionStatus(status);
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [runtimeConfigQuery.data?.sourceExtensionProfile]);
 
   function showDialog(nextDialog: DialogState) {
     setDialogError(null);
@@ -157,6 +175,7 @@ export function App() {
   async function chooseSource(job: DownloadJob) {
     const profile = await currentSourceExtensionProfile();
     const status = await checkSourceExtension(profile);
+    setExtensionStatus(status);
     if (status.kind !== 'ready') {
       setExtensionDialogError(null);
       setExtensionDialog({ job, kind: 'issue', status });
@@ -165,16 +184,19 @@ export function App() {
     await openSourceWithExtension({ jobId: job.id, sourceUrl: job.sourceUrl, titleHint: job.titleHint }, profile);
   }
 
-  async function recheckExtension(job: DownloadJob) {
+  async function recheckExtension(job: DownloadJob | null) {
     setExtensionDialogError(null);
     try {
       const profile = await currentSourceExtensionProfile();
       const status = await checkSourceExtension(profile);
+      setExtensionStatus(status);
       if (status.kind !== 'ready') {
         setExtensionDialog({ job, kind: 'issue', status });
         return;
       }
-      await openSourceWithExtension({ jobId: job.id, sourceUrl: job.sourceUrl, titleHint: job.titleHint }, profile);
+      if (job) {
+        await openSourceWithExtension({ jobId: job.id, sourceUrl: job.sourceUrl, titleHint: job.titleHint }, profile);
+      }
       setExtensionDialog({ kind: 'none' });
     } catch (caught) {
       setExtensionDialogError(message(caught));
@@ -206,6 +228,7 @@ export function App() {
         activeProblems={activeProblems}
         addDisabled={dialogBusy || categoriesQuery.isPending}
         categories={categories}
+        extensionUpdateAvailable={extensionStatus?.kind === 'outdated'}
         onAdd={() => showDialog({ kind: 'add' })}
         onChooseCategory={(categoryId) => {
           setSelectedCategoryId(categoryId);
@@ -215,6 +238,12 @@ export function App() {
         onDeleteCategory={(category) => showDialog({ category, kind: 'deleteCategory' })}
         onRenameCategory={(category) => showDialog({ category, kind: 'renameCategory' })}
         onShowQueue={() => setPage('queue')}
+        onUpdateExtension={() => {
+          if (extensionStatus?.kind === 'outdated') {
+            setExtensionDialogError(null);
+            setExtensionDialog({ job: null, kind: 'issue', status: extensionStatus });
+          }
+        }}
         page={page}
         queueBadgeCount={queue.jobs.length}
         selectedCategoryId={currentCategoryId}
@@ -243,9 +272,16 @@ export function App() {
           busy={dialogBusy || categoriesQuery.isPending}
           categoryCount={queue.jobs.length}
           categoryName={selectedCategory?.name ?? null}
+          extensionUpdateAvailable={extensionStatus?.kind === 'outdated'}
           loading={page === 'queue' ? queueLoading : libraryLoading}
           mediaCount={media.length}
           onAdd={() => showDialog({ kind: 'add' })}
+          onUpdateExtension={() => {
+            if (extensionStatus?.kind === 'outdated') {
+              setExtensionDialogError(null);
+              setExtensionDialog({ job: null, kind: 'issue', status: extensionStatus });
+            }
+          }}
           page={page}
         />
 

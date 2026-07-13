@@ -21,7 +21,15 @@ The runtime files under `extension/chrome-source-helper` are shared by both pack
 profile key/name into the packaged manifest and rewrites app origin constants in both `shared.js` and the generated
 `content-script.js`. The app uses the production extension profile by default, even on localhost or private LAN origins.
 Set `SOURCE_EXTENSION_PROFILE=dev` to make the app expect the development extension id and show the development package
-in install/update instructions; the repository Docker Compose file sets this for local development convenience.
+in install/update instructions. The repository `docker-compose.yml` intentionally keeps the production profile as its
+default. Opt into the development profile explicitly when starting the local stack:
+
+```bash
+SOURCE_EXTENSION_PROFILE=dev docker compose up -d --build
+```
+
+Run future Compose updates with the same environment override while using the development extension. There is no
+repository-provided `docker-compose.override.yml` for this profile.
 
 The Sources sidebar content script is generated from `src/extension/source-helper` with Svelte. Run
 `npm run build:extension` after editing that source; `npm run build` runs it before the web and server builds. Do not
@@ -74,9 +82,10 @@ Development: jglagfhfffmokhgmaijndppinlbolpee
 The static source manifest does not contain a hardcoded key. Downloaded packages receive the production or development
 key from `src/shared/sourceExtension.ts` when the app builds the zip.
 
-When `Choose source` is clicked, the app checks the extension id selected by `SOURCE_EXTENSION_PROFILE` and verifies
-its protocol version. If it is missing or old, the app shows an install/update dialog with the matching download link
-and instructions.
+After loading its runtime configuration, the app checks the extension id selected by `SOURCE_EXTENSION_PROFILE` and
+verifies its version and protocol version. An outdated installed extension adds an `Update extension` action to the app
+header; the action opens the update dialog with the matching download link and instructions. `Choose source` repeats the
+check before opening a source tab and shows the install/update dialog when the extension is missing or outdated.
 
 The app is commonly opened from another LAN device over plain HTTP, for example `http://192.168.x.x:8080`. Browser-side extension bridge code must not require HTTPS-only Web Crypto APIs such as `crypto.randomUUID`; use a fallback request id when probing the content-script bridge.
 

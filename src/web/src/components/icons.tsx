@@ -22,6 +22,10 @@ export function PlusIcon() {
   return <svg viewBox="0 0 24 24"><path d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6V5Z" /></svg>;
 }
 
+export function UpdateIcon() {
+  return <svg viewBox="0 0 24 24"><path d="M12 4a8 8 0 0 1 7.5 5.2l-1.9.7A6 6 0 0 0 7.2 8H10v2H4V4h2v2.3A8 8 0 0 1 12 4Zm8 10v6h-2v-2.3A8 8 0 0 1 4.5 14.8l1.9-.7A6 6 0 0 0 16.8 16H14v-2h6Z" /></svg>;
+}
+
 export function EditIcon() {
   return <svg viewBox="0 0 24 24"><path d="m5 16.8-.8 3 3-.8L18.7 7.5l-2.2-2.2L5 16.8Zm13.9-13.9 2.2 2.2-1.2 1.2-2.2-2.2 1.2-1.2Z" /></svg>;
 }

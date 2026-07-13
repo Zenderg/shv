@@ -1,22 +1,26 @@
-import { PlusIcon } from './icons';
+import { PlusIcon, UpdateIcon } from './icons';
 
 export function AppHeader({
   activeProblems,
   busy,
   categoryName,
   categoryCount,
+  extensionUpdateAvailable,
   loading,
   mediaCount,
   onAdd,
+  onUpdateExtension,
   page
 }: {
   activeProblems: number;
   busy: boolean;
   categoryName: string | null;
   categoryCount: number;
+  extensionUpdateAvailable: boolean;
   loading: boolean;
   mediaCount: number;
   onAdd: () => void;
+  onUpdateExtension: () => void;
   page: 'library' | 'queue';
 }) {
   return (
@@ -32,6 +36,12 @@ export function AppHeader({
         </p>
       </div>
       <div className="topbarActions">
+        {extensionUpdateAvailable ? (
+          <button className="extensionUpdateButton" onClick={onUpdateExtension} type="button">
+            <UpdateIcon />
+            Update extension
+          </button>
+        ) : null}
         <button className="primaryButton" disabled={busy} onClick={onAdd} type="button">
           <PlusIcon />
           Add

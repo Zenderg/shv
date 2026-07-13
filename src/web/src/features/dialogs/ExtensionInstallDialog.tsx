@@ -21,7 +21,7 @@ export function ExtensionInstallDialog({
   status
 }: {
   error: string | null;
-  job: DownloadJob;
+  job: DownloadJob | null;
   onCheckAgain: () => void;
   onClose: () => void;
   sourceExtensionProfile: SourceExtensionKind;
@@ -36,7 +36,7 @@ export function ExtensionInstallDialog({
         <header>
           <div>
             <DialogTitle>{dialogTitle}</DialogTitle>
-            <p>{job.titleHint || safeHostname(job.sourceUrl)}</p>
+            {job ? <p>{job.titleHint || safeHostname(job.sourceUrl)}</p> : null}
           </div>
           <DialogClose asChild>
             <button aria-label={`Close ${dialogTitle}`} type="button">
