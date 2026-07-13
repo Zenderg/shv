@@ -35,8 +35,8 @@ jobs:
           fi
 
           release_version="${GITHUB_REF_NAME#v}"
-          package_version="$(node -p \"require('./package.json').version\")"
-          lockfile_version="$(node -p \"require('./package-lock.json').version\")"
+          package_version="$(node -p "require('./package.json').version")"
+          lockfile_version="$(node -p "require('./package-lock.json').version")"
 
           if [[ "${package_version}" != "${release_version}" || "${lockfile_version}" != "${release_version}" ]]; then
             echo "Release tag ${GITHUB_REF_NAME} must match package.json and package-lock.json versions (found ${package_version} and ${lockfile_version})." >&2
