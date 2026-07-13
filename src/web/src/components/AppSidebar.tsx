@@ -12,7 +12,8 @@ export function AppSidebar({
   onShowQueue,
   openCategoryMenuId,
   page,
-  queueBadgeCount,
+  queueItemCount,
+  queueSummary,
   selectedCategoryId
 }: {
   categories: Category[];
@@ -24,7 +25,8 @@ export function AppSidebar({
   onShowQueue: () => void;
   openCategoryMenuId: string | null;
   page: 'library' | 'queue';
-  queueBadgeCount: number;
+  queueItemCount: number;
+  queueSummary: string;
   selectedCategoryId: string;
 }) {
   return (
@@ -39,6 +41,7 @@ export function AppSidebar({
 
       <nav className="queueNav" aria-label="Queue">
         <button
+          aria-label={`Queue, ${queueSummary}`}
           aria-current={page === 'queue' ? 'page' : undefined}
           className={page === 'queue' ? 'selected' : ''}
           onClick={onShowQueue}
@@ -46,7 +49,7 @@ export function AppSidebar({
         >
           <QueueIcon />
           <span>Queue</span>
-          <strong className="navBadge">{queueBadgeCount}</strong>
+          <strong aria-hidden="true" className="navBadge">{queueItemCount}</strong>
         </button>
       </nav>
 

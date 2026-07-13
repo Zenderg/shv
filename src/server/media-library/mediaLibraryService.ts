@@ -3,6 +3,7 @@ import path from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
 import type { MediaItem } from '../../shared/types.js';
 import type { CategoryService } from '../categories/categoryService.js';
+import { JobStateConflictError } from '../jobs/jobService.js';
 import { nowIso, type Db } from '../storage/database.js';
 import { mapMediaItem } from '../storage/rowMappers.js';
 import { sanitizeName, uniquePath } from '../utils/fileSafety.js';
@@ -48,43 +49,66 @@ export class MediaLibraryService {
       throw new Error('Category not found');
     }
 
-    const id = uuidv4();
-    const now = nowIso();
-    const relativePath = this.mediaFiles.relativeMediaPath(input.finalFilePath);
-    const filename = path.basename(input.finalFilePath);
-    const thumbnailRelativePath = input.thumbnailPath ? this.mediaFiles.relativeThumbnailPath(input.thumbnailPath) : null;
-
-    this.db
-      .prepare(
-        `INSERT INTO media_items (
-          id, category_id, title, filename, relative_path, thumbnail_path, duration_seconds,
-          width, height, size_bytes, container, video_codec, audio_codec, source_url, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      )
-      .run(
-        id,
-        input.categoryId,
-        sanitizeName(input.title, 'video'),
-        filename,
-        relativePath,
-        thumbnailRelativePath,
-        input.durationSeconds,
-        input.width,
-        input.height,
-        input.sizeBytes,
-        input.container,
-        input.videoCodec,
-        input.audioCodec,
-        input.sourceUrl,
-        now,
-        now
-      );
-
-    const created = this.get(id);
+    const created = this.insert(input, null);
     if (!created) {
       throw new Error('Media item creation failed');
     }
     return created;
+  }
+
+  completeJob(jobId: string, runId: string, input: CreateMediaInput): MediaItem {
+    const category = this.categories.get(input.categoryId);
+    if (!category) {
+      throw new Error('Category not found');
+    }
+    let transactionStarted = false;
+    try {
+      this.db.exec('BEGIN IMMEDIATE');
+      transactionStarted = true;
+      const existingRow = this.db.prepare('SELECT * FROM media_items WHERE job_id = ?').get(jobId);
+      const existing = existingRow ? mapMediaItem(existingRow as Record<string, unknown>) : null;
+      const jobRow = this.db
+        .prepare('SELECT status, active_run_id, output_relative_path FROM download_jobs WHERE id = ?')
+        .get(jobId) as { active_run_id?: unknown; output_relative_path?: unknown; status?: unknown } | undefined;
+      if (!jobRow) {
+        throw new Error('Job not found');
+      }
+      if (existing && String(jobRow.status) === 'completed') {
+        this.db.exec('COMMIT');
+        transactionStarted = false;
+        return existing;
+      }
+      const status = String(jobRow.status);
+      if (String(jobRow.active_run_id ?? '') !== runId || !['processing', 'adding_subtitles'].includes(status)) {
+        throw new JobStateConflictError(`Job ${jobId} is no longer finalizable by run ${runId}`);
+      }
+      const relativePath = this.mediaFiles.relativeMediaPath(input.finalFilePath);
+      if (String(jobRow.output_relative_path ?? '') !== relativePath) {
+        throw new JobStateConflictError(`Job ${jobId} does not own output path ${relativePath}`);
+      }
+      const media = existing ?? this.insert(input, jobId);
+      const now = nowIso();
+      const result = this.db
+        .prepare(
+          `UPDATE download_jobs
+           SET status = 'completed', progress = 1, stage_progress = 1, progress_label = NULL,
+               error_code = NULL, error_message = NULL, active_run_id = NULL,
+               output_relative_path = NULL, completed_at = ?, updated_at = ?
+           WHERE id = ? AND active_run_id = ? AND status IN ('processing', 'adding_subtitles')`
+        )
+        .run(now, now, jobId, runId);
+      if (result.changes === 0) {
+        throw new JobStateConflictError(`Job ${jobId} changed while it was being finalized`);
+      }
+      this.db.exec('COMMIT');
+      transactionStarted = false;
+      return media;
+    } catch (error) {
+      if (transactionStarted) {
+        this.db.exec('ROLLBACK');
+      }
+      throw error;
+    }
   }
 
   rename(id: string, title: string): MediaItem {
@@ -135,6 +159,42 @@ export class MediaLibraryService {
       }
     }
     this.db.prepare('DELETE FROM media_items WHERE id = ?').run(id);
+  }
+
+  private insert(input: CreateMediaInput, jobId: string | null): MediaItem {
+    const id = uuidv4();
+    const now = nowIso();
+    const relativePath = this.mediaFiles.relativeMediaPath(input.finalFilePath);
+    const filename = path.basename(input.finalFilePath);
+    const thumbnailRelativePath = input.thumbnailPath ? this.mediaFiles.relativeThumbnailPath(input.thumbnailPath) : null;
+
+    this.db
+      .prepare(
+        `INSERT INTO media_items (
+          id, category_id, title, filename, relative_path, thumbnail_path, duration_seconds,
+          width, height, size_bytes, container, video_codec, audio_codec, source_url, job_id, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        id,
+        input.categoryId,
+        sanitizeName(input.title, 'video'),
+        filename,
+        relativePath,
+        thumbnailRelativePath,
+        input.durationSeconds,
+        input.width,
+        input.height,
+        input.sizeBytes,
+        input.container,
+        input.videoCodec,
+        input.audioCodec,
+        input.sourceUrl,
+        jobId,
+        now,
+        now
+      );
+    return this.requireItem(id);
   }
 
   private requireItem(id: string): MediaItem {

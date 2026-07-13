@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { MediaCandidate, SubtitleTrack } from '../../shared/types.js';
+import type { Category, DownloadJob, MediaCandidate, SubtitleTrack } from '../../shared/types.js';
 import type { AppConfig } from '../config/appConfig.js';
 import type { BrowserAnalyzer } from '../browser-analyzer/browserAnalyzer.js';
 import type { CategoryService } from '../categories/categoryService.js';
@@ -15,17 +15,19 @@ import { assertInsideRoot, titleFromUrl } from '../utils/fileSafety.js';
 import { logJobEvent, safeUrlParts, shortMessage } from '../utils/jobLogger.js';
 import { assertPublicHttpUrlSyntax } from '../utils/networkSafety.js';
 import { PublicMediaSession, type PublicMediaSessionLike } from '../utils/publicHttpProxy.js';
-import type { TaskProgressCallback, TaskProgressUpdate } from '../utils/taskProgress.js';
+import { activityUpdate, progressLogMilestone, progressUpdate, type TaskProgressCallback, type TaskProgressUpdate } from '../utils/taskProgress.js';
+import { classifyJobFailure, type FailingJobStage } from './jobFailure.js';
 import type { JobService } from './jobService.js';
 
 class DownloadStalledError extends Error {
-  constructor(jobId: string, timeoutMs: number, progress: number) {
-    super(`Download stalled for ${Math.round(timeoutMs / 1000)}s without progress (job ${jobId}, last progress ${Math.round(progress * 100)}%).`);
+  constructor(jobId: string, timeoutMs: number, progress: number, taskLabel = 'Download') {
+    super(`${taskLabel} stalled for ${Math.round(timeoutMs / 1000)}s without activity (job ${jobId}, last progress ${Math.round(progress * 100)}%).`);
     this.name = 'DownloadStalledError';
   }
 }
 
 type PublicMediaSessionFactory = () => Promise<PublicMediaSessionLike>;
+type PublicMediaResponse = Awaited<ReturnType<PublicMediaSessionLike['fetch']>>;
 const MAX_SUBTITLE_REDIRECTS = 5;
 const PROGRESS_PERSIST_INTERVAL_MS = 750;
 const PROGRESS_PERSIST_DELTA = 0.01;
@@ -58,6 +60,11 @@ export class QueueRunner {
       return;
     }
     this.started = true;
+    if (process.env.PRESERVE_WORK_DIR !== '1') {
+      for (const jobId of this.jobs.listCompletedJobIds()) {
+        cleanupCompletedWorkDir(this.config, jobId);
+      }
+    }
     this.jobs.on('runnable', this.requestDrain);
     this.requestDrain();
   }
@@ -79,11 +86,13 @@ export class QueueRunner {
 
   async replaceSource(jobId: string, sourceUrl: string) {
     await this.abortAndWait(jobId);
+    this.removeOwnedOutput(jobId);
     return this.jobs.replaceSource(jobId, sourceUrl);
   }
 
   delete(jobId: string): void {
     this.activeControllers.get(jobId)?.abort();
+    this.removeOwnedOutput(jobId);
     cleanupJobArtifacts(this.config, jobId);
     this.jobs.delete(jobId);
   }
@@ -118,23 +127,23 @@ export class QueueRunner {
   private startAvailableJobs(): Promise<void>[] {
     const started: Promise<void>[] = [];
     while (this.activeControllers.size < this.maxConcurrentJobs) {
-      const job = this.jobs.nextRunnableJob();
-      if (!job) {
+      const claimed = this.jobs.claimNextRunnableJob();
+      if (!claimed) {
         break;
       }
-      const run = this.process(job.id).finally(() => {
-        if (this.activeRuns.get(job.id) === run) {
-          this.activeRuns.delete(job.id);
+      const run = this.process(claimed.job.id, claimed.runId, claimed.job).finally(() => {
+        if (this.activeRuns.get(claimed.job.id) === run) {
+          this.activeRuns.delete(claimed.job.id);
         }
         this.requestDrain();
       });
-      this.activeRuns.set(job.id, run);
+      this.activeRuns.set(claimed.job.id, run);
       started.push(run);
     }
     return started;
   }
 
-  private async process(jobId: string): Promise<void> {
+  private async process(jobId: string, runId: string, claimedJob: DownloadJob): Promise<void> {
     const controller = new AbortController();
     this.activeControllers.set(jobId, controller);
     const signal = controller.signal;
@@ -142,9 +151,10 @@ export class QueueRunner {
     let finalPath: string | null = null;
     let thumbnailPath: string | null = null;
     let finalPathReservation: ReservedVideoPath | null = null;
+    let failingStage: FailingJobStage = 'analyzing';
     try {
-      this.throwIfCanceled(jobId, signal);
-      let job = this.jobs.transition(jobId, 'analyzing', null, { progressLabel: 'Analyzing source' });
+      this.throwIfRunInactive(jobId, runId, signal);
+      let job = claimedJob;
       logJobEvent('info', 'job-started', { jobId, source: safeUrlParts(job.sourceUrl) });
       const category = this.categories.get(job.categoryId);
       if (!category) {
@@ -159,15 +169,15 @@ export class QueueRunner {
       }
       if (!useSourceExtractor && !selected) {
         const analysis = await this.analyzer.analyze(job.sourceUrl, job.id, signal);
-        this.throwIfCanceled(job.id, signal);
+        this.throwIfRunInactive(job.id, runId, signal);
         const candidates = this.jobs.saveCandidates(job.id, analysis.candidates);
-        job = this.jobs.transition(job.id, 'analyzing', null, {
+        job = this.jobs.transitionActive(job.id, runId, 'analyzing', 'analyzing', null, {
           progressLabel: 'Analyzing source',
           titleHint: analysis.titleHint ?? titleFromUrl(job.sourceUrl)
         });
         selected = chooseAutomaticCandidate(candidates, analysis.automaticCandidateUrl);
         if (!selected) {
-          this.jobs.transition(job.id, 'needs_manual_selection', null, {
+          this.jobs.transitionActive(job.id, runId, 'analyzing', 'needs_manual_selection', null, {
             errorCode: 'manual_selection_required',
             errorMessage: analysis.diagnostics.join('\n') || 'Choose a detected media candidate to continue.',
             progressLabel: null
@@ -181,12 +191,13 @@ export class QueueRunner {
         }
       }
 
-      this.throwIfCanceled(job.id, signal);
+      this.throwIfRunInactive(job.id, runId, signal);
       const selectedCandidateId = selected?.id ?? job.selectedCandidateId;
-      job = this.jobs.transition(job.id, 'downloading', null, {
+      job = this.jobs.transitionActive(job.id, runId, 'analyzing', 'downloading', null, {
         progressLabel: 'Downloading',
         selectedCandidateId
       });
+      failingStage = 'downloading';
       workDir = path.join(this.config.workRoot, job.id);
       fs.mkdirSync(workDir, { recursive: true });
       const downloadPath = path.join(workDir, 'source');
@@ -196,46 +207,65 @@ export class QueueRunner {
         timeoutSeconds: Math.round(downloadStallTimeoutMs(this.config) / 1000)
       });
       if (useSourceExtractor) {
-        await this.runDownloadStage(job.id, signal, (onProgress, downloadSignal) =>
+        await this.runMonitoredStage(job.id, runId, 'downloading', signal, {
+          eventName: 'download',
+          logDeterminateProgress: true,
+          taskLabel: 'Download'
+        }, (onProgress, downloadSignal) =>
           this.sourceExtractors.download(job.sourceUrl, downloadPath, onProgress, downloadSignal)
         );
       } else {
         if (!selected) {
           throw new Error('No selected media candidate is available for download');
         }
-        await this.runDownloadStage(job.id, signal, (onProgress, downloadSignal) =>
+        await this.runMonitoredStage(job.id, runId, 'downloading', signal, {
+          eventName: 'download',
+          logDeterminateProgress: true,
+          taskLabel: 'Download'
+        }, (onProgress, downloadSignal) =>
           this.downloader.download(selected, downloadPath, onProgress, downloadSignal)
         );
       }
 
-      this.throwIfCanceled(job.id, signal);
+      this.throwIfRunInactive(job.id, runId, signal);
       await this.logProbeResult('download-probed', job.id, downloadPath);
       if (process.env.PRESERVE_WORK_DIR === '1') {
         fs.copyFileSync(downloadPath, `${downloadPath}.preserved`);
         logJobEvent('info', 'download-preserved', { jobId: job.id, path: `${downloadPath}.preserved` });
       }
-      this.jobs.transition(job.id, 'processing', null, {
+      this.jobs.transitionActive(job.id, runId, 'downloading', 'processing', null, {
         progressLabel: 'Inspecting video',
         selectedCandidateId
       });
+      failingStage = 'processing';
       logJobEvent('info', 'processing-started', { jobId: job.id });
       const title = job.titleHint ?? titleFromUrl(job.sourceUrl);
-      finalPathReservation = this.mediaFiles.reserveFinalVideoPath(category, `${title}.mp4`);
+      finalPathReservation = this.reserveOutputPath(job.id, runId, category, `${title}.mp4`);
       finalPath = finalPathReservation.path;
       const mediaId = job.id;
       thumbnailPath = this.mediaFiles.thumbnailPath(mediaId);
-      const processingProgress = this.createProgressReporter(job.id, 'processing', signal);
+      const processingProgress = this.createProgressReporter(job.id, runId, 'processing', signal);
       const normalized = await this.processor.normalize(downloadPath, finalPath, thumbnailPath, processingProgress, signal);
       const hasSelectedSubtitles = selected ? subtitleTracksForDownload(selected).length > 0 : false;
       if (hasSelectedSubtitles) {
-        this.jobs.transition(job.id, 'adding_subtitles', null, {
+        this.jobs.transitionActive(job.id, runId, 'processing', 'adding_subtitles', null, {
           progressLabel: 'Downloading subtitles',
           selectedCandidateId
         });
+        failingStage = 'adding_subtitles';
       }
-      const subtitleTracks = selected ? await this.downloadSubtitleTracks(selected, workDir, signal) : [];
+      const subtitleWorkDir = workDir;
+      if (!subtitleWorkDir) {
+        throw new Error('Job work directory is unavailable during subtitle processing');
+      }
+      const subtitleTracks = selected && hasSelectedSubtitles
+        ? await this.runMonitoredStage(job.id, runId, 'adding_subtitles', signal, {
+            eventName: 'subtitle-download',
+            taskLabel: 'Subtitle download'
+          }, (onProgress, subtitleSignal) => this.downloadSubtitleTracks(selected, subtitleWorkDir, runId, onProgress, subtitleSignal))
+        : [];
       const subtitleProgress = hasSelectedSubtitles
-        ? this.createProgressReporter(job.id, 'adding_subtitles', signal)
+        ? this.createProgressReporter(job.id, runId, 'adding_subtitles', signal)
         : null;
       const processed = subtitleTracks.length > 0
         ? {
@@ -255,8 +285,9 @@ export class QueueRunner {
         videoCodec: processed.videoCodec
       });
 
-      this.throwIfCanceled(job.id, signal);
-      this.mediaLibrary.create({
+      this.throwIfRunInactive(job.id, runId, signal);
+      failingStage = 'finalizing';
+      this.mediaLibrary.completeJob(job.id, runId, {
         categoryId: category.id,
         title,
         sourceUrl: job.sourceUrl,
@@ -276,22 +307,24 @@ export class QueueRunner {
       } else {
         fs.rmSync(workDir, { recursive: true, force: true });
       }
-      this.jobs.transition(job.id, 'completed', 1, { progressLabel: null, selectedCandidateId });
       logJobEvent('info', 'job-completed', { jobId: job.id, title });
     } catch (error) {
-      if (isCancellationError(error) || signal.aborted || this.jobs.get(jobId)?.status === 'canceled' || !this.jobs.get(jobId)) {
+      const persistedJob = this.jobs.get(jobId);
+      if (persistedJob?.status === 'completed') {
+        logJobEvent('warn', 'job-completed-cleanup-failed', { error: shortMessage(error), jobId });
+        return;
+      }
+      const activeStatus = this.jobs.activeRunStatus(jobId, runId);
+      if (isCancellationError(error) || signal.aborted || !activeStatus || persistedJob?.status === 'canceled') {
         cleanupCanceledArtifacts(this.config, jobId, finalPath, thumbnailPath);
-        if (this.jobs.get(jobId)?.status !== 'pending') {
+        if (activeStatus) {
           this.jobs.cancel(jobId);
         }
         logJobEvent('info', 'job-canceled', { jobId });
         return;
       }
-      if (!this.jobs.get(jobId)) {
-        return;
-      }
-      this.jobs.transition(jobId, 'failed', null, {
-        errorCode: 'pipeline_failed',
+      this.jobs.transitionActive(jobId, runId, activeStatus, 'failed', null, {
+        errorCode: classifyJobFailure(failingStage, error),
         errorMessage: error instanceof Error ? error.message : String(error),
         progressLabel: null
       });
@@ -312,6 +345,7 @@ export class QueueRunner {
 
   private createProgressReporter(
     jobId: string,
+    runId: string,
     status: Parameters<JobService['updateProgress']>[1],
     signal: AbortSignal
   ): TaskProgressCallback {
@@ -348,7 +382,7 @@ export class QueueRunner {
         || (progressChanged && now - lastPersistedAt >= PROGRESS_PERSIST_INTERVAL_MS);
       if (!shouldPersist) return;
 
-      if (this.jobs.updateProgress(jobId, status, currentProgress, currentLabel)) {
+      if (this.jobs.updateProgress(jobId, status, runId, currentProgress, currentLabel)) {
         lastPersistedAt = now;
         lastPersistedLabel = currentLabel;
         lastPersistedProgress = currentProgress;
@@ -356,19 +390,22 @@ export class QueueRunner {
     };
   }
 
-  private async runDownloadStage<T>(
+  private async runMonitoredStage<T>(
     jobId: string,
+    runId: string,
+    status: 'downloading' | 'adding_subtitles',
     parentSignal: AbortSignal,
+    options: { eventName: string; logDeterminateProgress?: boolean; taskLabel: string },
     run: (onProgress: TaskProgressCallback, signal: AbortSignal) => Promise<T>
   ): Promise<T> {
     const downloadController = new AbortController();
     const timeoutMs = downloadStallTimeoutMs(this.config);
     let lastProgress = 0;
-    let lastLoggedBucket = -1;
+    let lastLoggedMilestone = -1;
     let lastActivityAt = Date.now();
     let timeout: NodeJS.Timeout | null = null;
     let settled = false;
-    const persistProgress = this.createProgressReporter(jobId, 'downloading', parentSignal);
+    const persistProgress = this.createProgressReporter(jobId, runId, status, parentSignal);
 
     const clearTimer = () => {
       if (timeout) {
@@ -385,8 +422,8 @@ export class QueueRunner {
           scheduleWatchdog(timeoutMs - idleMs);
           return;
         }
-        const error = new DownloadStalledError(jobId, timeoutMs, lastProgress);
-        logJobEvent('warn', 'download-stalled', {
+        const error = new DownloadStalledError(jobId, timeoutMs, lastProgress, options.taskLabel);
+        logJobEvent('warn', `${options.eventName}-stalled`, {
           jobId,
           lastProgress: progressForLog(lastProgress),
           timeoutSeconds: Math.round(timeoutMs / 1000)
@@ -417,9 +454,9 @@ export class QueueRunner {
         if (update.kind === 'progress') {
           lastProgress = Math.max(lastProgress, clamp01(update.fraction));
           persistProgress({ ...update, fraction: lastProgress });
-          const bucket = Math.floor(lastProgress * 10);
-          if (bucket !== lastLoggedBucket || lastProgress >= 0.95) {
-            lastLoggedBucket = bucket;
+          const milestone = progressLogMilestone(lastProgress);
+          if (options.logDeterminateProgress && milestone > lastLoggedMilestone) {
+            lastLoggedMilestone = milestone;
             logJobEvent('info', 'download-progress', { jobId, progress: progressForLog(lastProgress) });
           }
         } else {
@@ -438,6 +475,8 @@ export class QueueRunner {
   private async downloadSubtitleTracks(
     candidate: MediaCandidate,
     workDir: string,
+    runId: string,
+    onProgress: TaskProgressCallback,
     signal: AbortSignal
   ): Promise<Array<SubtitleTrack & { localPath: string }>> {
     const tracks = subtitleTracksForDownload(candidate);
@@ -450,12 +489,12 @@ export class QueueRunner {
     const session = await this.createMediaSession();
     try {
       for (const [index, track] of tracks.entries()) {
-        this.throwIfCanceled(candidate.jobId, signal);
+        this.throwIfRunInactive(candidate.jobId, runId, signal);
         const localPath = path.join(subtitleDir, `subtitle-${index + 1}${subtitleExtension(track)}`);
         if (track.format === 'hls') {
-          await downloadHlsSubtitleTrack(track, localPath, candidate.url, candidate.headers, session, signal);
+          await downloadHlsSubtitleTrack(track, localPath, candidate.url, candidate.headers, session, onProgress, signal);
         } else {
-          await downloadSubtitleFile(track, localPath, candidate.url, candidate.headers, session, signal);
+          await downloadSubtitleFile(track, localPath, candidate.url, candidate.headers, session, onProgress, signal);
         }
         downloaded.push({ ...track, localPath });
         logJobEvent('info', 'subtitle-downloaded', {
@@ -472,12 +511,43 @@ export class QueueRunner {
     return downloaded;
   }
 
-  private throwIfCanceled(jobId: string, signal: AbortSignal): void {
+  private throwIfRunInactive(jobId: string, runId: string, signal: AbortSignal): void {
     throwIfAborted(signal);
-    const job = this.jobs.get(jobId);
-    if (!job || job.status === 'canceled') {
+    if (!this.jobs.isActiveRun(jobId, runId)) {
       throw new JobCanceledError();
     }
+  }
+
+  private reserveOutputPath(jobId: string, runId: string, category: Category, desiredFilename: string): ReservedVideoPath {
+    const existingRelativePath = this.jobs.outputRelativePath(jobId);
+    if (existingRelativePath) {
+      return this.mediaFiles.reserveVideoPath(this.mediaFiles.absoluteMediaPath(existingRelativePath));
+    }
+
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const externallyReserved = new Set(
+        this.jobs.reservedOutputRelativePaths().map((relativePath) => this.mediaFiles.absoluteMediaPath(relativePath))
+      );
+      const reservation = this.mediaFiles.reserveFinalVideoPath(category, desiredFilename, externallyReserved);
+      const relativePath = this.mediaFiles.relativeMediaPath(reservation.path);
+      const stored = this.jobs.reserveOutputPath(jobId, runId, relativePath);
+      if (stored.reserved && stored.relativePath === relativePath) {
+        return reservation;
+      }
+      reservation.release();
+      if (stored.relativePath) {
+        return this.mediaFiles.reserveVideoPath(this.mediaFiles.absoluteMediaPath(stored.relativePath));
+      }
+    }
+    throw new Error(`Unable to reserve a durable output path for job ${jobId}`);
+  }
+
+  private removeOwnedOutput(jobId: string): void {
+    const relativePath = this.jobs.outputRelativePath(jobId);
+    if (!relativePath) {
+      return;
+    }
+    fs.rmSync(this.mediaFiles.absoluteMediaPath(relativePath), { force: true });
   }
 
   private async logProbeResult(event: string, jobId: string, filePath: string): Promise<void> {
@@ -535,6 +605,7 @@ async function downloadSubtitleFile(
   candidateUrl: string,
   candidateHeaders: Record<string, string>,
   session: PublicMediaSessionLike,
+  onProgress: TaskProgressCallback,
   signal: AbortSignal
 ): Promise<void> {
   const body = await fetchSubtitleBinary(
@@ -543,6 +614,7 @@ async function downloadSubtitleFile(
     candidateHeaders,
     track.url,
     session,
+    onProgress,
     signal
   );
   fs.writeFileSync(localPath, body);
@@ -554,6 +626,7 @@ async function downloadHlsSubtitleTrack(
   candidateUrl: string,
   candidateHeaders: Record<string, string>,
   session: PublicMediaSessionLike,
+  onProgress: TaskProgressCallback,
   signal: AbortSignal
 ): Promise<void> {
   const manifest = await fetchSubtitleText(
@@ -562,10 +635,15 @@ async function downloadHlsSubtitleTrack(
     candidateHeaders,
     track.url,
     session,
+    onProgress,
     signal
   );
   const baseUrl = track.url;
   const directory = path.dirname(localPath);
+  const segmentLines = manifest
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith('#'));
   let segmentIndex = 0;
   const rewrittenLines: string[] = [];
   for (const line of manifest.split(/\r?\n/)) {
@@ -585,9 +663,11 @@ async function downloadHlsSubtitleTrack(
       candidateHeaders,
       segmentUrl,
       session,
+      onProgress,
       signal
     );
     fs.writeFileSync(segmentPath, body);
+    onProgress(progressUpdate(Math.min(0.99, segmentIndex / segmentLines.length), 'Downloading subtitles'));
     rewrittenLines.push(segmentName);
   }
   if (segmentIndex === 0) {
@@ -614,10 +694,11 @@ async function fetchSubtitleText(
   candidateHeaders: Record<string, string>,
   url: string,
   session: PublicMediaSessionLike,
+  onProgress: TaskProgressCallback,
   signal: AbortSignal
 ): Promise<string> {
   const response = await fetchSubtitleResponse(track, candidateUrl, candidateHeaders, url, session, signal);
-  return response.text();
+  return (await readSubtitleResponse(response, onProgress, signal)).toString('utf8');
 }
 
 async function fetchSubtitleBinary(
@@ -626,10 +707,44 @@ async function fetchSubtitleBinary(
   candidateHeaders: Record<string, string>,
   url: string,
   session: PublicMediaSessionLike,
+  onProgress: TaskProgressCallback,
   signal: AbortSignal
 ): Promise<Buffer> {
   const response = await fetchSubtitleResponse(track, candidateUrl, candidateHeaders, url, session, signal);
-  return Buffer.from(await response.arrayBuffer());
+  return readSubtitleResponse(response, onProgress, signal);
+}
+
+async function readSubtitleResponse(
+  response: PublicMediaResponse,
+  onProgress: TaskProgressCallback,
+  signal: AbortSignal
+): Promise<Buffer> {
+  if (!response.body) {
+    throw new Error('Subtitle response did not include a body');
+  }
+  const reader = response.body.getReader();
+  const chunks: Buffer[] = [];
+  const totalBytes = Number(response.headers.get('content-length') ?? 0);
+  let receivedBytes = 0;
+  const removeAbortListener = onAbort(signal, () => void reader.cancel().catch(() => undefined));
+  try {
+    while (true) {
+      throwIfAborted(signal);
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = Buffer.from(value);
+      chunks.push(chunk);
+      receivedBytes += chunk.byteLength;
+      onProgress(
+        Number.isFinite(totalBytes) && totalBytes > 0
+          ? progressUpdate(Math.min(0.99, receivedBytes / totalBytes), 'Downloading subtitles')
+          : activityUpdate()
+      );
+    }
+  } finally {
+    removeAbortListener();
+  }
+  return Buffer.concat(chunks);
 }
 
 async function fetchSubtitleResponse(
@@ -721,6 +836,13 @@ function cleanupJobArtifacts(config: AppConfig, jobId: string): void {
     if (fs.existsSync(artifactPath)) {
       fs.rmSync(artifactPath, { recursive: true, force: true });
     }
+  }
+}
+
+function cleanupCompletedWorkDir(config: AppConfig, jobId: string): void {
+  const workDir = artifactPath(config.workRoot, jobId);
+  if (fs.existsSync(workDir)) {
+    fs.rmSync(workDir, { recursive: true, force: true });
   }
 }
 

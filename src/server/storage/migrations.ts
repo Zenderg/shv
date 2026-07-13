@@ -101,6 +101,22 @@ export const migrations: Migration[] = [
       ALTER TABLE download_jobs ADD COLUMN stage_progress REAL;
       ALTER TABLE download_jobs ADD COLUMN progress_label TEXT;
     `
+  },
+  {
+    id: 5,
+    name: 'durable_job_runs_and_completion',
+    sql: `
+      ALTER TABLE download_jobs ADD COLUMN active_run_id TEXT;
+      ALTER TABLE download_jobs ADD COLUMN output_relative_path TEXT;
+      ALTER TABLE media_items ADD COLUMN job_id TEXT REFERENCES download_jobs(id) ON DELETE SET NULL;
+
+      CREATE UNIQUE INDEX download_jobs_output_relative_path_idx
+        ON download_jobs(output_relative_path)
+        WHERE output_relative_path IS NOT NULL;
+      CREATE UNIQUE INDEX media_items_job_id_idx
+        ON media_items(job_id)
+        WHERE job_id IS NOT NULL;
+    `
   }
 ];
 

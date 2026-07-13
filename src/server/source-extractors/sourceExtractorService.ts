@@ -3,7 +3,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import type { DownloadResult } from '../download-engine/downloadEngine.js';
 import { JobCanceledError, onAbort, throwIfAborted } from '../utils/cancellation.js';
-import { activityUpdate, progressUpdate, type TaskProgressCallback } from '../utils/taskProgress.js';
+import { activityUpdate, progressUpdate, type TaskProgressCallback, type TaskProgressUpdate } from '../utils/taskProgress.js';
 
 export interface SourceExtractor {
   canHandle(sourceUrl: string): boolean;
@@ -123,25 +123,26 @@ async function runYtDlp(args: string[], onProgress: TaskProgressCallback, signal
   await new Promise<void>((resolve, reject) => {
     const child = spawn('yt-dlp', args, { stdio: ['ignore', 'pipe', 'pipe'] });
     const removeAbortListener = onAbort(signal, () => child.kill('SIGTERM'));
+    const progressTracker = createYtDlpProgressTracker();
     let log = '';
-    const appendLog = (chunk: Buffer) => {
+    const appendLog = (chunk: Buffer, channel: YtDlpOutputChannel) => {
       const text = chunk.toString('utf8');
       log = `${log}${text}`.slice(-8000);
-      const progress = parseYtDlpProgress(text);
-      if (progress != null) {
-        onProgress(progressUpdate(Math.min(0.99, progress)));
-      } else if (/\[(?:download|Merger|ExtractAudio|Fixup)\]/.test(text)) {
-        onProgress(activityUpdate());
+      for (const update of progressTracker.push(text, channel)) {
+        onProgress(update);
       }
     };
-    child.stdout.on('data', appendLog);
-    child.stderr.on('data', appendLog);
+    child.stdout.on('data', (chunk: Buffer) => appendLog(chunk, 'stdout'));
+    child.stderr.on('data', (chunk: Buffer) => appendLog(chunk, 'stderr'));
     child.on('error', (error) => {
       removeAbortListener();
       reject(error);
     });
     child.on('close', (code) => {
       removeAbortListener();
+      for (const update of progressTracker.flush()) {
+        onProgress(update);
+      }
       if (signal?.aborted) {
         reject(new JobCanceledError());
         return;
@@ -154,6 +155,77 @@ async function runYtDlp(args: string[], onProgress: TaskProgressCallback, signal
       reject(new Error(formatYtDlpError(code, log)));
     });
   });
+}
+
+type YtDlpOutputChannel = 'stdout' | 'stderr';
+
+export interface YtDlpProgressTracker {
+  push(text: string, channel?: YtDlpOutputChannel): TaskProgressUpdate[];
+  flush(): TaskProgressUpdate[];
+}
+
+export function createYtDlpProgressTracker(): YtDlpProgressTracker {
+  const buffers: Record<YtDlpOutputChannel, string> = { stderr: '', stdout: '' };
+  let lastProgress: number | null = null;
+  let indeterminateLabel: string | null = null;
+
+  const updateForLine = (line: string): TaskProgressUpdate | null => {
+    const progress = parseYtDlpProgress(line);
+    if (progress != null) {
+      if (indeterminateLabel) {
+        return activityUpdate(indeterminateLabel);
+      }
+      if (lastProgress !== null && progress < lastProgress - 0.05) {
+        indeterminateLabel = 'Downloading additional media stream';
+        return activityUpdate(indeterminateLabel);
+      }
+      lastProgress = Math.max(lastProgress ?? 0, progress);
+      return progressUpdate(Math.min(0.99, lastProgress), 'Downloading media');
+    }
+
+    if (/\[Merger\]/.test(line)) {
+      indeterminateLabel = 'Merging media streams';
+      return activityUpdate(indeterminateLabel);
+    }
+    if (/\[(?:ExtractAudio|Fixup)\]/.test(line)) {
+      indeterminateLabel = 'Finalizing download';
+      return activityUpdate(indeterminateLabel);
+    }
+    if (/\[download\]/.test(line)) {
+      return activityUpdate(indeterminateLabel ?? 'Downloading media');
+    }
+    return null;
+  };
+
+  const drainCompleteLines = (channel: YtDlpOutputChannel): TaskProgressUpdate[] => {
+    const updates: TaskProgressUpdate[] = [];
+    let newlineIndex = buffers[channel].indexOf('\n');
+    while (newlineIndex >= 0) {
+      const line = buffers[channel].slice(0, newlineIndex).trim();
+      buffers[channel] = buffers[channel].slice(newlineIndex + 1);
+      const update = line ? updateForLine(line) : null;
+      if (update) updates.push(update);
+      newlineIndex = buffers[channel].indexOf('\n');
+    }
+    return updates;
+  };
+
+  return {
+    push(text, channel = 'stdout') {
+      buffers[channel] += text;
+      return drainCompleteLines(channel);
+    },
+    flush() {
+      const updates: TaskProgressUpdate[] = [];
+      for (const channel of ['stdout', 'stderr'] as const) {
+        const line = buffers[channel].trim();
+        buffers[channel] = '';
+        const update = line ? updateForLine(line) : null;
+        if (update) updates.push(update);
+      }
+      return updates;
+    }
+  };
 }
 
 function formatYtDlpError(code: number | null, log: string): string {

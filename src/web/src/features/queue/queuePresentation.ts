@@ -17,6 +17,7 @@ export interface QueueJobPresentation {
 
 export interface QueueJobPresentationInput {
   errorCode: string | null;
+  sourceTabOpened?: boolean;
   status: string;
 }
 
@@ -83,7 +84,7 @@ const STATUS_PRESENTATIONS: Record<string, Omit<QueueJobPresentation, 'notice'>>
   }
 };
 
-export function queueJobPresentation({ errorCode, status }: QueueJobPresentationInput): QueueJobPresentation {
+export function queueJobPresentation({ errorCode, sourceTabOpened = false, status }: QueueJobPresentationInput): QueueJobPresentation {
   const known = STATUS_PRESENTATIONS[status];
   if (!known) {
     return {
@@ -100,12 +101,18 @@ export function queueJobPresentation({ errorCode, status }: QueueJobPresentation
 
   return {
     ...known,
-    notice: noticeFor(status, errorCode)
+    notice: noticeFor(status, errorCode, sourceTabOpened)
   };
 }
 
-function noticeFor(status: string, errorCode: string | null): QueueJobNotice | null {
+function noticeFor(status: string, errorCode: string | null, sourceTabOpened: boolean): QueueJobNotice | null {
   if (status === 'needs_manual_selection') {
+    if (sourceTabOpened) {
+      return {
+        summary: 'Continue in the source tab',
+        detail: 'Start video playback there, then choose Use source in the SHV sidebar. You can reopen the tab if needed.'
+      };
+    }
     return {
       summary: 'Choose which source to save',
       detail: 'SHV needs your confirmation before it can continue.'
@@ -130,6 +137,11 @@ function noticeFor(status: string, errorCode: string | null): QueueJobNotice | n
     };
   }
 
+  const phaseFailure = errorCode ? PHASE_FAILURE_NOTICES[errorCode] : null;
+  if (phaseFailure) {
+    return phaseFailure;
+  }
+
   if (errorCode === 'pipeline_failed') {
     return {
       summary: 'SHV could not download or prepare this video',
@@ -142,6 +154,29 @@ function noticeFor(status: string, errorCode: string | null): QueueJobNotice | n
     detail: 'Retry the job. Open technical details if it fails again.'
   };
 }
+
+const PHASE_FAILURE_NOTICES: Record<string, QueueJobNotice> = {
+  analysis_failed: {
+    summary: 'SHV could not analyze this source',
+    detail: 'Retry, or choose a source through browser playback.'
+  },
+  download_failed: {
+    summary: 'SHV could not download this source',
+    detail: 'Retry the job, or choose another source.'
+  },
+  finalization_failed: {
+    summary: 'The video could not be added to the library',
+    detail: 'Check available storage and folder permissions, then retry.'
+  },
+  processing_failed: {
+    summary: 'The download could not be prepared for playback',
+    detail: 'Retry the job. Open technical details if processing fails again.'
+  },
+  subtitle_failed: {
+    summary: 'SHV could not add the selected subtitles',
+    detail: 'Retry, or choose the source again and continue without subtitles.'
+  }
+};
 
 function humanizeStatus(status: string): string {
   const normalized = status.trim().replaceAll('_', ' ');

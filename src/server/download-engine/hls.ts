@@ -42,18 +42,40 @@ export function selectBestHlsVariant(manifest: string, baseUrl: string): string 
 
 export function parseHlsDurationSeconds(manifest: string): number | null {
   let total = 0;
-  let foundDuration = false;
+  let segmentCount = 0;
+  let pendingDuration: number | null = null;
 
-  for (const match of manifest.matchAll(/^#EXTINF:([0-9.]+)/gm)) {
-    const duration = Number(match[1]);
-    if (!Number.isFinite(duration)) {
+  for (const rawLine of manifest.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (line.startsWith('#EXTINF:')) {
+      const duration = Number(line.slice('#EXTINF:'.length).split(',')[0]);
+      pendingDuration = Number.isFinite(duration) && duration > 0 ? duration : null;
       continue;
     }
-    total += duration;
-    foundDuration = true;
+    if (!line || line.startsWith('#')) {
+      continue;
+    }
+    segmentCount += 1;
+    if (pendingDuration === null) {
+      return null;
+    }
+    total += pendingDuration;
+    pendingDuration = null;
   }
 
-  return foundDuration ? total : null;
+  return segmentCount > 0 ? total : null;
+}
+
+export function completeHlsSegmentDurationSeconds(segments: HlsSegment[]): number | null {
+  if (
+    segments.length === 0
+    || segments.some((segment) => segment.durationSeconds === null
+      || !Number.isFinite(segment.durationSeconds)
+      || segment.durationSeconds <= 0)
+  ) {
+    return null;
+  }
+  return segments.reduce((total, segment) => total + (segment.durationSeconds ?? 0), 0);
 }
 
 export function parseHlsSegments(manifest: string, baseUrl: string): HlsSegment[] {

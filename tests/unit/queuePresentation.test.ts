@@ -34,11 +34,28 @@ describe('queue job presentation', () => {
     });
   });
 
+  test.each([
+    ['analysis_failed', 'SHV could not analyze this source'],
+    ['download_failed', 'SHV could not download this source'],
+    ['processing_failed', 'The download could not be prepared for playback'],
+    ['subtitle_failed', 'SHV could not add the selected subtitles'],
+    ['finalization_failed', 'The video could not be added to the library']
+  ])('gives %s a phase-specific recovery message', (errorCode, summary) => {
+    expect(queueJobPresentation({ errorCode, status: 'failed' }).notice?.summary).toBe(summary);
+  });
+
   test('renders a future status as safe attention state', () => {
     expect(queueJobPresentation({ errorCode: null, status: 'waiting_for_device' })).toMatchObject({
       label: 'Waiting for device',
       showProgress: false,
       tone: 'attention'
+    });
+  });
+
+  test('keeps source-tab instructions visible after the extension opens the source', () => {
+    expect(queueJobPresentation({ errorCode: null, sourceTabOpened: true, status: 'needs_manual_selection' }).notice).toEqual({
+      summary: 'Continue in the source tab',
+      detail: 'Start video playback there, then choose Use source in the SHV sidebar. You can reopen the tab if needed.'
     });
   });
 });

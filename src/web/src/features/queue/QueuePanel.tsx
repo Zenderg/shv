@@ -1,37 +1,46 @@
 import { useEffect, useMemo, useState } from 'react';
 import { TrashIcon } from '../../components/icons';
-import type { DownloadJob, MediaCandidate, SubtitleTrack } from '../../lib/api';
+import type { Category, DownloadJob, MediaCandidate, SubtitleTrack } from '../../lib/api';
 import { jobStageProgress } from '../../lib/jobProgress';
+import { jobProgressContext, queuePositionByJobId } from './queueCardContext';
 import { queueJobPresentation, type QueueStatusIcon } from './queuePresentation';
 
 export interface QueuePanelProps {
   actionErrors?: Record<string, string>;
   busyJobIds: Record<string, string>;
   candidatesByJobId: Record<string, MediaCandidate[]>;
+  categories: Category[];
   jobs: DownloadJob[];
   onCancel: (job: DownloadJob) => void;
   onDelete: (job: DownloadJob) => void;
   onManual: (job: DownloadJob) => void;
   onRetry: (job: DownloadJob) => void;
   onSubtitleNext: (job: DownloadJob, subtitleTrackUrl: string | null) => void;
+  sourceTabOpenedJobIds?: Record<string, boolean>;
 }
 
 export function QueuePanel({
   actionErrors = {},
   busyJobIds,
   candidatesByJobId,
+  categories,
   jobs,
   onCancel,
   onDelete,
   onManual,
   onRetry,
-  onSubtitleNext
+  onSubtitleNext,
+  sourceTabOpenedJobIds = {}
 }: QueuePanelProps) {
+  const categoryNames = useMemo(() => Object.fromEntries(categories.map((category) => [category.id, category.name])), [categories]);
+  const pendingPositions = useMemo(() => queuePositionByJobId(jobs), [jobs]);
+
   return (
     <section className="queueList" aria-label="Queue jobs">
       {jobs.length === 0 ? <p className="queueEmpty muted">No jobs in queue.</p> : null}
       {jobs.map((job) => {
-        const presentation = queueJobPresentation(job);
+        const sourceTabOpened = Boolean(sourceTabOpenedJobIds[job.id]);
+        const presentation = queueJobPresentation({ ...job, sourceTabOpened });
         const canCancel = ['pending', 'analyzing', 'downloading', 'processing', 'adding_subtitles'].includes(job.status);
         const canRetry = job.status === 'failed' || job.status === 'canceled';
         const actionLabel = busyJobIds[job.id];
@@ -55,6 +64,17 @@ export function QueuePanel({
                 {presentation.label}
               </span>
             </header>
+
+            <dl className="jobContext">
+              <div>
+                <dt>Destination</dt>
+                <dd>{categoryNames[job.categoryId] ?? 'Unknown category'}</dd>
+              </div>
+              <div>
+                <dt>{job.status === 'pending' ? 'Queue' : 'Progress'}</dt>
+                <dd>{jobProgressContext(job.status, pendingPositions[job.id])}</dd>
+              </div>
+            </dl>
 
             {presentation.showProgress ? <JobProgress job={job} title={title} /> : null}
 
@@ -86,7 +106,7 @@ export function QueuePanel({
               ) : null}
               {job.status === 'needs_manual_selection' ? (
                 <button className="queuePrimaryAction" disabled={actionBusy} onClick={() => onManual(job)} type="button">
-                  Choose source
+                  {sourceTabOpened ? 'Reopen source tab' : 'Choose source'}
                 </button>
               ) : null}
               {job.status === 'failed' ? (
@@ -194,7 +214,7 @@ function ProgressRow({ id, label, title, value }: { id: string; label: string; t
     <div className="progressRow">
       <div>
         <span id={labelId}>{label}</span>
-        <strong>{value === null ? 'In progress' : formatProgressPercent(value)}</strong>
+        <strong>{value === null ? 'In progress' : `${formatProgressPercent(value)} of this step`}</strong>
       </div>
       <progress aria-labelledby={`${labelId} ${id}-context`} max={1} {...(value === null ? {} : { value })} />
       <span className="queueProgressContext" id={`${id}-context`}>{title}</span>

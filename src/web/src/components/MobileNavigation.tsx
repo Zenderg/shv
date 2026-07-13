@@ -18,7 +18,8 @@ export interface MobileNavigationProps {
   onShowQueue: () => void;
   onUpdateExtension: () => void;
   page: 'library' | 'queue';
-  queueBadgeCount: number;
+  queueItemCount: number;
+  queueSummary: string;
   selectedCategoryId: string;
 }
 
@@ -35,7 +36,8 @@ export function MobileNavigation({
   onShowQueue,
   onUpdateExtension,
   page,
-  queueBadgeCount,
+  queueItemCount,
+  queueSummary,
   selectedCategoryId
 }: MobileNavigationProps) {
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -50,14 +52,13 @@ export function MobileNavigation({
     <Dialog.Root onOpenChange={setDrawerOpen} open={drawerOpen}>
       <div className="mobileNavigation">
         <MobileHeader
-          activeProblems={activeProblems}
           addDisabled={addDisabled ?? categories.length === 0}
           categoryName={selectedCategory?.name ?? null}
           extensionUpdateAvailable={extensionUpdateAvailable}
           onAdd={onAdd}
           onUpdateExtension={onUpdateExtension}
           page={page}
-          queueBadgeCount={queueBadgeCount}
+          queueSummary={queueSummary}
         />
       </div>
 
@@ -81,6 +82,7 @@ export function MobileNavigation({
 
           <nav className="mobileDrawerBody" aria-label="Mobile navigation">
             <button
+              aria-label={`Queue, ${queueSummary}`}
               aria-current={page === 'queue' ? 'page' : undefined}
               className={page === 'queue' ? 'mobileQueueShortcut selected' : 'mobileQueueShortcut'}
               onClick={() => closeAndRun(onShowQueue)}
@@ -91,7 +93,7 @@ export function MobileNavigation({
                 <strong>Queue</strong>
                 <small>{activeProblems ? `${activeProblems} need attention` : 'No jobs need attention'}</small>
               </span>
-              <strong className="navBadge">{queueBadgeCount}</strong>
+              <strong aria-hidden="true" className="navBadge">{queueItemCount}</strong>
             </button>
 
             <section className="mobileCategorySection">

@@ -23,9 +23,22 @@ export class MediaFiles {
     return uniquePath(categoryPath, sanitizeName(desiredFilename, 'video.mp4'));
   }
 
-  reserveFinalVideoPath(category: Category, desiredFilename: string): ReservedVideoPath {
+  reserveFinalVideoPath(
+    category: Category,
+    desiredFilename: string,
+    externallyReservedPaths: ReadonlySet<string> = new Set()
+  ): ReservedVideoPath {
     const categoryPath = this.categories.categoryPath(category);
-    const path = uniquePath(categoryPath, sanitizeName(desiredFilename, 'video.mp4'), this.reservedVideoPaths);
+    const reservedPaths = new Set([...this.reservedVideoPaths, ...externallyReservedPaths]);
+    const path = uniquePath(categoryPath, sanitizeName(desiredFilename, 'video.mp4'), reservedPaths);
+    return this.reserveVideoPath(path);
+  }
+
+  reserveVideoPath(filePath: string): ReservedVideoPath {
+    const path = assertInsideRoot(this.config.libraryRoot, filePath);
+    if (this.reservedVideoPaths.has(path)) {
+      throw new Error(`Video path is already reserved: ${path}`);
+    }
     this.reservedVideoPaths.add(path);
     let released = false;
     return {

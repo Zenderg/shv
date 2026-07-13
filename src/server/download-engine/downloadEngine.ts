@@ -3,7 +3,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import type { MediaCandidate } from '../../shared/types.js';
 import { latestFfmpegTime } from '../media-processing/mediaProcessor.js';
-import { canDownloadPlainHlsSegments, parseHlsDurationSeconds, parseHlsResourceUrls, parseHlsSegments, selectBestHlsVariant, type HlsSegment } from './hls.js';
+import { canDownloadPlainHlsSegments, completeHlsSegmentDurationSeconds, parseHlsDurationSeconds, parseHlsResourceUrls, parseHlsSegments, selectBestHlsVariant, type HlsSegment } from './hls.js';
 import { parseDashDurationSeconds, selectBestDashRenditions } from './dash.js';
 import { JobCanceledError, onAbort, throwIfAborted } from '../utils/cancellation.js';
 import { requestHeadersForUrl } from '../utils/downloadRequestHeaders.js';
@@ -216,12 +216,12 @@ export class DownloadEngine {
     fs.rmSync(outputPath, { force: true });
     const segmentDirectory = `${outputPath}.segments-${process.pid}-${Date.now()}`;
     fs.mkdirSync(segmentDirectory, { recursive: true });
-    const totalDuration = segments.reduce((total, segment) => total + (segment.durationSeconds ?? 0), 0);
+    const totalDuration = completeHlsSegmentDurationSeconds(segments);
     const downloadedSegments: Array<{ durationSeconds: number | null; filePath: string }> = [];
     let completedDuration = 0;
 
     const progressForIndex = (index: number): number => {
-      if (totalDuration > 0) {
+      if (totalDuration !== null) {
         return completedDuration / totalDuration;
       }
       return (index + 1) / segments.length;

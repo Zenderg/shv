@@ -8,7 +8,7 @@ import { z } from 'zod';
 import type { CandidateDraft } from '../candidate-detection/candidateDetection.js';
 import type { AppConfig } from '../config/appConfig.js';
 import { CategoryConflictError, type CategoryService } from '../categories/categoryService.js';
-import type { JobService } from '../jobs/jobService.js';
+import { JobStateConflictError, type JobService } from '../jobs/jobService.js';
 import type { QueueRunner } from '../jobs/queueRunner.js';
 import type { LiveBrowserService } from '../browser-live/liveBrowserService.js';
 import type { ExtensionDebugService } from '../extension-debug/extensionDebugService.js';
@@ -655,6 +655,10 @@ export function errorHandler(error: unknown, _request: Request, response: Respon
     return;
   }
   if (error instanceof CategoryConflictError) {
+    response.status(409).json({ error: error.code, message: error.message });
+    return;
+  }
+  if (error instanceof JobStateConflictError) {
     response.status(409).json({ error: error.code, message: error.message });
     return;
   }

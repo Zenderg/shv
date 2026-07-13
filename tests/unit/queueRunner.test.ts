@@ -9,7 +9,7 @@ import type { DownloadEngine } from '../../src/server/download-engine/downloadEn
 import { JobService } from '../../src/server/jobs/jobService.js';
 import { QueueRunner, subtitleDownloadHeaders, subtitleTracksForDownload } from '../../src/server/jobs/queueRunner.js';
 import { MediaFiles } from '../../src/server/media-library/mediaFiles.js';
-import type { MediaLibraryService } from '../../src/server/media-library/mediaLibraryService.js';
+import { MediaLibraryService } from '../../src/server/media-library/mediaLibraryService.js';
 import type { MediaProcessor } from '../../src/server/media-processing/mediaProcessor.js';
 import { openDatabase } from '../../src/server/storage/database.js';
 import { JobCanceledError } from '../../src/server/utils/cancellation.js';
@@ -200,7 +200,7 @@ describe('QueueRunner', () => {
   });
 
   test('waits for an aborted run to settle before retrying with available concurrency', async () => {
-    const { categories, config, jobs } = createServices();
+    const { categories, config, jobs, mediaFiles } = createServices();
     config.maxConcurrentJobs = 2;
     const category = categories.create('test');
     const job = jobs.create('https://example.test/video', category.id);
@@ -251,10 +251,6 @@ describe('QueueRunner', () => {
           );
         })
     } satisfies Pick<MediaProcessor, 'normalize'>;
-    const mediaFiles = {
-      reserveFinalVideoPath: () => reservedVideoPath(path.join(config.libraryRoot, 'test', 'video.mp4')),
-      thumbnailPath: () => path.join(config.thumbnailsRoot, `${job.id}.jpg`)
-    } satisfies Pick<MediaFiles, 'reserveFinalVideoPath' | 'thumbnailPath'>;
     const runner = new QueueRunner(
       config,
       jobs,
@@ -262,7 +258,7 @@ describe('QueueRunner', () => {
       downloader as unknown as DownloadEngine,
       processor as unknown as MediaProcessor,
       categories,
-      mediaFiles as unknown as MediaFiles,
+      mediaFiles,
       {} as MediaLibraryService
     );
 
@@ -347,7 +343,7 @@ describe('QueueRunner', () => {
   });
 
   test('reserves distinct final paths for concurrent jobs with the same title', async () => {
-    const { categories, config, jobs } = createServices();
+    const { categories, config, jobs, mediaFiles, mediaLibrary } = createServices();
     config.maxConcurrentJobs = 2;
     const category = categories.create('test');
     const jobsToRun = [
@@ -381,10 +377,6 @@ describe('QueueRunner', () => {
         return normalizedMedia(outputPath);
       }
     } satisfies Pick<MediaProcessor, 'normalize'>;
-    const mediaFiles = new MediaFiles(config, categories);
-    const mediaLibrary = {
-      create: () => mediaItem(category.id, 'media-id', 'https://example.test/same')
-    } satisfies Pick<MediaLibraryService, 'create'>;
     const runner = new QueueRunner(
       config,
       jobs,
@@ -393,7 +385,7 @@ describe('QueueRunner', () => {
       processor as unknown as MediaProcessor,
       categories,
       mediaFiles,
-      mediaLibrary as unknown as MediaLibraryService
+      mediaLibrary
     );
 
     const tick = runner.tick();
@@ -489,11 +481,12 @@ describe('QueueRunner', () => {
     await expect(Promise.race([tick.then(() => 'finished'), delay(200).then(() => 'timed-out')])).resolves.toBe('finished');
     const failed = jobs.requireJob(job.id);
     expect(failed.status).toBe('failed');
+    expect(failed.errorCode).toBe('network_interrupted');
     expect(failed.errorMessage).toContain('Download stalled');
   });
 
   test('keeps an indeterminate download alive on activity without writing heartbeat noise to SQLite', async () => {
-    const { categories, config, jobs } = createServices();
+    const { categories, config, jobs, mediaFiles, mediaLibrary } = createServices();
     config.downloadStallTimeoutMs = 20;
     const category = categories.create('test');
     const job = jobs.create('https://example.test/video', category.id);
@@ -535,13 +528,6 @@ describe('QueueRunner', () => {
         };
       }
     } satisfies Pick<MediaProcessor, 'normalize'>;
-    const mediaFiles = {
-      reserveFinalVideoPath: () => reservedVideoPath(path.join(config.libraryRoot, 'test', 'video.mp4')),
-      thumbnailPath: () => path.join(config.thumbnailsRoot, `${job.id}.jpg`)
-    } satisfies Pick<MediaFiles, 'reserveFinalVideoPath' | 'thumbnailPath'>;
-    const mediaLibrary = {
-      create: () => mediaItem(category.id, job.id, job.sourceUrl)
-    } satisfies Pick<MediaLibraryService, 'create'>;
     const runner = new QueueRunner(
       config,
       jobs,
@@ -549,8 +535,8 @@ describe('QueueRunner', () => {
       downloader as unknown as DownloadEngine,
       processor as unknown as MediaProcessor,
       categories,
-      mediaFiles as unknown as MediaFiles,
-      mediaLibrary as unknown as MediaLibraryService
+      mediaFiles,
+      mediaLibrary
     );
 
     await runner.tick();
@@ -562,7 +548,7 @@ describe('QueueRunner', () => {
   });
 
   test('publishes determinate progress while burning the selected subtitle track', async () => {
-    const { categories, config, jobs } = createServices();
+    const { categories, config, jobs, mediaFiles, mediaLibrary } = createServices();
     const category = categories.create('test');
     const subtitleUrl = 'https://media.example.test/subtitles/ru.vtt';
     const job = jobs.create('https://example.test/video', category.id);
@@ -598,13 +584,6 @@ describe('QueueRunner', () => {
         return { ...normalizedMedia(inputPath), browserFriendly: true };
       }
     } satisfies Pick<MediaProcessor, 'normalize' | 'burnSubtitle'>;
-    const mediaFiles = {
-      reserveFinalVideoPath: () => reservedVideoPath(path.join(config.libraryRoot, 'test', 'video.mp4')),
-      thumbnailPath: () => path.join(config.thumbnailsRoot, `${job.id}.jpg`)
-    } satisfies Pick<MediaFiles, 'reserveFinalVideoPath' | 'thumbnailPath'>;
-    const mediaLibrary = {
-      create: () => mediaItem(category.id, job.id, job.sourceUrl)
-    } satisfies Pick<MediaLibraryService, 'create'>;
     const session = {
       close: async () => undefined,
       fetch: async () => new Response('WEBVTT\n\n'),
@@ -617,8 +596,8 @@ describe('QueueRunner', () => {
       downloader as unknown as DownloadEngine,
       processor as unknown as MediaProcessor,
       categories,
-      mediaFiles as unknown as MediaFiles,
-      mediaLibrary as unknown as MediaLibraryService,
+      mediaFiles,
+      mediaLibrary,
       undefined,
       async () => session as never
     );
@@ -626,8 +605,75 @@ describe('QueueRunner', () => {
     await runner.tick();
 
     expect(jobs.requireJob(job.id).status).toBe('completed');
-    expect(updateProgress).toHaveBeenCalledWith(job.id, 'adding_subtitles', null, 'Adding subtitles');
-    expect(updateProgress).toHaveBeenCalledWith(job.id, 'adding_subtitles', 0.5, 'Adding subtitles');
+    expect(updateProgress).toHaveBeenCalledWith(job.id, 'adding_subtitles', expect.any(String), null, 'Adding subtitles');
+    expect(updateProgress).toHaveBeenCalledWith(job.id, 'adding_subtitles', expect.any(String), 0.5, 'Adding subtitles');
+  });
+
+  test('fails a stalled subtitle download with a recoverable network code', async () => {
+    const { categories, config, jobs } = createServices();
+    config.downloadStallTimeoutMs = 20;
+    const category = categories.create('test');
+    const subtitleUrl = 'https://media.example.test/subtitles/ru.vtt';
+    const job = jobs.create('https://example.test/video', category.id);
+    jobs.saveCandidates(job.id, [{
+      ...candidate('https://media.example.test/video.mp4'),
+      subtitleTracks: [subtitleTrack(subtitleUrl, { format: 'webvtt', isSelected: false })]
+    }]);
+    const selected = jobs.listCandidates(job.id)[0];
+    jobs.selectCandidate(job.id, selected.id);
+    jobs.selectSubtitleTrack(job.id, subtitleUrl);
+
+    const downloader = {
+      download: async (_candidate, outputPath) => {
+        fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+        fs.writeFileSync(outputPath, 'source-video');
+        return { bytesWritten: 12, filePath: outputPath };
+      }
+    } satisfies Pick<DownloadEngine, 'download'>;
+    const processor = {
+      normalize: async (_inputPath, outputPath, _thumbnailPath) => {
+        fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+        fs.writeFileSync(outputPath, 'normalized');
+        return normalizedMedia(outputPath);
+      },
+      burnSubtitle: async () => {
+        throw new Error('subtitle burn should not start');
+      }
+    } satisfies Pick<MediaProcessor, 'normalize' | 'burnSubtitle'>;
+    const mediaFiles = {
+      reserveFinalVideoPath: () => reservedVideoPath(path.join(config.libraryRoot, 'test', 'video.mp4')),
+      reserveVideoPath: (filePath: string) => reservedVideoPath(filePath),
+      absoluteMediaPath: (relativePath: string) => path.join(config.libraryRoot, relativePath),
+      relativeMediaPath: (absolutePath: string) => path.relative(config.libraryRoot, absolutePath),
+      thumbnailPath: () => path.join(config.thumbnailsRoot, `${job.id}.jpg`)
+    } satisfies Pick<MediaFiles, 'absoluteMediaPath' | 'relativeMediaPath' | 'reserveFinalVideoPath' | 'reserveVideoPath' | 'thumbnailPath'>;
+    const session = {
+      close: async () => undefined,
+      fetch: async (_url: string, init?: { signal?: AbortSignal }) => await new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new JobCanceledError()), { once: true });
+      }),
+      proxyUrl: 'http://127.0.0.1:1'
+    };
+    const runner = new QueueRunner(
+      config,
+      jobs,
+      {} as BrowserAnalyzer,
+      downloader as unknown as DownloadEngine,
+      processor as unknown as MediaProcessor,
+      categories,
+      mediaFiles as unknown as MediaFiles,
+      {} as MediaLibraryService,
+      undefined,
+      async () => session as never
+    );
+
+    await runner.tick();
+
+    expect(jobs.requireJob(job.id)).toMatchObject({
+      errorCode: 'network_interrupted',
+      status: 'failed'
+    });
+    expect(jobs.requireJob(job.id).errorMessage).toContain('Subtitle download stalled');
   });
 
   test('deletes a queued job and removes job-owned artifacts', () => {
@@ -733,7 +779,7 @@ describe('QueueRunner', () => {
   });
 
   test('automatically selects a confident direct candidate after a redirect', async () => {
-    const { categories, config, jobs } = createServices();
+    const { categories, config, jobs, mediaFiles, mediaLibrary } = createServices();
     const category = categories.create('test');
     const job = jobs.create('https://example.test/video', category.id);
     const redirectedUrl = 'https://cdn.example.test/video.mp4';
@@ -775,13 +821,6 @@ describe('QueueRunner', () => {
         };
       }
     } satisfies Pick<MediaProcessor, 'normalize'>;
-    const mediaFiles = {
-      reserveFinalVideoPath: () => reservedVideoPath(path.join(config.libraryRoot, 'test', 'redirected.mp4')),
-      thumbnailPath: () => path.join(config.thumbnailsRoot, `${job.id}.jpg`)
-    } satisfies Pick<MediaFiles, 'reserveFinalVideoPath' | 'thumbnailPath'>;
-    const mediaLibrary = {
-      create: () => mediaItem(category.id, job.id, job.sourceUrl)
-    } satisfies Pick<MediaLibraryService, 'create'>;
     const runner = new QueueRunner(
       config,
       jobs,
@@ -789,8 +828,8 @@ describe('QueueRunner', () => {
       downloader as unknown as DownloadEngine,
       processor as unknown as MediaProcessor,
       categories,
-      mediaFiles as unknown as MediaFiles,
-      mediaLibrary as unknown as MediaLibraryService
+      mediaFiles,
+      mediaLibrary
     );
 
     await runner.tick();
@@ -801,7 +840,7 @@ describe('QueueRunner', () => {
   });
 
   test('uses a source extractor for YouTube even when a stale manual candidate is selected', async () => {
-    const { categories, config, jobs } = createServices();
+    const { categories, config, jobs, mediaFiles, mediaLibrary } = createServices();
     const category = categories.create('test');
     const job = jobs.create('https://www.youtube.com/watch?v=test', category.id);
     jobs.saveCandidates(job.id, [candidate('https://rr1---sn-test.googlevideo.com/videoplayback?itag=18&mime=video%2Fmp4')]);
@@ -844,13 +883,6 @@ describe('QueueRunner', () => {
         };
       }
     } satisfies Pick<MediaProcessor, 'normalize'>;
-    const mediaFiles = {
-      reserveFinalVideoPath: () => reservedVideoPath(path.join(config.libraryRoot, 'test', 'youtube.mp4')),
-      thumbnailPath: () => path.join(config.thumbnailsRoot, `${job.id}.jpg`)
-    } satisfies Pick<MediaFiles, 'reserveFinalVideoPath' | 'thumbnailPath'>;
-    const mediaLibrary = {
-      create: () => mediaItem(category.id, job.id, job.sourceUrl)
-    } satisfies Pick<MediaLibraryService, 'create'>;
     const runner = new QueueRunner(
       config,
       jobs,
@@ -858,8 +890,8 @@ describe('QueueRunner', () => {
       downloader as unknown as DownloadEngine,
       processor as unknown as MediaProcessor,
       categories,
-      mediaFiles as unknown as MediaFiles,
-      mediaLibrary as unknown as MediaLibraryService,
+      mediaFiles,
+      mediaLibrary,
       sourceExtractors
     );
 
@@ -891,7 +923,9 @@ function createServices() {
   const db = openDatabase(config.databasePath);
   const categories = new CategoryService(db, config);
   const jobs = new JobService(db);
-  return { categories, config, jobs };
+  const mediaFiles = new MediaFiles(config, categories);
+  const mediaLibrary = new MediaLibraryService(db, categories, mediaFiles);
+  return { categories, config, db, jobs, mediaFiles, mediaLibrary };
 }
 
 function candidate(url: string) {

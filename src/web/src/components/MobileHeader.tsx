@@ -2,23 +2,21 @@ import * as Dialog from '@radix-ui/react-dialog';
 import { MenuIcon, PlusIcon, UpdateIcon } from './icons';
 
 export function MobileHeader({
-  activeProblems,
   addDisabled = false,
   categoryName,
   extensionUpdateAvailable,
   onAdd,
   onUpdateExtension,
   page,
-  queueBadgeCount
+  queueSummary
 }: {
-  activeProblems: number;
   addDisabled?: boolean;
   categoryName: string | null;
   extensionUpdateAvailable: boolean;
   onAdd: () => void;
   onUpdateExtension: () => void;
   page: 'library' | 'queue';
-  queueBadgeCount: number;
+  queueSummary: string;
 }) {
   return (
     <header className="mobileHeader">
@@ -30,7 +28,7 @@ export function MobileHeader({
       <div className="mobileHeaderTitle">
         <strong>{page === 'queue' ? 'Queue' : categoryName ?? 'Library'}</strong>
         <span>
-          {queueBadgeCount} queued{activeProblems ? `, ${activeProblems} need attention` : ''}
+          {queueSummary}
         </span>
       </div>
       <div className="mobileHeaderActions">

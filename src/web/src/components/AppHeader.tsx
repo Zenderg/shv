@@ -1,27 +1,28 @@
 import { PlusIcon, UpdateIcon } from './icons';
+import { queueCountsLabel, type QueueCounts } from '../features/queue/queueSummary';
 
 export function AppHeader({
   activeProblems,
   busy,
   categoryName,
-  categoryCount,
   extensionUpdateAvailable,
   loading,
   mediaCount,
   onAdd,
   onUpdateExtension,
-  page
+  page,
+  queueCounts
 }: {
   activeProblems: number;
   busy: boolean;
   categoryName: string | null;
-  categoryCount: number;
   extensionUpdateAvailable: boolean;
   loading: boolean;
   mediaCount: number;
   onAdd: () => void;
   onUpdateExtension: () => void;
   page: 'library' | 'queue';
+  queueCounts: QueueCounts;
 }) {
   return (
     <header className="topbar">
@@ -31,7 +32,7 @@ export function AppHeader({
           {loading
             ? page === 'queue' ? 'Loading queue…' : 'Loading videos…'
             : page === 'queue'
-            ? `${categoryCount} current ${categoryCount === 1 ? 'job' : 'jobs'}${activeProblems ? `, ${activeProblems} need attention` : ''}`
+            ? queueCountsLabel(queueCounts)
             : `${mediaCount} saved videos${activeProblems ? `, ${activeProblems} need attention` : ''}`}
         </p>
       </div>

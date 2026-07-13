@@ -103,6 +103,9 @@ appears only when the user selected a subtitle track.
 The queue shows progress for the current active stage. It shows a percentage only when the source exposes enough
 information to calculate one reliably; otherwise it shows an indeterminate active indicator. A missing percentage must
 not make a healthy transfer look stalled or cause the backend to abort it while bytes or media timestamps are advancing.
+The queue identifies the destination category and the current pipeline step, and separates active, waiting, attention,
+and canceled counts instead of describing every visible row as queued work. A percentage is explicitly scoped to its
+current step rather than presented as whole-job completion.
 
 `needs_subtitle_selection` is a normal user-input state, not an error. It appears after source selection when the chosen
 candidate has supported subtitle tracks. Continuing from that state either marks exactly one subtitle track selected or
@@ -111,6 +114,7 @@ marks all tracks unselected.
 On server startup, interrupted active jobs are reset to `pending` so a Docker restart cannot leave work permanently stuck. Canceling or deleting a running job must abort the active browser analysis, direct download, ffmpeg process, thumbnail generation, and owned scratch files through the queue runner rather than only changing database state.
 
 Completed jobs may remain in SQLite for referential/debug purposes, but the media library is the primary completed state.
+When a completed job leaves the visible queue, the UI confirms where it was saved and offers to open that category.
 
 Jobs should fail visibly and recoverably. Failure cases include unreachable URLs, no media candidates, ambiguous candidates, login or age gates, download failures, media-processing failures, disk or output-path errors, and DRM-protected or otherwise unsupported streams. Failed jobs should be retryable, and jobs waiting for manual choice should not be treated as failed.
 

@@ -15,3 +15,12 @@ export function removedJobCategoryIds(
     )
   ];
 }
+
+export function disappearedQueueJobs<T extends VisibleQueueJob>(
+  previousJobs: T[],
+  currentJobs: VisibleQueueJob[],
+  excludedJobIds: ReadonlySet<string> = new Set()
+): T[] {
+  const currentJobIds = new Set(currentJobs.map((job) => job.id));
+  return previousJobs.filter((job) => !currentJobIds.has(job.id) && !excludedJobIds.has(job.id));
+}

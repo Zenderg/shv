@@ -5,6 +5,27 @@ import { type CandidateDraft } from '../candidate-detection/candidateDetection.j
 import { nowIso, type Db } from '../storage/database.js';
 import { mapDownloadJob, mapMediaCandidate } from '../storage/rowMappers.js';
 
+const ACTIVE_JOB_STATUSES: readonly JobStatus[] = ['analyzing', 'downloading', 'processing', 'adding_subtitles'];
+
+export class JobStateConflictError extends Error {
+  readonly code = 'job_state_conflict';
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'JobStateConflictError';
+  }
+}
+
+export interface ClaimedJob {
+  job: DownloadJob;
+  runId: string;
+}
+
+export interface OutputPathReservationResult {
+  relativePath: string | null;
+  reserved: boolean;
+}
+
 export class JobService extends EventEmitter {
   constructor(private readonly db: Db) {
     super();
@@ -45,29 +66,65 @@ export class JobService extends EventEmitter {
     return { jobs, candidatesByJobId };
   }
 
-  nextRunnableJob(): DownloadJob | null {
+  claimNextRunnableJob(): ClaimedJob | null {
+    const runId = uuidv4();
+    const now = nowIso();
     const row = this.db
       .prepare(
-        `SELECT * FROM download_jobs
-         WHERE status IN ('pending')
-         ORDER BY created_at ASC
-         LIMIT 1`
+        `UPDATE download_jobs
+         SET status = 'analyzing', active_run_id = ?, progress = 0,
+             stage_progress = NULL, progress_label = 'Analyzing source',
+             error_code = NULL, error_message = NULL,
+             started_at = ?, completed_at = NULL, updated_at = ?
+         WHERE id = (
+           SELECT id FROM download_jobs
+           WHERE status = 'pending' AND active_run_id IS NULL
+           ORDER BY created_at ASC
+           LIMIT 1
+         )
+           AND status = 'pending'
+           AND active_run_id IS NULL
+         RETURNING *`
       )
+      .get(runId, now, now);
+    return row ? { job: mapDownloadJob(row as Record<string, unknown>), runId } : null;
+  }
+
+  nextRunnableJob(): DownloadJob | null {
+    const row = this.db
+      .prepare("SELECT * FROM download_jobs WHERE status = 'pending' AND active_run_id IS NULL ORDER BY created_at ASC LIMIT 1")
       .get();
     return row ? mapDownloadJob(row as Record<string, unknown>) : null;
   }
 
   recoverInterruptedJobs(): void {
     const now = nowIso();
-    this.db
-      .prepare(
-        `UPDATE download_jobs
-         SET status = 'pending', progress = 0, stage_progress = NULL, progress_label = NULL,
-             error_code = NULL, error_message = NULL,
-             started_at = NULL, completed_at = NULL, updated_at = ?
-         WHERE status IN ('analyzing', 'downloading', 'processing', 'adding_subtitles')`
-      )
-      .run(now);
+    try {
+      this.db.exec('BEGIN IMMEDIATE');
+      this.db
+        .prepare(
+          `UPDATE download_jobs
+           SET status = 'completed', progress = 1, stage_progress = 1, progress_label = NULL,
+               error_code = NULL, error_message = NULL, active_run_id = NULL,
+               output_relative_path = NULL, completed_at = COALESCE(completed_at, ?), updated_at = ?
+           WHERE status != 'completed'
+             AND EXISTS (SELECT 1 FROM media_items WHERE media_items.job_id = download_jobs.id)`
+        )
+        .run(now, now);
+      this.db
+        .prepare(
+          `UPDATE download_jobs
+           SET status = 'pending', progress = 0, stage_progress = NULL, progress_label = NULL,
+               error_code = NULL, error_message = NULL, active_run_id = NULL,
+               started_at = NULL, completed_at = NULL, updated_at = ?
+           WHERE status IN ('analyzing', 'downloading', 'processing', 'adding_subtitles')`
+        )
+        .run(now);
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
     this.emitRunnable();
   }
 
@@ -84,7 +141,17 @@ export class JobService extends EventEmitter {
     return job;
   }
 
-  transition(id: string, status: JobStatus, stageProgress: number | null, extra: Partial<DownloadJob> = {}): DownloadJob {
+  transitionActive(
+    id: string,
+    runId: string,
+    expectedStatus: JobStatus,
+    status: JobStatus,
+    stageProgress: number | null,
+    extra: Partial<DownloadJob> = {}
+  ): DownloadJob {
+    if (!ACTIVE_JOB_STATUSES.includes(expectedStatus) || !allowedActiveTransition(expectedStatus, status)) {
+      throw new Error(`Illegal active job transition from ${expectedStatus} to ${status}`);
+    }
     const now = nowIso();
     const existing = this.requireJob(id);
     const startedAt =
@@ -92,18 +159,16 @@ export class JobService extends EventEmitter {
         ? extra.startedAt
         : status === 'pending' || status === 'needs_subtitle_selection'
           ? null
-          : status === 'analyzing' && !existing.startedAt
-            ? now
-            : existing.startedAt;
-    const completedAt =
-      extra.completedAt !== undefined ? extra.completedAt : isTerminalStatus(status) ? now : null;
-    this.db
+          : existing.startedAt;
+    const completedAt = extra.completedAt !== undefined ? extra.completedAt : isTerminalStatus(status) ? now : null;
+    const activeRunId = ACTIVE_JOB_STATUSES.includes(status) ? runId : null;
+    const result = this.db
       .prepare(
         `UPDATE download_jobs
          SET status = ?, progress = ?, stage_progress = ?, progress_label = ?,
              title_hint = ?, error_code = ?, error_message = ?,
-             selected_candidate_id = ?, started_at = ?, completed_at = ?, updated_at = ?
-         WHERE id = ?`
+             selected_candidate_id = ?, started_at = ?, completed_at = ?, active_run_id = ?, updated_at = ?
+         WHERE id = ? AND status = ? AND active_run_id = ?`
       )
       .run(
         status,
@@ -116,9 +181,15 @@ export class JobService extends EventEmitter {
         extra.selectedCandidateId ?? existing.selectedCandidateId,
         startedAt,
         completedAt,
+        activeRunId,
         now,
-        id
+        id,
+        expectedStatus,
+        runId
       );
+    if (result.changes === 0) {
+      throw new JobStateConflictError(`Job ${id} changed while transitioning from ${expectedStatus} to ${status}`);
+    }
     const job = this.requireJob(id);
     if (status === 'pending') {
       this.emitRunnable();
@@ -129,6 +200,7 @@ export class JobService extends EventEmitter {
   updateProgress(
     id: string,
     expectedStatus: JobStatus,
+    expectedRunId: string,
     stageProgress: number | null,
     progressLabel: string | null
   ): boolean {
@@ -136,10 +208,53 @@ export class JobService extends EventEmitter {
       .prepare(
         `UPDATE download_jobs
          SET progress = ?, stage_progress = ?, progress_label = ?, updated_at = ?
-         WHERE id = ? AND status = ?`
+         WHERE id = ? AND status = ? AND active_run_id = ?`
       )
-      .run(stageProgress ?? 0, stageProgress, progressLabel, nowIso(), id, expectedStatus);
+      .run(stageProgress ?? 0, stageProgress, progressLabel, nowIso(), id, expectedStatus, expectedRunId);
     return result.changes > 0;
+  }
+
+  isActiveRun(id: string, runId: string, expectedStatus?: JobStatus): boolean {
+    const row = expectedStatus
+      ? this.db.prepare('SELECT id FROM download_jobs WHERE id = ? AND active_run_id = ? AND status = ?').get(id, runId, expectedStatus)
+      : this.db.prepare('SELECT id FROM download_jobs WHERE id = ? AND active_run_id = ?').get(id, runId);
+    return Boolean(row);
+  }
+
+  activeRunStatus(id: string, runId: string): JobStatus | null {
+    const row = this.db.prepare('SELECT status FROM download_jobs WHERE id = ? AND active_run_id = ?').get(id, runId) as
+      | { status?: unknown }
+      | undefined;
+    return row ? String(row.status) as JobStatus : null;
+  }
+
+  reserveOutputPath(id: string, runId: string, relativePath: string): OutputPathReservationResult {
+    const result = this.db
+      .prepare(
+        `UPDATE OR IGNORE download_jobs
+         SET output_relative_path = ?, updated_at = ?
+         WHERE id = ? AND active_run_id = ? AND status = 'processing' AND output_relative_path IS NULL`
+      )
+      .run(relativePath, nowIso(), id, runId);
+    const row = this.db
+      .prepare('SELECT output_relative_path FROM download_jobs WHERE id = ? AND active_run_id = ?')
+      .get(id, runId) as { output_relative_path?: unknown } | undefined;
+    const stored = row?.output_relative_path == null ? null : String(row.output_relative_path);
+    return { relativePath: stored, reserved: result.changes > 0 || stored === relativePath };
+  }
+
+  outputRelativePath(id: string): string | null {
+    const row = this.db.prepare('SELECT output_relative_path FROM download_jobs WHERE id = ?').get(id) as
+      | { output_relative_path?: unknown }
+      | undefined;
+    return row?.output_relative_path == null ? null : String(row.output_relative_path);
+  }
+
+  reservedOutputRelativePaths(): string[] {
+    return this.db
+      .prepare('SELECT output_relative_path FROM download_jobs WHERE output_relative_path IS NOT NULL')
+      .all()
+      .map((row) => String((row as { output_relative_path: unknown }).output_relative_path));
   }
 
   saveCandidates(jobId: string, candidates: CandidateDraft[]): MediaCandidate[] {
@@ -261,7 +376,7 @@ export class JobService extends EventEmitter {
       throw new Error('Candidate not found for job');
     }
     const status = supportedSubtitleTracks(candidate).length > 0 ? 'needs_subtitle_selection' : 'pending';
-    return this.transition(jobId, status, null, {
+    return this.transitionIdle(jobId, ['pending', 'needs_manual_selection', 'failed'], status, null, {
       selectedCandidateId: candidateId,
       errorCode: null,
       errorMessage: null,
@@ -286,27 +401,48 @@ export class JobService extends EventEmitter {
       ...track,
       isSelected: subtitleTrackUrl ? sameUrl(track.url, subtitleTrackUrl) : false
     }));
-    this.updateCandidateSubtitleTracks(candidate.id, subtitleTracks);
-    return this.transition(jobId, 'pending', null, {
-      selectedCandidateId: candidate.id,
-      errorCode: null,
-      errorMessage: null,
-      progressLabel: null
-    });
+    try {
+      this.db.exec('BEGIN IMMEDIATE');
+      this.updateCandidateSubtitleTracks(candidate.id, subtitleTracks);
+      const updated = this.transitionIdle(jobId, ['needs_subtitle_selection'], 'pending', null, {
+        selectedCandidateId: candidate.id,
+        errorCode: null,
+        errorMessage: null,
+        progressLabel: null
+      });
+      this.db.exec('COMMIT');
+      return updated;
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
   }
 
   replaceSource(jobId: string, sourceUrl: string): DownloadJob {
     const now = nowIso();
-    this.db
-      .prepare(
-        `UPDATE download_jobs
-         SET source_url = ?, selected_candidate_id = NULL, status = 'pending', progress = 0,
-             stage_progress = NULL, progress_label = NULL,
-             error_code = NULL, error_message = NULL, updated_at = ?
-         WHERE id = ?`
-      )
-      .run(sourceUrl, now, jobId);
-    this.db.prepare('DELETE FROM media_candidates WHERE job_id = ?').run(jobId);
+    this.requireJob(jobId);
+    try {
+      this.db.exec('BEGIN IMMEDIATE');
+      const result = this.db
+        .prepare(
+          `UPDATE download_jobs
+           SET source_url = ?, selected_candidate_id = NULL, status = 'pending', progress = 0,
+               stage_progress = NULL, progress_label = NULL,
+               error_code = NULL, error_message = NULL, active_run_id = NULL,
+               output_relative_path = NULL, started_at = NULL, completed_at = NULL, updated_at = ?
+           WHERE id = ? AND active_run_id IS NULL
+             AND status IN ('pending', 'needs_manual_selection', 'needs_subtitle_selection', 'failed', 'canceled')`
+        )
+        .run(sourceUrl, now, jobId);
+      if (result.changes === 0) {
+        throw new JobStateConflictError(`Job ${jobId} cannot replace its source in the current state`);
+      }
+      this.db.prepare('DELETE FROM media_candidates WHERE job_id = ?').run(jobId);
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
     const job = this.requireJob(jobId);
     this.emitRunnable();
     return job;
@@ -314,17 +450,21 @@ export class JobService extends EventEmitter {
 
   retry(jobId: string): DownloadJob {
     const now = nowIso();
+    this.requireJob(jobId);
     try {
-      this.db.exec('BEGIN');
-      this.db
+      this.db.exec('BEGIN IMMEDIATE');
+      const result = this.db
         .prepare(
           `UPDATE download_jobs
            SET status = 'pending', progress = 0, stage_progress = NULL, progress_label = NULL,
-               error_code = NULL, error_message = NULL,
+               error_code = NULL, error_message = NULL, active_run_id = NULL,
                selected_candidate_id = NULL, started_at = NULL, completed_at = NULL, updated_at = ?
-           WHERE id = ?`
+           WHERE id = ? AND active_run_id IS NULL AND status IN ('failed', 'canceled')`
         )
         .run(now, jobId);
+      if (result.changes === 0) {
+        throw new JobStateConflictError(`Job ${jobId} cannot be retried in the current state`);
+      }
       this.db.prepare('DELETE FROM media_candidates WHERE job_id = ?').run(jobId);
       this.db.exec('COMMIT');
     } catch (error) {
@@ -338,7 +478,22 @@ export class JobService extends EventEmitter {
 
   cancel(jobId: string): DownloadJob {
     const job = this.requireJob(jobId);
-    return this.transition(jobId, 'canceled', job.stageProgress, { progressLabel: null });
+    if (job.status === 'canceled') {
+      return job;
+    }
+    const now = nowIso();
+    const result = this.db
+      .prepare(
+        `UPDATE download_jobs
+         SET status = 'canceled', progress = ?, stage_progress = ?, progress_label = NULL,
+             completed_at = ?, active_run_id = NULL, updated_at = ?
+         WHERE id = ? AND status IN ('pending', 'analyzing', 'downloading', 'processing', 'adding_subtitles')`
+      )
+      .run(job.stageProgress ?? 0, job.stageProgress, now, now, jobId);
+    if (result.changes === 0) {
+      throw new JobStateConflictError(`Job ${jobId} cannot be canceled in the current state`);
+    }
+    return this.requireJob(jobId);
   }
 
   delete(jobId: string): void {
@@ -351,6 +506,57 @@ export class JobService extends EventEmitter {
       this.db.exec('ROLLBACK');
       throw error;
     }
+  }
+
+  listCompletedJobIds(): string[] {
+    return this.db
+      .prepare("SELECT id FROM download_jobs WHERE status = 'completed'")
+      .all()
+      .map((row) => String((row as { id: unknown }).id));
+  }
+
+  private transitionIdle(
+    id: string,
+    expectedStatuses: readonly JobStatus[],
+    status: JobStatus,
+    stageProgress: number | null,
+    extra: Partial<DownloadJob> = {}
+  ): DownloadJob {
+    const existing = this.requireJob(id);
+    const placeholders = expectedStatuses.map(() => '?').join(', ');
+    const now = nowIso();
+    const startedAt = status === 'pending' || status === 'needs_subtitle_selection' ? null : existing.startedAt;
+    const completedAt = isTerminalStatus(status) ? now : null;
+    const result = this.db
+      .prepare(
+        `UPDATE download_jobs
+         SET status = ?, progress = ?, stage_progress = ?, progress_label = ?,
+             title_hint = ?, error_code = ?, error_message = ?, selected_candidate_id = ?,
+             started_at = ?, completed_at = ?, active_run_id = NULL, updated_at = ?
+         WHERE id = ? AND active_run_id IS NULL AND status IN (${placeholders})`
+      )
+      .run(
+        status,
+        stageProgress ?? 0,
+        stageProgress,
+        extra.progressLabel !== undefined ? extra.progressLabel : existing.progressLabel,
+        extra.titleHint ?? existing.titleHint,
+        extra.errorCode ?? null,
+        extra.errorMessage ?? null,
+        extra.selectedCandidateId ?? existing.selectedCandidateId,
+        startedAt,
+        completedAt,
+        now,
+        id,
+        ...expectedStatuses
+      );
+    if (result.changes === 0) {
+      throw new JobStateConflictError(`Job ${id} cannot transition from its current state to ${status}`);
+    }
+    if (status === 'pending') {
+      this.emitRunnable();
+    }
+    return this.requireJob(id);
   }
 
   private updateCandidateSubtitleTracks(candidateId: string, tracks: SubtitleTrack[]): void {
@@ -407,4 +613,14 @@ function sameUrl(left: string, right: string): boolean {
 
 function isTerminalStatus(status: JobStatus): boolean {
   return status === 'completed' || status === 'failed' || status === 'canceled';
+}
+
+function allowedActiveTransition(from: JobStatus, to: JobStatus): boolean {
+  const transitions: Partial<Record<JobStatus, readonly JobStatus[]>> = {
+    analyzing: ['analyzing', 'needs_manual_selection', 'downloading', 'failed'],
+    downloading: ['processing', 'failed'],
+    processing: ['adding_subtitles', 'failed'],
+    adding_subtitles: ['failed']
+  };
+  return transitions[from]?.includes(to) ?? false;
 }

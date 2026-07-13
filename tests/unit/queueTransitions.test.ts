@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { removedJobCategoryIds } from '../../src/web/src/features/app/queueTransitions.js';
+import { disappearedQueueJobs, removedJobCategoryIds } from '../../src/web/src/features/app/queueTransitions.js';
 
 describe('queue transitions', () => {
   test('returns the category of a job that disappeared from the visible queue', () => {
@@ -25,5 +25,12 @@ describe('queue transitions', () => {
       ],
       []
     )).toEqual(['category-1', 'category-2']);
+  });
+
+  test('returns disappeared jobs while excluding an explicitly deleted job', () => {
+    const completed = { id: 'job-completed', categoryId: 'category-1', title: 'Finished video' };
+    const deleted = { id: 'job-deleted', categoryId: 'category-2', title: 'Canceled video' };
+
+    expect(disappearedQueueJobs([completed, deleted], [], new Set([deleted.id]))).toEqual([completed]);
   });
 });

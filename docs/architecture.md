@@ -97,11 +97,23 @@ Captured candidate and subtitle request headers are internal download context. C
 analyze -> download -> process -> library insert
 ```
 
+Runnable work is claimed with one SQLite `UPDATE ... RETURNING` operation. The claim assigns a unique run ID, and every
+active transition and persisted progress update compares that ID together with the expected status. A stale callback or
+manual-selection request therefore cannot requeue or complete a newer attempt, and separate runner processes cannot claim
+the same pending row.
+
 On server startup, interrupted `analyzing`, `downloading`, `processing`, and `adding_subtitles` jobs are reset to `pending` so a Docker restart cannot leave a queue item permanently stuck in an active state.
+Before processing writes into the library it durably reserves the job's final relative path. Recovery preserves that
+reservation, so a restarted attempt reuses the same job-owned path instead of leaving an orphan and selecting a suffixed
+filename. The final `media_items` insert and `download_jobs` completion update share one transaction, and
+`media_items.job_id` is unique; repeating finalization after an uncertain commit returns the existing media item.
 
 The queue UI shows one honest current-stage indicator rather than a synthetic whole-pipeline percentage. A stage is determinate only when the backend has a trustworthy denominator, such as response size, HLS/DASH duration, or media duration. Otherwise the native progress indicator stays indeterminate while the stage label explains the active work.
 
 Download callbacks distinguish confirmed activity from calculable progress. Every received media chunk or advancing ffmpeg `out_time` refreshes the in-memory stall watchdog, including direct responses without `Content-Length`, large HLS segments, browser-impersonated downloads without a total size, and DASH inputs without a known duration. Activity-only heartbeats do not write SQLite. Determinate stage progress is persisted at bounded intervals or meaningful deltas, and guarded by the expected job status so late callbacks cannot overwrite a later phase or cancellation.
+Selected-subtitle transfers use the same activity watchdog and stream response bodies instead of waiting on one opaque
+buffer operation. Download progress logs are emitted only at bounded milestones, including 95%, 99%, and completion,
+so chunk frequency cannot create a log storm near the end of a large transfer.
 
 Runnable, active, problem, and canceled jobs are returned by `/api/queue`; only `completed` jobs leave the active queue UI automatically.
 
@@ -122,6 +134,9 @@ Canceling a running job goes through `QueueRunner.cancel()`, not only a database
 Deleting a job goes through `DELETE /api/jobs/:id`, aborts any active work, removes job-owned scratch files, screenshots, thumbnails, live-browser profile data, candidates, and the job row.
 
 Progress callbacks must check that the job still exists and is still running before writing new state, otherwise a canceled or deleted job can be accidentally revived by late async work.
+Failures are stored with phase-specific codes for analysis, download, processing, subtitle, and finalization work; genuine
+connection interruptions use a separate recoverable network code. The UI maps those codes to the next useful action and
+keeps the raw exception under technical details.
 
 ## Downloader Contracts
 
@@ -142,6 +157,9 @@ Every URL supplied to the downloader, including subtitle, HLS, and DASH URLs der
 DRM-protected streams are unsupported. Future work should mark them explicitly rather than attempting key extraction or circumvention.
 
 Site-specific downloader engines are allowed only behind explicit extractors for known complex platforms. YouTube uses `yt-dlp` because `googlevideo` playback URLs can be bound to player/runtime details that are not replayable by the generic downloader.
+`yt-dlp` may download separate video and audio streams before merging them. Its percentage is determinate only while a
+single stream advances monotonically; when the reported percentage restarts for another stream, or post-processing
+begins, the queue switches to an explicitly labeled indeterminate substage instead of holding a misleading 99% value.
 
 Some DASH manifests expose video and audio as separate adaptation sets. The downloader must select both the best video representation and the best audio representation, then pass both inputs to ffmpeg with stream copy. Selecting only the video representation silently produces a saved file without sound.
 
@@ -157,7 +175,12 @@ HLS/DASH downloads write to an extensionless work file, so ffmpeg remux calls pa
 
 Plain, unencrypted HLS media playlists whose segments are ordinary `.ts` files are downloaded by the built-in segment downloader. This preserves browser-captured request headers and avoids ffmpeg HLS replay quirks with signed CDN playlists. Complex HLS playlists such as encrypted, byte-range, or fMP4/init-map streams stay on the ffmpeg fallback path.
 
-HLS progress should come from media-playlist `#EXTINF` durations when using the built-in segment downloader, or from ffmpeg's structured `-progress` output when using the fallback path. DASH progress uses static MPD `mediaPresentationDuration`, a sole `Period@duration`, or trusted candidate duration in that order. Dynamic, ambiguous, or duration-less manifests remain indeterminate while structured ffmpeg progress still supplies activity heartbeats. Do not infer remote-download activity from arbitrary stderr output.
+HLS progress should come from media-playlist `#EXTINF` durations when every media segment has a finite positive duration.
+If even one segment lacks a valid duration, the built-in downloader falls back to completed segment count and the ffmpeg
+path remains indeterminate. DASH progress uses static MPD `mediaPresentationDuration`, a sole `Period@duration`, or
+trusted candidate duration in that order. Dynamic, ambiguous, or duration-less manifests remain indeterminate while
+structured ffmpeg progress still supplies activity heartbeats. Do not infer remote-download activity from arbitrary
+stderr output.
 
 For HLS segment reliability, keep the ffmpeg reconnect options enabled and keep HLS `http_persistent` disabled. Some signed segment CDNs can invalidate or truncate keepalive/TLS sessions mid-download, producing partial segments and corrupt audio packets.
 

@@ -125,6 +125,45 @@ describe('DownloadEngine ffmpeg helpers', () => {
     expect(() => buildHlsFfmpegArgs('file:///etc/passwd', '/work/source', 'http://127.0.0.1:9999')).toThrow(/HTTP or HTTPS/);
   });
 
+  test('falls back to segment-count progress when any plain HLS segment lacks a valid duration', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'shv-hls-count-progress-'));
+    const outputPath = path.join(tempDir, 'source');
+    const candidate: MediaCandidate = {
+      bitrate: null,
+      confidence: 0.9,
+      contentType: 'application/vnd.apple.mpegurl',
+      discoveredAt: new Date().toISOString(),
+      durationSeconds: null,
+      headers: {},
+      id: 'candidate-id',
+      jobId: 'job-id',
+      kind: 'hls',
+      manifestType: 'hls',
+      resolution: null,
+      sizeBytes: null,
+      subtitleTracks: [],
+      url: 'https://media.example.test/index.m3u8'
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response('#EXTM3U\n#EXTINF:4,\nseg-1.ts\nseg-2.ts\n#EXT-X-ENDLIST'))
+      .mockResolvedValueOnce(new Response('first'))
+      .mockResolvedValueOnce(new Response('second'));
+    const progress: TaskProgressUpdate[] = [];
+    vi.stubGlobal('fetch', fetchMock);
+
+    try {
+      await new DownloadEngine(undefined, async (url) => url, unsafeTestSessionFactory).download(
+        candidate,
+        outputPath,
+        (update) => progress.push(update)
+      );
+    } finally {
+      vi.unstubAllGlobals();
+    }
+
+    expect(progress.filter((update) => update.kind === 'progress').map((update) => update.fraction)).toEqual([0.5, 0.99, 1]);
+  });
+
   test('rejects private HLS and DASH URLs resolved from manifests before requesting them', async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'shv-manifest-url-safety-'));
     const candidate: MediaCandidate = {

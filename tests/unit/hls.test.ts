@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import {
   canDownloadPlainHlsSegments,
+  completeHlsSegmentDurationSeconds,
   parseHlsDurationSeconds,
   parseHlsResourceUrls,
   parseHlsSegments,
@@ -55,6 +56,29 @@ seg-2.ts
 seg-3.ts`;
 
     expect(parseHlsDurationSeconds(mediaManifest)).toBeCloseTo(10.48);
+  });
+
+  test('requires a valid EXTINF duration for every media segment', () => {
+    const partialDurationManifest = `#EXTM3U
+#EXTINF:4,
+seg-1.ts
+seg-2.ts`;
+
+    const segments = parseHlsSegments(partialDurationManifest, 'https://example.test/video/index.m3u8');
+
+    expect(parseHlsDurationSeconds(partialDurationManifest)).toBeNull();
+    expect(completeHlsSegmentDurationSeconds(segments)).toBeNull();
+  });
+
+  test('accepts duration-based progress only when every parsed segment duration is positive and finite', () => {
+    expect(completeHlsSegmentDurationSeconds([
+      { durationSeconds: 3.5, uri: 'https://example.test/seg-1.ts' },
+      { durationSeconds: 4, uri: 'https://example.test/seg-2.ts' }
+    ])).toBe(7.5);
+    expect(completeHlsSegmentDurationSeconds([
+      { durationSeconds: 3.5, uri: 'https://example.test/seg-1.ts' },
+      { durationSeconds: 0, uri: 'https://example.test/seg-2.ts' }
+    ])).toBeNull();
   });
 
   test('identifies plain TS media segments that can be downloaded directly', () => {

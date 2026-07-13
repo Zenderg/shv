@@ -6,7 +6,7 @@ import { AppSidebar } from './components/AppSidebar';
 import { InlineNotice, LibrarySkeleton, PageLoadError, QueueSkeleton } from './components/AsyncStates';
 import { MobileNavigation } from './components/MobileNavigation';
 import { appQueryKeys, useCategoriesQuery, useMediaQuery, useQueueQuery, useRuntimeConfigQuery } from './features/app/queries';
-import { removedJobCategoryIds } from './features/app/queueTransitions';
+import { disappearedQueueJobs, removedJobCategoryIds } from './features/app/queueTransitions';
 import { AddVideoDialog } from './features/dialogs/AddVideoDialog';
 import { CategoryNameDialog } from './features/dialogs/CategoryNameDialog';
 import { ConfirmDialog } from './features/dialogs/ConfirmDialog';
@@ -14,7 +14,9 @@ import { EditDialog } from './features/dialogs/EditDialog';
 import { ExtensionInstallDialog } from './features/dialogs/ExtensionInstallDialog';
 import { PlayerDialog } from './features/dialogs/PlayerDialog';
 import { LibraryGrid } from './features/library/LibraryGrid';
+import { CompletionToasts, type CompletionNotice } from './features/queue/CompletionToasts';
 import { QueuePanel } from './features/queue/QueuePanel';
+import { countQueueJobs, queueCountsLabel } from './features/queue/queueSummary';
 import { api, type Category, type DownloadJob, type MediaItem, type QueueSnapshot } from './lib/api';
 import { checkSourceExtension, openSourceWithExtension, type ExtensionStatus } from './lib/extensionBridge';
 import { message } from './utils/format';
@@ -53,6 +55,10 @@ export function App() {
   const [page, setPage] = useState<AppPage>('library');
   const [queueActionJobIds, setQueueActionJobIds] = useState<Record<string, string>>({});
   const [queueActionErrors, setQueueActionErrors] = useState<Record<string, string>>({});
+  const [completionAnnouncement, setCompletionAnnouncement] = useState('');
+  const [completionNotices, setCompletionNotices] = useState<CompletionNotice[]>([]);
+  const [sourceTabOpenedJobIds, setSourceTabOpenedJobIds] = useState<Record<string, boolean>>({});
+  const explicitlyDeletedJobIdsRef = useRef(new Set<string>());
   const previousVisibleJobsRef = useRef<DownloadJob[] | null>(null);
 
   const categories = categoriesQuery.data ?? [];
@@ -63,6 +69,8 @@ export function App() {
   const media = mediaQuery.data ?? [];
   const queue = queueQuery.data ?? EMPTY_QUEUE;
   const sortedJobs = useMemo(() => sortQueueJobs(queue.jobs), [queue.jobs]);
+  const queueCounts = useMemo(() => countQueueJobs(queue.jobs), [queue.jobs]);
+  const queueSummary = useMemo(() => queueCountsLabel(queueCounts), [queueCounts]);
   const activeProblems = useMemo(
     () => queue.jobs.filter((job) => ['failed', 'needs_manual_selection', 'needs_subtitle_selection'].includes(job.status)).length,
     [queue.jobs]
@@ -83,7 +91,30 @@ export function App() {
     for (const categoryId of removedJobCategoryIds(previousJobs, queueQuery.data.jobs)) {
       void queryClient.invalidateQueries({ exact: true, queryKey: appQueryKeys.media(categoryId) });
     }
-  }, [queryClient, queueQuery.data]);
+
+    const disappearedJobs = disappearedQueueJobs(previousJobs, queueQuery.data.jobs);
+    const completedJobs = disappearedQueueJobs(previousJobs, queueQuery.data.jobs, explicitlyDeletedJobIdsRef.current);
+    for (const disappearedJob of disappearedJobs) {
+      explicitlyDeletedJobIdsRef.current.delete(disappearedJob.id);
+    }
+    if (completedJobs.length > 0) {
+      const notices = completedJobs.map((job) => {
+        const categoryName = categories.find((category) => category.id === job.categoryId)?.name ?? 'your library';
+        return {
+          categoryId: job.categoryId,
+          categoryName,
+          jobId: job.id,
+          title: job.titleHint || safeHostname(job.sourceUrl)
+        };
+      });
+      setCompletionNotices((current) => [...notices, ...current.filter((notice) => !notices.some((next) => next.jobId === notice.jobId))].slice(0, 4));
+      setCompletionAnnouncement(
+        notices.length === 1
+          ? `${notices[0].title} finished downloading and was saved to ${notices[0].categoryName}.`
+          : `${notices.length} downloads finished and were saved to the library.`
+      );
+    }
+  }, [categories, queryClient, queueQuery.data]);
 
   useEffect(() => {
     function handleSourceHelperEvent(event: MessageEvent) {
@@ -93,6 +124,10 @@ export function App() {
         event.data?.event?.type !== 'source-selected'
       ) {
         return;
+      }
+      const selectedJobId = typeof event.data.event.jobId === 'string' ? event.data.event.jobId : null;
+      if (selectedJobId) {
+        setSourceTabOpenedJobIds((current) => omitKey(current, selectedJobId));
       }
       void queryClient.invalidateQueries({ queryKey: appQueryKeys.queue });
     }
@@ -201,6 +236,7 @@ export function App() {
       return;
     }
     await openSourceWithExtension({ jobId: job.id, sourceUrl: job.sourceUrl, titleHint: job.titleHint }, profile);
+    setSourceTabOpenedJobIds((current) => ({ ...current, [job.id]: true }));
   }
 
   async function recheckExtension(job: DownloadJob | null) {
@@ -264,7 +300,8 @@ export function App() {
           }
         }}
         page={page}
-        queueBadgeCount={queue.jobs.length}
+        queueItemCount={queueCounts.total}
+        queueSummary={queueSummary}
         selectedCategoryId={currentCategoryId}
       />
 
@@ -281,7 +318,8 @@ export function App() {
         onShowQueue={() => setPage('queue')}
         openCategoryMenuId={openCategoryMenuId}
         page={page}
-        queueBadgeCount={queue.jobs.length}
+        queueItemCount={queueCounts.total}
+        queueSummary={queueSummary}
         selectedCategoryId={currentCategoryId}
       />
 
@@ -289,7 +327,6 @@ export function App() {
         <AppHeader
           activeProblems={activeProblems}
           busy={dialogBusy || categoriesQuery.isPending}
-          categoryCount={queue.jobs.length}
           categoryName={selectedCategory?.name ?? null}
           extensionUpdateAvailable={extensionStatus?.kind === 'outdated'}
           loading={page === 'queue' ? queueLoading : libraryLoading}
@@ -302,6 +339,7 @@ export function App() {
             }
           }}
           page={page}
+          queueCounts={queueCounts}
         />
 
         {currentRefetchError ? (
@@ -443,6 +481,16 @@ export function App() {
           status={extensionDialog.status}
         />
       ) : null}
+      <CompletionToasts
+        announcement={completionAnnouncement}
+        notices={completionNotices}
+        onDismiss={(jobId) => setCompletionNotices((current) => current.filter((notice) => notice.jobId !== jobId))}
+        onOpenCategory={(notice) => {
+          setSelectedCategoryId(notice.categoryId);
+          setPage('library');
+          setCompletionNotices((current) => current.filter((item) => item.jobId !== notice.jobId));
+        }}
+      />
     </main>
   );
 
@@ -493,14 +541,19 @@ export function App() {
         actionErrors={queueActionErrors}
         busyJobIds={queueActionJobIds}
         candidatesByJobId={queue.candidatesByJobId}
+        categories={categories}
         jobs={sortedJobs}
         onCancel={(job) => void runQueueAction(job, 'Canceling', () => api.cancelJob(job.id).then(() => undefined))}
-        onDelete={(job) => void runQueueAction(job, 'Deleting', () => api.deleteJob(job.id))}
+        onDelete={(job) => void runQueueAction(job, 'Deleting', async () => {
+          await api.deleteJob(job.id);
+          explicitlyDeletedJobIdsRef.current.add(job.id);
+        })}
         onManual={(job) => void runQueueAction(job, 'Opening source', () => chooseSource(job))}
         onRetry={(job) => void runQueueAction(job, 'Retrying', () => api.retryJob(job.id).then(() => undefined))}
         onSubtitleNext={(job, subtitleTrackUrl) =>
           void runQueueAction(job, 'Continuing', () => api.selectSubtitleTrack(job.id, subtitleTrackUrl).then(() => undefined))
         }
+        sourceTabOpenedJobIds={sourceTabOpenedJobIds}
       />
     );
   }
@@ -527,4 +580,12 @@ function omitKey<T>(record: Record<string, T>, key: string): Record<string, T> {
   const next = { ...record };
   delete next[key];
   return next;
+}
+
+function safeHostname(url: string): string {
+  try {
+    return new URL(url).hostname || 'Completed download';
+  } catch {
+    return 'Completed download';
+  }
 }
