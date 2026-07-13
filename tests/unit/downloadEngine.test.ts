@@ -43,14 +43,22 @@ describe('DownloadEngine ffmpeg helpers', () => {
       { Referer: 'https://example.test/' },
       '/work/source',
       'https://media.example.test/manifest.mpd',
-      'http://127.0.0.1:9999'
+      {
+        audio: 'http://127.0.0.1:9998',
+        video: 'http://127.0.0.1:9999'
+      }
     );
 
     expect(args).toEqual(expect.arrayContaining(['-map', '0:v:0', '-map', '1:a:0', '-c', 'copy', '-f', 'matroska', '/work/source']));
     expect(args.filter((arg) => arg === '-i')).toHaveLength(2);
     expect(args).toEqual(expect.arrayContaining(['https://media.example.test/video.webm', 'https://media.example.test/audio.webm']));
     expect(args).toEqual(expect.arrayContaining(['-reconnect', '1', '-reconnect_on_network_error', '1']));
-    expect(args).not.toContain('-max_redirects');
+    expect(args.filter((arg) => arg === '-http_proxy')).toHaveLength(2);
+    expect(args).toEqual(expect.arrayContaining(['http://127.0.0.1:9999', 'http://127.0.0.1:9998']));
+    const videoInputIndex = args.indexOf(video.baseUrl);
+    const audioInputIndex = args.indexOf(audio.baseUrl);
+    expect(args[args.lastIndexOf('-http_proxy', videoInputIndex) + 1]).toBe('http://127.0.0.1:9999');
+    expect(args[args.lastIndexOf('-http_proxy', audioInputIndex) + 1]).toBe('http://127.0.0.1:9998');
   });
 
   test('does not replay captured headers to cross-origin DASH renditions', () => {
@@ -61,7 +69,10 @@ describe('DownloadEngine ffmpeg helpers', () => {
       { Authorization: 'Bearer secret', Cookie: 'session=secret' },
       '/work/source',
       'https://source.example.test/manifest.mpd',
-      'http://127.0.0.1:9999'
+      {
+        audio: 'http://127.0.0.1:9998',
+        video: 'http://127.0.0.1:9999'
+      }
     );
     const headerValues = args.flatMap((value, index) => value === '-headers' ? [args[index + 1]] : []);
 
@@ -71,7 +82,10 @@ describe('DownloadEngine ffmpeg helpers', () => {
   });
 
   test('rejects DASH input without a direct media representation', () => {
-    expect(() => buildDashFfmpegArgs(null, null, {}, '/work/source', 'https://source.example.test/manifest.mpd', 'http://127.0.0.1:9999')).toThrow(
+    expect(() => buildDashFfmpegArgs(null, null, {}, '/work/source', 'https://source.example.test/manifest.mpd', {
+      audio: null,
+      video: 'http://127.0.0.1:9999'
+    })).toThrow(
       'DASH manifest did not include a playable media representation'
     );
   });

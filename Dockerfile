@@ -1,4 +1,4 @@
-FROM node:24.14.0-bookworm-slim AS production-dependencies
+FROM node:24.18.0-trixie-slim AS production-dependencies
 
 WORKDIR /app
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
@@ -24,15 +24,24 @@ FROM production-dependencies AS build
 
 RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
 # Keep build inputs explicit so docs/tests changes do not invalidate the image build cache.
-COPY tsconfig.json tsconfig.server.json vite.config.ts vite.extension.config.ts ./
+COPY tsconfig.json tsconfig.server.json svelte.config.js vite.config.ts vite.extension.config.ts vite.extension-preview.config.ts vitest.config.ts ./
 COPY src ./src
 COPY extension ./extension
 RUN npm run build
 
+FROM build AS validation
+
+COPY Dockerfile docker-entrypoint.sh ./
+COPY scripts ./scripts
+COPY tests ./tests
+RUN npm test
+RUN npm run typecheck
+RUN gosu node node --input-type=module -e "import { chromium } from 'playwright'; const browser = await chromium.launch({ headless: true }); await browser.close();"
+
 FROM production-dependencies AS runtime
 
-COPY --from=build /app/dist ./dist
-COPY --from=build /app/extension ./extension
+COPY --from=validation /app/dist ./dist
+COPY --from=validation /app/extension ./extension
 COPY --chmod=755 docker-entrypoint.sh /usr/local/bin/shv-entrypoint
 
 ENV NODE_ENV=production

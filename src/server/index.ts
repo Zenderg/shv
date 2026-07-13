@@ -61,7 +61,7 @@ export function createApp() {
   const webRoot = resolveWebRoot();
   if (fs.existsSync(webRoot)) {
     app.use(express.static(webRoot));
-    app.get('*', (_request, response) => {
+    app.get('/{*splat}', (_request, response) => {
       response.sendFile(path.join(webRoot, 'index.html'));
     });
   }

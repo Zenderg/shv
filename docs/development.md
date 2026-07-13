@@ -6,7 +6,7 @@ This project is designed to start through Docker Compose. Local commands are fin
 
 ## Runtime
 
-Use Node.js 24.14.0 or newer for local commands. The server imports `node:sqlite`, and the Docker image plus release workflow pin Node 24.14.0 so the SQLite runtime API is consistent between local checks, CI release builds, and the production container.
+Use Node.js 24.18.0 or newer for local commands. The server imports `node:sqlite`, and the Docker image plus release workflow pin Node 24.18.0 LTS so the SQLite runtime API is consistent between local checks, CI release builds, and the production container. Typechecking uses the native Go-based TypeScript 7 CLI from `@typescript/native`; the `typescript` dependency exposes the official TypeScript 6 compatibility API for Svelte tooling, and `svelte-check` covers the `.svelte` sources. The image is based on Debian 13 (Trixie), and the release workflow runs tests, typechecking, builds, and an unprivileged Chromium smoke launch in a Docker validation stage derived from that production toolchain.
 
 ## Docker Compose
 

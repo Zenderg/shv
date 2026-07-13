@@ -16,6 +16,8 @@ describe('Dockerfile', () => {
     expect(runtimeUser).toBe('root');
     expect(dockerfile).toContain('gosu');
     expect(dockerfile).toContain('PLAYWRIGHT_BROWSERS_PATH=/ms-playwright');
+    expect(dockerfile).toContain('COPY --from=validation /app/dist ./dist');
+    expect(dockerfile).toContain('COPY --from=validation /app/extension ./extension');
     expect(dockerfile).toContain('chown -R node:node /data /work /ms-playwright');
     expect(dockerfile).toContain('ENTRYPOINT ["shv-entrypoint"]');
     expect(dockerfile).toContain('HEALTHCHECK --interval=30s --timeout=3s --start-period=5m');

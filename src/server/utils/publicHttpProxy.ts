@@ -7,6 +7,7 @@ const MAX_PROXY_HEADER_BYTES = 64 * 1024;
 export type PublicProxyConnector = (address: string, port: number) => net.Socket;
 
 export interface PublicHttpProxyOptions {
+  allowedOrigins?: ReadonlySet<string>;
   connect?: PublicProxyConnector;
   resolve?: HostnameResolver;
 }
@@ -49,11 +50,13 @@ export class PublicHttpProxy {
   private readonly sockets = new Set<net.Socket>();
   private readonly connect: PublicProxyConnector;
   private readonly resolve?: HostnameResolver;
+  private readonly allowedOrigins?: ReadonlySet<string>;
   private started = false;
 
   constructor(options: PublicHttpProxyOptions = {}) {
     this.connect = options.connect ?? ((address, port) => net.connect({ host: address, port }));
     this.resolve = options.resolve;
+    this.allowedOrigins = options.allowedOrigins;
     this.server.on('connection', (socket) => this.track(socket));
   }
 
@@ -120,6 +123,9 @@ export class PublicHttpProxy {
       if (!isConnect && targetUrl.protocol !== 'http:') {
         throw new Error('HTTPS proxy requests must use CONNECT');
       }
+      if (this.allowedOrigins && !this.allowedOrigins.has(targetUrl.origin)) {
+        throw new Error('Destination origin rejected');
+      }
       const port = parsePort(targetUrl);
       const addresses = await resolvePublicHostname(targetUrl.hostname, this.resolve);
       const upstream = this.connect(addresses[0].address, port);
@@ -165,12 +171,13 @@ function parsePort(target: URL): number {
 function buildForwardHeader(method: string, target: URL, version: string, lines: string[]): Buffer {
   const forwarded = lines.filter((line) => {
     const name = line.slice(0, line.indexOf(':')).trim().toLowerCase();
-    return name !== 'host' && name !== 'proxy-authorization' && name !== 'proxy-connection';
+    return name !== 'connection' && name !== 'host' && name !== 'proxy-authorization' && name !== 'proxy-connection';
   });
   while (forwarded.at(-1) === '') forwarded.pop();
   return Buffer.from([
     `${method} ${target.pathname}${target.search} ${version}`,
     `Host: ${target.host}`,
+    'Connection: close',
     ...forwarded,
     '',
     ''

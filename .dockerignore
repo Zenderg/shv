@@ -4,8 +4,6 @@ data
 .git
 .github
 docs
-scripts
-tests
 .DS_Store
 .gitignore
 AGENTS.md

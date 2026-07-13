@@ -10,7 +10,7 @@ permissions:
   packages: write
 
 env:
-  NODE_VERSION: "24.14.0"
+  NODE_VERSION: "24.18.0"
 
 jobs:
   release:
@@ -20,7 +20,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -50,24 +50,22 @@ jobs:
           fi
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
 
-      - name: Install media tooling
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ffmpeg
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
 
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Run tests
-        run: npm test
-
-      - name: Run typecheck
-        run: npm run typecheck
+      - name: Validate production toolchain
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          target: validation
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Resolve image name
         id: image
@@ -78,18 +76,15 @@ jobs:
           echo "name=ghcr.io/${repository}" >> "${GITHUB_OUTPUT}"
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
       - name: Extract Docker metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ steps.image.outputs.name }}
           tags: |
@@ -103,7 +98,7 @@ jobs:
 
       - name: Build and push Docker image
         id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           push: true

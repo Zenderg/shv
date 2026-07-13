@@ -38,6 +38,25 @@ If remote access is needed, an external reverse proxy, VPN, or access layer owns
 
 Local commands are still fine for tests, builds, scripts, seed data, and screenshot capture.
 
+## Origin-Lock Authenticated Media Inputs
+
+**Decision:** ffmpeg inputs that receive captured request headers use a dedicated loopback proxy restricted to the input URL's origin.
+
+**Why:**
+
+- ffmpeg applies one header set to an input and can otherwise replay `Authorization` or `Cookie` after a cross-origin redirect.
+- The origin lock rejects that redirect before the destination receives a request while preserving legitimate same-origin redirects.
+- The proxy still validates the complete DNS snapshot for every connection, so the origin restriction and SSRF/DNS-rebinding protection compose instead of replacing one another.
+- This invariant is independent of an ffmpeg-version-specific redirect option and remains testable against the production distro package.
+
+**Rejected alternatives:**
+
+- Relying only on the general public-address proxy, which permits redirects between public origins and therefore does not keep credentials origin-bound.
+- Depending on ffmpeg's `max_redirects` option, which is unavailable in the current stable Debian media package.
+- Moving the production browser runtime to a rolling distro or an unsupported musl-based image solely to obtain that option.
+
+The headerless HLS ffmpeg fallback continues to use the general validating proxy because its manifests may legitimately reference several public origins.
+
 ## TypeScript Modular Monolith
 
 **Decision:** The app is a TypeScript modular monolith: Express backend, React frontend, Svelte-authored extension sidebar, Vite builds, and explicit server-side modules.

@@ -9,7 +9,7 @@ import { JobCanceledError, onAbort, throwIfAborted } from '../utils/cancellation
 import { requestHeadersForUrl } from '../utils/downloadRequestHeaders.js';
 import { logJobEvent, safeUrlParts, shortMessage } from '../utils/jobLogger.js';
 import { assertPublicHttpUrlSyntax } from '../utils/networkSafety.js';
-import { PublicMediaSession, type PublicMediaSessionLike } from '../utils/publicHttpProxy.js';
+import { PublicMediaSession, type PublicHttpProxyOptions, type PublicMediaSessionLike } from '../utils/publicHttpProxy.js';
 import type { Response as UndiciResponse } from 'undici';
 import { downloadBrowserRequestMedia } from './browserRequestDownloader.js';
 
@@ -29,7 +29,7 @@ export interface BrowserRequestDownloadInput {
 
 export type BrowserRequestDownloadRunner = (input: BrowserRequestDownloadInput) => Promise<DownloadResult>;
 export type PublicUrlValidator = (url: string) => Promise<string>;
-export type PublicMediaSessionFactory = () => Promise<PublicMediaSessionLike>;
+export type PublicMediaSessionFactory = (options?: PublicHttpProxyOptions) => Promise<PublicMediaSessionLike>;
 
 const MAX_SAFE_REDIRECTS = 5;
 
@@ -37,7 +37,7 @@ export class DownloadEngine {
   constructor(
     private readonly browserRequestDownloader: BrowserRequestDownloadRunner = downloadBrowserRequestMedia,
     private readonly validatePublicUrl: PublicUrlValidator = async (url) => assertPublicHttpUrlSyntax(url),
-    private readonly createMediaSession: PublicMediaSessionFactory = () => PublicMediaSession.start()
+    private readonly createMediaSession: PublicMediaSessionFactory = (options) => PublicMediaSession.start(options)
   ) {}
 
   async download(
@@ -299,11 +299,31 @@ export class DownloadEngine {
     if (selected.audio) {
       await this.validatePublicUrl(selected.audio.baseUrl);
     }
-    await this.runFfmpeg(
-      buildDashFfmpegArgs(selected.video, selected.audio, candidate.headers, outputPath, candidate.url, session.proxyUrl),
-      onProgress,
-      signal
-    );
+    if (!selected.video) {
+      throw new Error('DASH manifest did not include a playable media representation');
+    }
+
+    const inputSessions: PublicMediaSessionLike[] = [];
+    try {
+      const videoSession = await this.createMediaSession(originLockedProxyOptions(selected.video.baseUrl));
+      inputSessions.push(videoSession);
+      const audioSession = selected.audio
+        ? await this.createMediaSession(originLockedProxyOptions(selected.audio.baseUrl))
+        : null;
+      if (audioSession) {
+        inputSessions.push(audioSession);
+      }
+      await this.runFfmpeg(
+        buildDashFfmpegArgs(selected.video, selected.audio, candidate.headers, outputPath, candidate.url, {
+          audio: audioSession?.proxyUrl ?? null,
+          video: videoSession.proxyUrl
+        }),
+        onProgress,
+        signal
+      );
+    } finally {
+      await Promise.all(inputSessions.map((inputSession) => inputSession.close()));
+    }
     return { filePath: outputPath, bytesWritten: fs.statSync(outputPath).size };
   }
 
@@ -447,7 +467,7 @@ export function buildDashFfmpegArgs(
   headers: Record<string, string>,
   outputPath: string,
   capturedManifestUrl: string,
-  proxyUrl: string
+  proxyUrls: { audio: string | null; video: string }
 ): string[] {
   const args = ['-y'];
   const primaryInput = video?.baseUrl;
@@ -461,15 +481,18 @@ export function buildDashFfmpegArgs(
   }
 
   args.push(
-    ...ffmpegNetworkInputArgs(proxyUrl),
+    ...ffmpegNetworkInputArgs(proxyUrls.video),
     '-headers',
     headersToFfmpeg(requestHeadersForUrl(headers, capturedManifestUrl, primaryInput)),
     '-i',
     primaryInput
   );
   if (audio) {
+    if (!proxyUrls.audio) {
+      throw new Error('DASH audio input requires an origin-locked proxy');
+    }
     args.push(
-      ...ffmpegNetworkInputArgs(proxyUrl),
+      ...ffmpegNetworkInputArgs(proxyUrls.audio),
       '-headers',
       headersToFfmpeg(requestHeadersForUrl(headers, capturedManifestUrl, audio.baseUrl)),
       '-i',
@@ -482,6 +505,10 @@ export function buildDashFfmpegArgs(
   }
   args.push('-c', 'copy', '-f', 'matroska', outputPath);
   return args;
+}
+
+function originLockedProxyOptions(url: string): PublicHttpProxyOptions {
+  return { allowedOrigins: new Set([new URL(url).origin]) };
 }
 
 export function formatFfmpegError(code: number | null, stderr: string): string {

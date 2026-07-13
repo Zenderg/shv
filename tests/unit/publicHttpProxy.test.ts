@@ -42,11 +42,55 @@ describe('PublicMediaSession', () => {
       const url = `http://media.example.test:${address.port}/video.mp4`;
       const response = await session.fetch(url, { headers: { Connection: 'close' } });
       await expect(response.text()).resolves.toBe('safe response');
-      await expect(session.fetch(url, { headers: { Connection: 'close' } })).rejects.toThrow();
+      const blockedResponse = await session.fetch(url, { headers: { Connection: 'close' } });
+      expect(blockedResponse.status).toBe(403);
+      await blockedResponse.body?.cancel();
 
       expect(dialed).toEqual(['93.184.216.34']);
       expect(hosts).toEqual([`media.example.test:${address.port}`]);
       expect(resolutionCount).toBe(2);
+    } finally {
+      await session.close();
+    }
+  });
+
+  test('rejects a cross-origin HTTPS tunnel before DNS resolution or dialing', async () => {
+    let resolved = false;
+    let dialed = false;
+    const session = await PublicMediaSession.start({
+      allowedOrigins: new Set(['https://media.example.test']),
+      connect: () => {
+        dialed = true;
+        throw new Error('Cross-origin tunnel must not be dialed');
+      },
+      resolve: async () => {
+        resolved = true;
+        return [{ address: '93.184.216.34', family: 4 }];
+      }
+    });
+
+    try {
+      const proxy = new URL(session.proxyUrl);
+      const response = await new Promise<string>((resolve, reject) => {
+        const socket = net.connect({ host: proxy.hostname, port: Number(proxy.port) });
+        socket.once('error', reject);
+        socket.once('data', (chunk) => {
+          resolve(chunk.toString('latin1'));
+          socket.destroy();
+        });
+        socket.once('connect', () => {
+          socket.write([
+            'CONNECT cdn.example.test:443 HTTP/1.1',
+            'Host: cdn.example.test:443',
+            '',
+            ''
+          ].join('\r\n'));
+        });
+      });
+
+      expect(response).toMatch(/^HTTP\/1\.1 403 /);
+      expect(resolved).toBe(false);
+      expect(dialed).toBe(false);
     } finally {
       await session.close();
     }

@@ -420,11 +420,14 @@ export function extensionZipEntries(
 }
 
 function rewritePackagedAppOrigin(source: string, appOrigin: string): string {
+  const serializedOrigin = JSON.stringify(appOrigin);
   return source
     .split(JSON.stringify(DEFAULT_EXTENSION_APP_ORIGIN))
-    .join(JSON.stringify(appOrigin))
+    .join(serializedOrigin)
     .split(`'${DEFAULT_EXTENSION_APP_ORIGIN}'`)
-    .join(`'${appOrigin}'`);
+    .join(serializedOrigin)
+    .split(`\`${DEFAULT_EXTENSION_APP_ORIGIN}\``)
+    .join(serializedOrigin);
 }
 
 function appOriginForExtension(request: Request, config: AppConfig): string | null {

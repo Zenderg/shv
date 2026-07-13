@@ -11,7 +11,7 @@ export default defineConfig({
       name: 'ShvSourceHelperContentScript'
     },
     outDir: 'extension/chrome-source-helper',
-    rollupOptions: {
+    rolldownOptions: {
       output: {
         entryFileNames: 'content-script.js'
       }

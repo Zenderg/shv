@@ -9,7 +9,7 @@ This document is the source of truth for cutting releases, publishing images, an
 - Releases are cut only from `main`.
 - Release tags use `vX.Y.Z`, for example `v1.2.3`.
 - Pushing a release tag starts the GitHub Actions release workflow.
-- The workflow installs `ffmpeg`/`ffprobe`, then runs `npm test`, `npm run typecheck`, and `npm run build` before publishing an image.
+- The workflow builds the Docker `validation` stage, which runs `npm test`, `npm run typecheck`, `npm run build`, and an unprivileged headless Chromium launch with the same Node, ffmpeg/ffprobe, Python, and Playwright toolchain used by the production image.
 - The workflow publishes these image tags:
   - `ghcr.io/zenderg/shv:vX.Y.Z`
   - `ghcr.io/zenderg/shv:X.Y.Z`

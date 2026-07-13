@@ -7,7 +7,11 @@ import { spawn } from 'node:child_process';
 import { afterEach, describe, expect, test } from 'vitest';
 import type { MediaCandidate } from '../../src/shared/types.js';
 import { DownloadEngine } from '../../src/server/download-engine/downloadEngine.js';
-import { PublicMediaSession, type PublicMediaSessionLike } from '../../src/server/utils/publicHttpProxy.js';
+import {
+  PublicMediaSession,
+  type PublicHttpProxyOptions,
+  type PublicMediaSessionLike
+} from '../../src/server/utils/publicHttpProxy.js';
 
 const unsafeTestSessionFactory = async (): Promise<PublicMediaSessionLike> => ({
   proxyUrl: 'http://127.0.0.1:1',
@@ -353,6 +357,91 @@ describe('DownloadEngine direct download', () => {
     ]);
   });
 
+  test('blocks cross-origin DASH redirects before ffmpeg can replay captured credentials', async () => {
+    const redirectedHeaders: Array<{ authorization?: string; cookie?: string }> = [];
+    const redirectedServer = http.createServer((request, response) => {
+      redirectedHeaders.push({
+        authorization: request.headers.authorization,
+        cookie: request.headers.cookie
+      });
+      response.writeHead(200, { 'content-type': 'video/mp4' });
+      response.end('redirected-video');
+    });
+    servers.push(redirectedServer);
+    await new Promise<void>((resolve) => redirectedServer.listen(0, '127.0.0.1', resolve));
+    const redirectedAddress = redirectedServer.address();
+    if (!redirectedAddress || typeof redirectedAddress === 'string') {
+      throw new Error('Redirect target server did not expose a port');
+    }
+
+    const sourceHeaders: Array<{ authorization?: string; cookie?: string }> = [];
+    const sourceServer = http.createServer((request, response) => {
+      if (request.url === '/manifest.mpd') {
+        response.writeHead(200, { 'content-type': 'application/dash+xml' });
+        response.end([
+          '<MPD><Period><AdaptationSet mimeType="video/mp4">',
+          '<Representation bandwidth="1"><BaseURL>video.mp4</BaseURL></Representation>',
+          '</AdaptationSet></Period></MPD>'
+        ].join(''));
+        return;
+      }
+      if (request.url === '/video.mp4') {
+        sourceHeaders.push({
+          authorization: request.headers.authorization,
+          cookie: request.headers.cookie
+        });
+        response.writeHead(302, {
+          location: `http://cdn.example.test:${redirectedAddress.port}/video.mp4`
+        });
+        response.end();
+        return;
+      }
+      response.writeHead(404).end();
+    });
+    servers.push(sourceServer);
+    await new Promise<void>((resolve) => sourceServer.listen(0, '127.0.0.1', resolve));
+    const sourceAddress = sourceServer.address();
+    if (!sourceAddress || typeof sourceAddress === 'string') {
+      throw new Error('DASH source server did not expose a port');
+    }
+
+    const candidate: MediaCandidate = {
+      id: 'candidate',
+      jobId: 'job',
+      kind: 'dash',
+      url: `http://media.example.test:${sourceAddress.port}/manifest.mpd`,
+      contentType: 'application/dash+xml',
+      manifestType: 'dash',
+      resolution: null,
+      bitrate: null,
+      durationSeconds: null,
+      sizeBytes: null,
+      confidence: 1,
+      headers: {
+        Authorization: 'Bearer dash-secret',
+        Cookie: 'session=dash-secret'
+      },
+      subtitleTracks: [],
+      discoveredAt: new Date().toISOString()
+    };
+    const output = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'shv-cross-origin-dash-')), 'video.mkv');
+    const proxySessionFactory = (options: PublicHttpProxyOptions = {}) => PublicMediaSession.start({
+      ...options,
+      connect: (_address, port) => net.connect({ host: '127.0.0.1', port }),
+      resolve: async () => [{ address: '93.184.216.34', family: 4 }]
+    });
+
+    await expect(
+      new DownloadEngine(undefined, undefined, proxySessionFactory).download(candidate, output, () => undefined)
+    ).rejects.toThrow();
+
+    expect(sourceHeaders).toEqual([{
+      authorization: 'Bearer dash-secret',
+      cookie: 'session=dash-secret'
+    }]);
+    expect(redirectedHeaders).toEqual([]);
+  });
+
   test('normalizes timestamps while stitching downloaded HLS segments', async () => {
     const segmentDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'xxx-hls-segments-'));
     const firstSegmentPath = path.join(segmentDirectory, 'seg-1.ts');
@@ -446,7 +535,8 @@ describe('DownloadEngine direct download', () => {
     };
     const output = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'xxx-hls-download-')), 'video.ts');
 
-    const proxySessionFactory = () => PublicMediaSession.start({
+    const proxySessionFactory = (options: PublicHttpProxyOptions = {}) => PublicMediaSession.start({
+      ...options,
       connect: (_address, port) => net.connect({ host: '127.0.0.1', port }),
       resolve: async () => [{ address: '93.184.216.34', family: 4 }]
     });
