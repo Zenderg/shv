@@ -69,7 +69,7 @@ export function MobileNavigation({
               <Mark />
               <div>
                 <Dialog.Title>Navigation</Dialog.Title>
-                <Dialog.Description>Choose a queue or library destination.</Dialog.Description>
+                <Dialog.Description>shv v{__APP_VERSION__} · Choose a queue or library destination.</Dialog.Description>
               </div>
             </div>
             <Dialog.Close asChild>

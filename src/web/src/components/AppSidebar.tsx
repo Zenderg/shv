@@ -33,7 +33,7 @@ export function AppSidebar({
         <Mark />
         <div>
           <strong>shv</strong>
-          <span>local library</span>
+          <span>local library · v{__APP_VERSION__}</span>
         </div>
       </div>
 
