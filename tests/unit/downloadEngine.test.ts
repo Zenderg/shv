@@ -94,8 +94,6 @@ describe('DownloadEngine ffmpeg helpers', () => {
         'http,https,tcp,tls,crypto',
         '-http_proxy',
         'http://127.0.0.1:9999',
-        '-max_redirects',
-        '0',
         '-http_persistent',
         '0',
         '-fflags',

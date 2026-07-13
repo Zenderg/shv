@@ -508,8 +508,6 @@ function ffmpegNetworkInputArgs(proxyUrl: string, options: { reconnectAtEof?: bo
     '1',
     '-reconnect_on_http_error',
     '408,429,500,502,503,504',
-    '-max_redirects',
-    '0',
     '-reconnect_delay_max',
     '10'
   ];
