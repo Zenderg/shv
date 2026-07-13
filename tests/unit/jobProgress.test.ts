@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { jobStageProgress } from '../../src/web/src/lib/jobProgress.js';
+import { formatProgressPercent, jobStageProgress } from '../../src/web/src/lib/jobProgress.js';
 
 describe('queue job progress display', () => {
   test('shows a direct current-stage percentage without synthetic overall weighting', () => {
@@ -33,5 +33,11 @@ describe('queue job progress display', () => {
       label: 'Working',
       value: null
     });
+  });
+
+  test('does not display 100% before the step actually reaches one', () => {
+    expect(formatProgressPercent(0.995)).toBe('99%');
+    expect(formatProgressPercent(0.9999)).toBe('99%');
+    expect(formatProgressPercent(1)).toBe('100%');
   });
 });

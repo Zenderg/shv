@@ -6,7 +6,7 @@ import { AppSidebar } from './components/AppSidebar';
 import { InlineNotice, LibrarySkeleton, PageLoadError, QueueSkeleton } from './components/AsyncStates';
 import { MobileNavigation } from './components/MobileNavigation';
 import { appQueryKeys, useCategoriesQuery, useMediaQuery, useQueueQuery, useRuntimeConfigQuery } from './features/app/queries';
-import { confirmedCompletedJobs, disappearedQueueJobs, removedJobCategoryIds } from './features/app/queueTransitions';
+import { disappearedQueueJobs, removedJobCategoryIds, resolveCompletedJobs } from './features/app/queueTransitions';
 import { AddVideoDialog } from './features/dialogs/AddVideoDialog';
 import { CategoryNameDialog } from './features/dialogs/CategoryNameDialog';
 import { ConfirmDialog } from './features/dialogs/ConfirmDialog';
@@ -62,6 +62,7 @@ export function App() {
   const completionCheckGenerationRef = useRef(0);
   const completionChecksRef = useRef(new Set<string>());
   const completionNotifiedJobIdsRef = useRef(new Set<string>());
+  const pendingCompletionJobsRef = useRef(new Map<string, DownloadJob>());
   const previousVisibleJobsRef = useRef<DownloadJob[] | null>(null);
 
   const categories = categoriesQuery.data ?? [];
@@ -79,6 +80,7 @@ export function App() {
   useEffect(() => () => {
     completionCheckGenerationRef.current += 1;
     completionChecksRef.current.clear();
+    pendingCompletionJobsRef.current.clear();
   }, []);
 
   useEffect(() => {
@@ -97,22 +99,40 @@ export function App() {
       void queryClient.invalidateQueries({ exact: true, queryKey: appQueryKeys.media(categoryId) });
     }
 
-    const disappearedJobs = disappearedQueueJobs(previousJobs, queueQuery.data.jobs).filter(
-      (job) => !completionChecksRef.current.has(job.id) && !completionNotifiedJobIdsRef.current.has(job.id)
+    const currentJobIds = new Set(queueQuery.data.jobs.map((job) => job.id));
+    for (const jobId of pendingCompletionJobsRef.current.keys()) {
+      if (currentJobIds.has(jobId)) {
+        pendingCompletionJobsRef.current.delete(jobId);
+      }
+    }
+    for (const job of disappearedQueueJobs(previousJobs, queueQuery.data.jobs)) {
+      if (!completionNotifiedJobIdsRef.current.has(job.id)) {
+        pendingCompletionJobsRef.current.set(job.id, job);
+      }
+    }
+
+    const jobsToConfirm = [...pendingCompletionJobsRef.current.values()].filter(
+      (job) => !completionChecksRef.current.has(job.id)
     );
-    if (disappearedJobs.length === 0) {
+    if (jobsToConfirm.length === 0) {
       return;
     }
 
-    for (const job of disappearedJobs) {
+    for (const job of jobsToConfirm) {
       completionChecksRef.current.add(job.id);
     }
     const generation = completionCheckGenerationRef.current;
-    void confirmedCompletedJobs(disappearedJobs, api.job).then((completedJobs) => {
+    void resolveCompletedJobs(jobsToConfirm, api.job).then(({ completed, discarded }) => {
       if (generation !== completionCheckGenerationRef.current) {
         return;
       }
-      const newlyCompletedJobs = completedJobs.filter((job) => !completionNotifiedJobIdsRef.current.has(job.id));
+      const stillPendingCompletedJobs = completed.filter((job) => pendingCompletionJobsRef.current.has(job.id));
+      for (const job of [...completed, ...discarded]) {
+        pendingCompletionJobsRef.current.delete(job.id);
+      }
+      const newlyCompletedJobs = stillPendingCompletedJobs.filter(
+        (job) => !completionNotifiedJobIdsRef.current.has(job.id)
+      );
       if (newlyCompletedJobs.length === 0) {
         return;
       }
@@ -135,11 +155,11 @@ export function App() {
           : `${notices.length} downloads finished and were saved to the library.`
       );
     }).finally(() => {
-      for (const job of disappearedJobs) {
+      for (const job of jobsToConfirm) {
         completionChecksRef.current.delete(job.id);
       }
     });
-  }, [categories, queryClient, queueQuery.data]);
+  }, [categories, queryClient, queueQuery.data, queueQuery.dataUpdatedAt]);
 
   useEffect(() => {
     function handleSourceHelperEvent(event: MessageEvent) {

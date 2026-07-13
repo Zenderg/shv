@@ -2,6 +2,12 @@ import type { DownloadJob } from '../../lib/api';
 
 type VisibleQueueJob = Pick<DownloadJob, 'categoryId' | 'id'>;
 
+export interface CompletedJobResolution<T> {
+  completed: T[];
+  discarded: T[];
+  retry: T[];
+}
+
 export function removedJobCategoryIds(
   previousJobs: VisibleQueueJob[],
   currentJobs: VisibleQueueJob[]
@@ -24,18 +30,22 @@ export function disappearedQueueJobs<T extends VisibleQueueJob>(
   return previousJobs.filter((job) => !currentJobIds.has(job.id));
 }
 
-export async function confirmedCompletedJobs<T extends VisibleQueueJob>(
+export async function resolveCompletedJobs<T extends VisibleQueueJob>(
   disappearedJobs: T[],
-  loadJob: (jobId: string) => Promise<Pick<DownloadJob, 'status'>>
-): Promise<T[]> {
-  const completed = await Promise.all(
+  loadJob: (jobId: string) => Promise<Pick<DownloadJob, 'status'> | null>
+): Promise<CompletedJobResolution<T>> {
+  const outcomes = await Promise.all(
     disappearedJobs.map(async (job) => {
       try {
-        return (await loadJob(job.id)).status === 'completed';
+        return (await loadJob(job.id))?.status === 'completed' ? 'completed' : 'discarded';
       } catch {
-        return false;
+        return 'retry';
       }
     })
   );
-  return disappearedJobs.filter((_job, index) => completed[index]);
+  return {
+    completed: disappearedJobs.filter((_job, index) => outcomes[index] === 'completed'),
+    discarded: disappearedJobs.filter((_job, index) => outcomes[index] === 'discarded'),
+    retry: disappearedJobs.filter((_job, index) => outcomes[index] === 'retry')
+  };
 }

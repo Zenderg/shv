@@ -151,6 +151,7 @@ export class QueueRunner {
       if (!category) {
         throw new Error('Job category does not exist');
       }
+      const stallTimeoutMs = this.config.downloadStallTimeoutMs ?? 120_000;
 
       const useSourceExtractor = this.sourceExtractors.canHandle(job.sourceUrl);
       let selected: MediaCandidate | null = null;
@@ -159,7 +160,18 @@ export class QueueRunner {
         selected = job.selectedCandidateId ? existingCandidates.find((candidate) => candidate.id === job.selectedCandidateId) ?? null : null;
       }
       if (!useSourceExtractor && !selected) {
-        const analysis = await this.analyzer.analyze(job.sourceUrl, job.id, signal);
+        const analysis = await runMonitoredJobStage({
+          eventName: 'analysis',
+          jobId: job.id,
+          jobs: this.jobs,
+          run: (_onProgress, analysisSignal) => this.analyzer.analyze(job.sourceUrl, job.id, analysisSignal),
+          runId,
+          signal,
+          stallKind: 'processing',
+          status: 'analyzing',
+          taskLabel: 'Source analysis',
+          timeoutMs: stallTimeoutMs
+        });
         this.throwIfRunInactive(job.id, runId, signal);
         const candidates = this.jobs.saveCandidates(job.id, analysis.candidates);
         job = this.jobs.transitionActive(job.id, runId, 'analyzing', 'analyzing', null, {
@@ -192,7 +204,6 @@ export class QueueRunner {
       workDir = path.join(this.config.workRoot, job.id);
       fs.mkdirSync(workDir, { recursive: true });
       const downloadPath = path.join(workDir, 'source');
-      const stallTimeoutMs = this.config.downloadStallTimeoutMs ?? 120_000;
       logJobEvent('info', 'download-started', {
         candidate: selected ? candidateLogFields(selected) : { extractor: 'source' },
         jobId: job.id,

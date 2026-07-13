@@ -1,4 +1,9 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { Readable, Writable } from 'node:stream';
 import { describe, expect, test } from 'vitest';
+import type { TaskProgressUpdate } from '../../src/server/utils/taskProgress.js';
 import {
   buildBurnSubtitleArgs,
   buildTranscodeArgs,
@@ -71,42 +76,145 @@ describe('buildTranscodeArgs', () => {
 });
 
 describe('moveFile', () => {
-  test('falls back to copy and remove when rename crosses Docker volumes', () => {
+  test('uses rename without opening copy streams on the fast path', async () => {
     const calls: string[] = [];
-    const exdev = Object.assign(new Error('cross-device link not permitted'), { code: 'EXDEV' });
+    const updates: TaskProgressUpdate[] = [];
     const fileSystem = {
-      renameSync: () => {
+      createReadStream: () => {
+        throw new Error('copy input should not be opened');
+      },
+      createWriteStream: () => {
+        throw new Error('copy output should not be opened');
+      },
+      rename: async () => {
         calls.push('rename');
-        throw exdev;
       },
-      copyFileSync: () => {
-        calls.push('copy');
+      rm: async () => {
+        throw new Error('source should not be removed separately');
       },
-      rmSync: () => {
-        calls.push('remove');
+      stat: async () => {
+        throw new Error('source should not be statted');
       }
     };
 
-    moveFile('/work/source', '/data/library/video.mp4', fileSystem);
+    await moveFile('/work/source', '/data/library/video.mp4', (update) => updates.push(update), undefined, fileSystem);
 
-    expect(calls).toEqual(['rename', 'copy', 'remove']);
+    expect(calls).toEqual(['rename']);
+    expect(updates).toEqual([
+      { kind: 'activity', label: 'Moving video' },
+      { fraction: 1, kind: 'progress', label: 'Moving video' }
+    ]);
   });
 
-  test('rethrows rename failures that are not cross-device moves', () => {
+  test('streams cross-volume copies with byte progress before removing the source', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'shv-move-file-'));
+    const inputPath = path.join(root, 'source.mp4');
+    const outputPath = path.join(root, 'library.mp4');
+    const content = Buffer.alloc(192 * 1024, 7);
+    fs.writeFileSync(inputPath, content);
+    fs.writeFileSync(outputPath, 'stale output');
+    const updates: TaskProgressUpdate[] = [];
+    const exdev = Object.assign(new Error('cross-device link not permitted'), { code: 'EXDEV' });
+
+    await moveFile(inputPath, outputPath, (update) => updates.push(update), undefined, {
+      createReadStream: (filePath) => fs.createReadStream(filePath, { highWaterMark: 64 * 1024 }),
+      createWriteStream: (filePath) => fs.createWriteStream(filePath, { flags: 'w' }),
+      rename: async () => {
+        throw exdev;
+      },
+      rm: (filePath, options) => fs.promises.rm(filePath, options),
+      stat: (filePath) => fs.promises.stat(filePath)
+    });
+
+    expect(fs.existsSync(inputPath)).toBe(false);
+    expect(fs.readFileSync(outputPath)).toEqual(content);
+    expect(updates).toContainEqual({ fraction: 0.99, kind: 'progress', label: 'Moving video' });
+    expect(updates.at(-1)).toEqual({ fraction: 1, kind: 'progress', label: 'Moving video' });
+    expect(updates.some((update) => update.kind === 'progress' && update.fraction > 0 && update.fraction < 0.99)).toBe(true);
+  });
+
+  test('aborts a cross-volume copy, removes the partial output, and keeps the source', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'shv-move-file-abort-'));
+    const inputPath = path.join(root, 'source.mp4');
+    const outputPath = path.join(root, 'library.mp4');
+    fs.writeFileSync(inputPath, 'original source');
+    const controller = new AbortController();
+    const exdev = Object.assign(new Error('cross-device link not permitted'), { code: 'EXDEV' });
+    let copyProgressUpdates = 0;
+
+    await expect(moveFile(inputPath, outputPath, (update) => {
+      if (update.kind === 'progress' && update.fraction < 1) {
+        copyProgressUpdates += 1;
+        controller.abort();
+      }
+    }, controller.signal, {
+      createReadStream: () => Readable.from([Buffer.alloc(64 * 1024), Buffer.alloc(64 * 1024)]),
+      createWriteStream: (filePath) => fs.createWriteStream(filePath, { flags: 'w' }),
+      rename: async () => {
+        throw exdev;
+      },
+      rm: (filePath, options) => fs.promises.rm(filePath, options),
+      stat: async () => ({ size: 128 * 1024 })
+    })).rejects.toMatchObject({ name: 'JobCanceledError' });
+
+    expect(copyProgressUpdates).toBeGreaterThanOrEqual(1);
+    expect(fs.existsSync(inputPath)).toBe(true);
+    expect(fs.existsSync(outputPath)).toBe(false);
+  });
+
+  test('surfaces both the copy and partial-output cleanup failures', async () => {
+    const exdev = Object.assign(new Error('cross-device link not permitted'), { code: 'EXDEV' });
+    const copyFailure = new Error('copy failed');
+    const cleanupFailure = new Error('cleanup failed');
+    const copyResult = await moveFile('/work/source', '/data/library/video.mp4', () => undefined, undefined, {
+      createReadStream: () => Readable.from((async function* () {
+        yield Buffer.from('partial');
+        throw copyFailure;
+      })()),
+      createWriteStream: () => new Writable({
+        write(_chunk, _encoding, callback) {
+          callback();
+        }
+      }),
+      rename: async () => {
+        throw exdev;
+      },
+      rm: async (filePath) => {
+        if (filePath === '/data/library/video.mp4') {
+          throw cleanupFailure;
+        }
+      },
+      stat: async () => ({ size: 14 })
+    }).then(
+      () => null,
+      (error: unknown) => error
+    );
+
+    expect(copyResult).toBeInstanceOf(AggregateError);
+    expect((copyResult as AggregateError).errors).toEqual([copyFailure, cleanupFailure]);
+  });
+
+  test('rethrows rename failures that are not cross-device moves', async () => {
     const failure = Object.assign(new Error('permission denied'), { code: 'EACCES' });
     const fileSystem = {
-      renameSync: () => {
+      createReadStream: () => {
+        throw new Error('copy should not start');
+      },
+      createWriteStream: () => {
+        throw new Error('copy should not start');
+      },
+      rename: async () => {
         throw failure;
       },
-      copyFileSync: () => {
-        throw new Error('copy should not be called');
+      rm: async () => {
+        throw new Error('cleanup should not be called');
       },
-      rmSync: () => {
-        throw new Error('remove should not be called');
+      stat: async () => {
+        throw new Error('stat should not be called');
       }
     };
 
-    expect(() => moveFile('/work/source', '/data/library/video.mp4', fileSystem)).toThrow(failure);
+    await expect(moveFile('/work/source', '/data/library/video.mp4', () => undefined, undefined, fileSystem)).rejects.toBe(failure);
   });
 });
 

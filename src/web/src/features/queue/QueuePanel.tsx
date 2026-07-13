@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { TrashIcon } from '../../components/icons';
 import type { Category, DownloadJob, MediaCandidate, SubtitleTrack } from '../../lib/api';
-import { jobStageProgress } from '../../lib/jobProgress';
+import { formatProgressPercent, jobStageProgress } from '../../lib/jobProgress';
 import { jobProgressContext, queuePositionByJobId } from './queueCardContext';
 import { queueJobPresentation, type QueueStatusIcon } from './queuePresentation';
 
@@ -275,22 +275,4 @@ function safeHostname(url: string): string {
   } catch {
     return 'Untitled job';
   }
-}
-
-function formatProgressPercent(value: number): string {
-  const percent = clamp01(value) * 100;
-  if (percent > 0 && percent < 0.1) {
-    return '<0.1%';
-  }
-  if (percent > 0 && percent < 10) {
-    return `${percent.toFixed(1)}%`;
-  }
-  return `${Math.round(percent)}%`;
-}
-
-function clamp01(value: number): number {
-  if (Number.isNaN(value)) {
-    return 0;
-  }
-  return Math.max(0, Math.min(1, value));
 }

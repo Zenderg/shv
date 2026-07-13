@@ -19,7 +19,7 @@ application initialization with an explicit mount-permission error.
 
 Every file operation that touches user media goes through path-containment helpers in `src/server/utils/fileSafety.ts`.
 
-`/work` and `/data/library` may live on different Docker-mounted filesystems. Moving finished media between them must handle `EXDEV` by copying and removing the source rather than assuming `rename` can cross that boundary.
+`/work` and `/data/library` may live on different Docker-mounted filesystems. Moving finished media between them must handle `EXDEV` with an abortable asynchronous copy followed by source removal rather than assuming `rename` can cross that boundary. Cross-filesystem copies report byte progress when the source size is known so a large already-compatible video does not block the server or leave the queue visually frozen.
 
 Video streaming headers must be ASCII-safe. User-facing filenames can contain Unicode, so `/media/:id` uses an ASCII `filename` fallback plus RFC 5987 `filename*` instead of writing raw Unicode into `Content-Disposition`.
 
@@ -90,6 +90,7 @@ SQLite uses explicit migrations under `src/server/storage/migrations.ts`. Core t
 - `settings`: key/value app settings.
 
 The filesystem owns media bytes; SQLite owns the index, queue, candidate, and metadata state.
+Each connection configures a bounded SQLite busy timeout so brief write contention waits for the active writer instead of failing a queue progress update immediately.
 
 Captured candidate and subtitle request headers are internal download context. Candidate API responses preserve the candidate shape but strip those headers at the Express DTO boundary so queue and candidate-list reads cannot disclose cookies, authorization values, or custom tokens.
 
@@ -115,14 +116,15 @@ filename. The final `media_items` insert and `download_jobs` completion update s
 The queue UI shows one honest current-stage indicator rather than a synthetic whole-pipeline percentage. A stage is determinate only when the backend has a trustworthy denominator, such as response size, HLS/DASH duration, or media duration. Otherwise the native progress indicator stays indeterminate while the stage label explains the active work.
 
 Download callbacks distinguish confirmed activity from calculable progress. Every received media chunk or advancing ffmpeg `out_time` refreshes the in-memory stall watchdog, including direct responses without `Content-Length`, large HLS segments, browser-impersonated downloads without a total size, and DASH inputs without a known duration. Activity-only heartbeats do not write SQLite. Determinate stage progress is persisted at bounded intervals or meaningful deltas, and guarded by the expected job status so late callbacks cannot overwrite a later phase or cancellation.
-Selected-subtitle transfers use the same activity watchdog and stream response bodies instead of waiting on one opaque
-buffer operation. Downloaded-file inspection, media normalization, and subtitle burning are watchdog-protected as well;
+Source analysis is watchdog-protected too, so an unresponsive direct probe or browser analysis cannot occupy a queue slot indefinitely. Selected-subtitle transfers use the same activity watchdog and stream response bodies instead of waiting on one opaque
+buffer operation. Downloaded-file inspection, media normalization, cross-filesystem media moves, and subtitle burning are watchdog-protected as well;
 their ffprobe/ffmpeg subprocesses receive the stage abort signal. A timed-out monitor preserves its stall reason but waits
 for the aborted work to settle before reporting failure, and job deletion waits for active work before removing durable
 state or job-owned artifacts. Download progress logs are emitted only at bounded milestones, including 95%, 99%, and completion,
 so chunk frequency cannot create a log storm near the end of a large transfer.
 
 Runnable, active, problem, and canceled jobs are returned by `/api/queue`; only `completed` jobs leave the active queue UI automatically.
+The UI confirms disappeared jobs through the individual job endpoint before announcing completion. Transient confirmation failures remain pending and are retried on later successful queue polls; a confirmed missing or non-completed job is discarded.
 
 Automatic analysis chooses a candidate only when the submitted source URL's direct probe classifies it, or its redirect target, as a confident media source. Confident candidates discovered later through HTML inspection, Playwright network capture, or extension capture still move the job to `needs_manual_selection` so the user explicitly confirms which page source to download.
 

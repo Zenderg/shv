@@ -1,6 +1,8 @@
+import type { JobStatus } from '../../lib/api';
+
 export type QueueStatusGroup = 'active' | 'attention' | 'canceled' | 'completed' | 'pending';
 
-const STATUS_GROUPS: Record<string, QueueStatusGroup> = {
+const STATUS_GROUPS = {
   pending: 'pending',
   analyzing: 'active',
   downloading: 'active',
@@ -11,7 +13,7 @@ const STATUS_GROUPS: Record<string, QueueStatusGroup> = {
   failed: 'attention',
   canceled: 'canceled',
   completed: 'completed'
-};
+} satisfies Record<JobStatus, QueueStatusGroup>;
 
 const GROUP_PRIORITIES: Record<QueueStatusGroup, number> = {
   attention: 0,
@@ -22,7 +24,7 @@ const GROUP_PRIORITIES: Record<QueueStatusGroup, number> = {
 };
 
 export function queueStatusGroup(status: string): QueueStatusGroup {
-  return STATUS_GROUPS[status] ?? 'attention';
+  return STATUS_GROUPS[status as JobStatus] ?? 'attention';
 }
 
 export function queueStatusPriority(status: string): number {

@@ -1,3 +1,5 @@
+import type { JobStatus } from '../../lib/api';
+
 export type QueueJobTone = 'active' | 'attention' | 'danger' | 'neutral';
 
 export type QueueStatusIcon = 'analyzing' | 'canceled' | 'download' | 'error' | 'processing' | 'subtitles' | 'waiting';
@@ -21,7 +23,7 @@ export interface QueueJobPresentationInput {
   status: string;
 }
 
-const STATUS_PRESENTATIONS: Record<string, Omit<QueueJobPresentation, 'notice'>> = {
+const STATUS_PRESENTATIONS = {
   pending: {
     icon: 'waiting',
     label: 'Waiting',
@@ -82,10 +84,10 @@ const STATUS_PRESENTATIONS: Record<string, Omit<QueueJobPresentation, 'notice'>>
     showProgress: false,
     tone: 'neutral'
   }
-};
+} satisfies Record<JobStatus, Omit<QueueJobPresentation, 'notice'>>;
 
 export function queueJobPresentation({ errorCode, sourceTabOpened = false, status }: QueueJobPresentationInput): QueueJobPresentation {
-  const known = STATUS_PRESENTATIONS[status];
+  const known = STATUS_PRESENTATIONS[status as JobStatus];
   if (!known) {
     return {
       icon: 'waiting',

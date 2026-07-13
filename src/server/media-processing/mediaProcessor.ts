@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { Transform, type Readable, type Writable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import type { SubtitleTrack } from '../../shared/types.js';
 import { JobCanceledError, onAbort, throwIfAborted } from '../utils/cancellation.js';
 import { activityUpdate, progressUpdate, type TaskProgressCallback } from '../utils/taskProgress.js';
@@ -23,7 +25,22 @@ export interface NormalizeResult extends ProbeResult {
   remuxRejectionReason?: string;
 }
 
-type MoveFileSystem = Pick<typeof fs, 'copyFileSync' | 'renameSync' | 'rmSync'>;
+interface MoveFileSystem {
+  createReadStream(filePath: string): Readable;
+  createWriteStream(filePath: string): Writable;
+  rename(inputPath: string, outputPath: string): Promise<void>;
+  rm(filePath: string, options: { force: boolean }): Promise<void>;
+  stat(filePath: string): Promise<{ size: number }>;
+}
+
+const nodeMoveFileSystem: MoveFileSystem = {
+  createReadStream: (filePath) => fs.createReadStream(filePath),
+  createWriteStream: (filePath) => fs.createWriteStream(filePath, { flags: 'w' }),
+  rename: (inputPath, outputPath) => fs.promises.rename(inputPath, outputPath),
+  rm: (filePath, options) => fs.promises.rm(filePath, options),
+  stat: (filePath) => fs.promises.stat(filePath)
+};
+
 interface TranscodeOptions {
   preserveInputTimestamps?: boolean;
 }
@@ -46,8 +63,7 @@ export class MediaProcessor {
     let remuxRejectionReason: string | undefined;
     if (probe.browserFriendly && path.resolve(inputPath) !== path.resolve(outputPath)) {
       throwIfAborted(signal);
-      onProgress(activityUpdate('Moving video'));
-      moveFile(inputPath, outputPath);
+      await moveFile(inputPath, outputPath, onProgress, signal);
       processingStrategy = 'moved';
     } else if (shouldRemuxToBrowserFriendlyMp4(probe)) {
       try {
@@ -148,7 +164,8 @@ export class MediaProcessor {
     onProgress(activityUpdate('Adding subtitles'));
     const probe = await this.probe(inputPath, signal);
     await runProgressFfmpeg(buildBurnSubtitleArgs(inputPath, temporaryPath, subtitleTrack), probe.durationSeconds, onProgress, signal);
-    moveFile(temporaryPath, inputPath);
+    await moveFile(temporaryPath, inputPath, onProgress, signal);
+    onProgress(activityUpdate('Inspecting subtitled video'));
     return this.probe(inputPath, signal);
   }
 
@@ -438,16 +455,76 @@ function temporarySubtitledPath(inputPath: string): string {
   return path.join(path.dirname(inputPath), `${path.basename(inputPath, extension)}.with-subtitles${extension}`);
 }
 
-export function moveFile(inputPath: string, outputPath: string, fileSystem: MoveFileSystem = fs): void {
+export async function moveFile(
+  inputPath: string,
+  outputPath: string,
+  onProgress: TaskProgressCallback = () => undefined,
+  signal?: AbortSignal,
+  fileSystem: MoveFileSystem = nodeMoveFileSystem
+): Promise<void> {
+  throwIfAborted(signal);
+  onProgress(activityUpdate('Moving video'));
   try {
-    fileSystem.renameSync(inputPath, outputPath);
+    await fileSystem.rename(inputPath, outputPath);
+    throwIfAborted(signal);
+    onProgress(progressUpdate(1, 'Moving video'));
+    return;
   } catch (error) {
     if (!isNodeError(error) || error.code !== 'EXDEV') {
       throw error;
     }
-    fileSystem.copyFileSync(inputPath, outputPath);
-    fileSystem.rmSync(inputPath, { force: true });
   }
+
+  let inputStat: { size: number };
+  try {
+    inputStat = await fileSystem.stat(inputPath);
+  } catch (error) {
+    if (signal?.aborted) {
+      throw new JobCanceledError();
+    }
+    throw error;
+  }
+  throwIfAborted(signal);
+  const totalBytes = Number.isFinite(inputStat.size) && inputStat.size > 0 ? inputStat.size : null;
+
+  let copiedBytes = 0;
+  const progressStream = new Transform({
+    transform(chunk: Buffer, _encoding, callback) {
+      try {
+        copiedBytes += chunk.byteLength;
+        onProgress(totalBytes === null
+          ? activityUpdate('Moving video')
+          : progressUpdate(Math.min(0.99, copiedBytes / totalBytes), 'Moving video'));
+        callback(null, chunk);
+      } catch (error) {
+        callback(error instanceof Error ? error : new Error(String(error)));
+      }
+    }
+  });
+
+  try {
+    await pipeline(
+      fileSystem.createReadStream(inputPath),
+      progressStream,
+      fileSystem.createWriteStream(outputPath),
+      { signal }
+    );
+    throwIfAborted(signal);
+    await fileSystem.rm(inputPath, { force: true });
+  } catch (error) {
+    const copyError = signal?.aborted ? new JobCanceledError() : error;
+    try {
+      await fileSystem.rm(outputPath, { force: true });
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [copyError, cleanupError],
+        `Moving video failed and the partial output could not be removed: ${outputPath}`
+      );
+    }
+    throw copyError;
+  }
+
+  onProgress(progressUpdate(1, 'Moving video'));
 }
 
 export function shouldRemuxToBrowserFriendlyMp4(probe: ProbeResult): boolean {

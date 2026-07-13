@@ -1,5 +1,5 @@
 import type { SourceExtensionKind } from '../../../shared/sourceExtension';
-import type { Category, DownloadJob, MediaCandidate, MediaItem, QueueSnapshot, SubtitleTrack } from '../../../shared/types';
+import type { Category, DownloadJob, JobStatus, MediaCandidate, MediaItem, QueueSnapshot, SubtitleTrack } from '../../../shared/types';
 
 export interface RuntimeConfig {
   csrfToken: string;
@@ -35,12 +35,19 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
   });
   if (!response.ok) {
     const body = await response.text();
-    throw new Error(apiErrorMessage(body, response.status));
+    throw new ApiRequestError(apiErrorMessage(body, response.status), response.status);
   }
   if (response.status === 204) {
     return undefined as T;
   }
   return (await response.json()) as T;
+}
+
+class ApiRequestError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+    this.name = 'ApiRequestError';
+  }
 }
 
 function apiErrorMessage(body: string, status: number): string {
@@ -94,7 +101,16 @@ export const api = {
     request<MediaItem>(`/api/media/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
   deleteMedia: (id: string) => request<void>(`/api/media/${id}`, { method: 'DELETE' }),
   queue: () => request<QueueSnapshot>('/api/queue'),
-  job: (id: string) => request<DownloadJob>(`/api/jobs/${id}`),
+  job: async (id: string): Promise<DownloadJob | null> => {
+    try {
+      return await request<DownloadJob>(`/api/jobs/${id}`);
+    } catch (error) {
+      if (error instanceof ApiRequestError && error.status === 404) {
+        return null;
+      }
+      throw error;
+    }
+  },
   createJob: (sourceUrl: string, categoryId: string) =>
     request<DownloadJob>('/api/jobs', { method: 'POST', body: JSON.stringify({ sourceUrl, categoryId }) }),
   retryJob: (id: string) => request<DownloadJob>(`/api/jobs/${id}/retry`, { method: 'POST' }),
@@ -119,4 +135,4 @@ export const api = {
   }
 };
 
-export type { Category, DownloadJob, MediaCandidate, MediaItem, QueueSnapshot, SubtitleTrack };
+export type { Category, DownloadJob, JobStatus, MediaCandidate, MediaItem, QueueSnapshot, SubtitleTrack };

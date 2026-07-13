@@ -174,7 +174,7 @@ Design the library UI touch-first. Phones and tablets are supported browsing sur
 
 ## Environment And Diagnostics
 
-`DOWNLOAD_STALL_TIMEOUT_MS` controls how long a download, downloaded-file inspection, media-normalization operation, or subtitle-burn operation may sit without confirmed activity before the runner aborts it and marks the job failed. The default is 120000 milliseconds. Activity includes received media chunks and advancing structured ffmpeg timestamps even when a percentage cannot be calculated. Raise the timeout for sources or processing workloads that can legitimately stop reporting activity for long periods; lower it when production should fail faster than the UI polling loop can make obvious.
+`DOWNLOAD_STALL_TIMEOUT_MS` controls how long source analysis, a download, downloaded-file inspection, media normalization, a cross-filesystem media move, or subtitle burning may sit without confirmed activity before the runner aborts it and marks the job failed. The default is 120000 milliseconds. Activity includes received media chunks, copied file chunks, and advancing structured ffmpeg timestamps even when a percentage cannot be calculated. Raise the timeout for sources or processing workloads that can legitimately stop reporting activity for long periods; lower it when production should fail faster than the UI polling loop can make obvious.
 
 Set `PRESERVE_WORK_DIR=1` only during local/media diagnostics when the intermediate `WORK_ROOT/<jobId>/source.preserved` file is needed for ffprobe or ffmpeg experiments. Do not enable it by default in production because preserved source files can be large.
 

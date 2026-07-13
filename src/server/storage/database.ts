@@ -5,9 +5,12 @@ import { applyMigrations } from './migrations.js';
 
 export type Db = DatabaseSync;
 
+const SQLITE_BUSY_TIMEOUT_MS = 5_000;
+
 export function openDatabase(databasePath: string): Db {
   fs.mkdirSync(path.dirname(databasePath), { recursive: true });
   const db = new DatabaseSync(databasePath);
+  db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
   applyMigrations(db);
   return db;
 }

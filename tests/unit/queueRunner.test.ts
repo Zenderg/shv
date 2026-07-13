@@ -486,6 +486,52 @@ describe('QueueRunner', () => {
     expect(failed.errorMessage).toContain('Download stalled');
   });
 
+  test('fails stalled source analysis without losing its analysis state or classification', async () => {
+    const { categories, config, jobs } = createServices();
+    config.downloadStallTimeoutMs = 20;
+    const category = categories.create('test');
+    const job = jobs.create('https://example.test/video', category.id);
+    const started = deferred<void>();
+    let analysisSignal: AbortSignal | null = null;
+    const analyzer = {
+      analyze: (_url: string, _jobId: string, signal?: AbortSignal) =>
+        new Promise<never>((_resolve, reject) => {
+          analysisSignal = signal ?? null;
+          started.resolve();
+          signal?.addEventListener('abort', () => reject(new JobCanceledError()), { once: true });
+        })
+    } satisfies Pick<BrowserAnalyzer, 'analyze'>;
+    const runner = new QueueRunner(
+      config,
+      jobs,
+      analyzer as unknown as BrowserAnalyzer,
+      {} as DownloadEngine,
+      {} as MediaProcessor,
+      categories,
+      {} as MediaFiles,
+      {} as MediaLibraryService
+    );
+
+    const tick = runner.tick();
+    await started.promise;
+
+    expect(jobs.requireJob(job.id)).toMatchObject({
+      progressLabel: 'Analyzing source',
+      stageProgress: null,
+      status: 'analyzing'
+    });
+
+    await tick;
+
+    expect((analysisSignal as AbortSignal | null)?.aborted).toBe(true);
+    expect(jobs.requireJob(job.id)).toMatchObject({
+      errorCode: 'analysis_failed',
+      errorMessage: expect.stringContaining('Source analysis stalled'),
+      progressLabel: null,
+      status: 'failed'
+    });
+  });
+
   test('keeps an indeterminate download alive on activity without writing heartbeat noise to SQLite', async () => {
     const { categories, config, jobs, mediaFiles, mediaLibrary } = createServices();
     config.downloadStallTimeoutMs = 20;

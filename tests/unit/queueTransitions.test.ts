@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { confirmedCompletedJobs, disappearedQueueJobs, removedJobCategoryIds } from '../../src/web/src/features/app/queueTransitions.js';
+import { disappearedQueueJobs, removedJobCategoryIds, resolveCompletedJobs } from '../../src/web/src/features/app/queueTransitions.js';
 
 describe('queue transitions', () => {
   test('returns the category of a job that disappeared from the visible queue', () => {
@@ -34,16 +34,38 @@ describe('queue transitions', () => {
     expect(disappearedQueueJobs([completed, deleted], [])).toEqual([completed, deleted]);
   });
 
-  test('confirms completion with the job endpoint and ignores deleted or non-completed jobs', async () => {
+  test('confirms completion, resolves deleted jobs, and keeps transient failures for retry', async () => {
     const completed = { id: 'job-completed', categoryId: 'category-1' };
     const deleted = { id: 'job-deleted', categoryId: 'category-2' };
     const canceled = { id: 'job-canceled', categoryId: 'category-3' };
+    const transient = { id: 'job-transient', categoryId: 'category-4' };
 
-    await expect(confirmedCompletedJobs([completed, deleted, canceled], async (jobId) => {
+    await expect(resolveCompletedJobs([completed, deleted, canceled, transient], async (jobId) => {
       if (jobId === deleted.id) {
-        throw new Error('Job not found');
+        return null;
+      }
+      if (jobId === transient.id) {
+        throw new Error('Temporary network failure');
       }
       return { status: jobId === completed.id ? 'completed' : 'canceled' };
-    })).resolves.toEqual([completed]);
+    })).resolves.toEqual({
+      completed: [completed],
+      discarded: [deleted, canceled],
+      retry: [transient]
+    });
+  });
+
+  test('can confirm a pending completion on a later poll', async () => {
+    const job = { id: 'job-completed-later', categoryId: 'category-1' };
+    const firstPoll = await resolveCompletedJobs([job], async () => {
+      throw new Error('Temporary network failure');
+    });
+
+    expect(firstPoll.retry).toEqual([job]);
+    await expect(resolveCompletedJobs(firstPoll.retry, async () => ({ status: 'completed' }))).resolves.toEqual({
+      completed: [job],
+      discarded: [],
+      retry: []
+    });
   });
 });
