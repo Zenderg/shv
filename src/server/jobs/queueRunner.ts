@@ -15,7 +15,7 @@ import { logJobEvent, safeUrlParts, shortMessage } from '../utils/jobLogger.js';
 import { PublicMediaSession } from '../utils/publicHttpProxy.js';
 import { classifyJobFailure, type FailingJobStage } from './jobFailure.js';
 import { cleanupCanceledArtifacts, cleanupCompletedWorkDir, cleanupJobArtifacts } from './jobArtifacts.js';
-import { createJobProgressReporter, runMonitoredJobStage } from './jobProgressMonitor.js';
+import { runMonitoredJobStage } from './jobProgressMonitor.js';
 import type { JobService } from './jobService.js';
 import {
   downloadSelectedSubtitleTracks,
@@ -81,8 +81,8 @@ export class QueueRunner {
     return this.jobs.replaceSource(jobId, sourceUrl);
   }
 
-  delete(jobId: string): void {
-    this.activeControllers.get(jobId)?.abort();
+  async delete(jobId: string): Promise<void> {
+    await this.abortAndWait(jobId);
     this.removeOwnedOutput(jobId);
     cleanupJobArtifacts(this.config, jobId);
     this.jobs.delete(jobId);
@@ -207,6 +207,7 @@ export class QueueRunner {
           run: (onProgress, downloadSignal) => this.sourceExtractors.download(job.sourceUrl, downloadPath, onProgress, downloadSignal),
           runId,
           signal,
+          stallKind: 'network',
           status: 'downloading',
           taskLabel: 'Download',
           timeoutMs: stallTimeoutMs
@@ -223,6 +224,7 @@ export class QueueRunner {
           run: (onProgress, downloadSignal) => this.downloader.download(selected, downloadPath, onProgress, downloadSignal),
           runId,
           signal,
+          stallKind: 'network',
           status: 'downloading',
           taskLabel: 'Download',
           timeoutMs: stallTimeoutMs
@@ -230,7 +232,22 @@ export class QueueRunner {
       }
 
       this.throwIfRunInactive(job.id, runId, signal);
-      await this.logProbeResult('download-probed', job.id, downloadPath);
+      failingStage = 'processing';
+      await runMonitoredJobStage({
+        eventName: 'download-probe',
+        jobId: job.id,
+        jobs: this.jobs,
+        run: async (onProgress, probeSignal) => {
+          onProgress({ kind: 'activity', label: 'Inspecting downloaded video' });
+          await this.logProbeResult('download-probed', job.id, downloadPath, probeSignal);
+        },
+        runId,
+        signal,
+        stallKind: 'processing',
+        status: 'downloading',
+        taskLabel: 'Media inspection',
+        timeoutMs: stallTimeoutMs
+      });
       if (process.env.PRESERVE_WORK_DIR === '1') {
         fs.copyFileSync(downloadPath, `${downloadPath}.preserved`);
         logJobEvent('info', 'download-preserved', { jobId: job.id, path: `${downloadPath}.preserved` });
@@ -239,15 +256,32 @@ export class QueueRunner {
         progressLabel: 'Inspecting video',
         selectedCandidateId
       });
-      failingStage = 'processing';
       logJobEvent('info', 'processing-started', { jobId: job.id });
       const title = job.titleHint ?? titleFromUrl(job.sourceUrl);
       finalPathReservation = this.reserveOutputPath(job.id, runId, category, `${title}.mp4`);
-      finalPath = finalPathReservation.path;
+      const processingOutputPath = finalPathReservation.path;
+      finalPath = processingOutputPath;
       const mediaId = job.id;
-      thumbnailPath = this.mediaFiles.thumbnailPath(mediaId);
-      const processingProgress = createJobProgressReporter({ jobId: job.id, jobs: this.jobs, runId, signal, status: 'processing' });
-      const normalized = await this.processor.normalize(downloadPath, finalPath, thumbnailPath, processingProgress, signal);
+      const processingThumbnailPath = this.mediaFiles.thumbnailPath(mediaId);
+      thumbnailPath = processingThumbnailPath;
+      const normalized = await runMonitoredJobStage({
+        eventName: 'processing',
+        jobId: job.id,
+        jobs: this.jobs,
+        run: (onProgress, processingSignal) => this.processor.normalize(
+          downloadPath,
+          processingOutputPath,
+          processingThumbnailPath,
+          onProgress,
+          processingSignal
+        ),
+        runId,
+        signal,
+        stallKind: 'processing',
+        status: 'processing',
+        taskLabel: 'Media processing',
+        timeoutMs: stallTimeoutMs
+      });
       const hasSelectedSubtitles = selected ? subtitleTracksForDownload(selected).length > 0 : false;
       if (hasSelectedSubtitles) {
         this.jobs.transitionActive(job.id, runId, 'processing', 'adding_subtitles', null, {
@@ -274,18 +308,32 @@ export class QueueRunner {
             }),
             runId,
             signal,
+            stallKind: 'network',
             status: 'adding_subtitles',
             taskLabel: 'Subtitle download',
             timeoutMs: stallTimeoutMs
           })
         : [];
-      const subtitleProgress = hasSelectedSubtitles
-        ? createJobProgressReporter({ jobId: job.id, jobs: this.jobs, runId, signal, status: 'adding_subtitles' })
-        : null;
       const processed = subtitleTracks.length > 0
         ? {
             ...normalized,
-            ...(await this.processor.burnSubtitle(normalized.outputPath, subtitleTracks[0], subtitleProgress ?? (() => undefined), signal))
+            ...(await runMonitoredJobStage({
+              eventName: 'subtitle-processing',
+              jobId: job.id,
+              jobs: this.jobs,
+              run: (onProgress, subtitleSignal) => this.processor.burnSubtitle(
+                normalized.outputPath,
+                subtitleTracks[0],
+                onProgress,
+                subtitleSignal
+              ),
+              runId,
+              signal,
+              stallKind: 'processing',
+              status: 'adding_subtitles',
+              taskLabel: 'Subtitle processing',
+              timeoutMs: stallTimeoutMs
+            }))
           }
         : normalized;
       logJobEvent('info', 'processing-completed', {
@@ -397,9 +445,9 @@ export class QueueRunner {
     fs.rmSync(this.mediaFiles.absoluteMediaPath(relativePath), { force: true });
   }
 
-  private async logProbeResult(event: string, jobId: string, filePath: string): Promise<void> {
+  private async logProbeResult(event: string, jobId: string, filePath: string, signal: AbortSignal): Promise<void> {
     try {
-      const probe = await this.processor.probe(filePath);
+      const probe = await this.processor.probe(filePath, signal);
       logJobEvent('info', event, {
         audioCodec: probe.audioCodec,
         browserFriendly: probe.browserFriendly,
@@ -410,6 +458,9 @@ export class QueueRunner {
         videoCodec: probe.videoCodec
       });
     } catch (error) {
+      if (signal.aborted || isCancellationError(error)) {
+        throw error;
+      }
       logJobEvent('warn', `${event}-failed`, { error: shortMessage(error), jobId });
     }
   }

@@ -19,4 +19,11 @@ describe('queue summary', () => {
   test('does not call non-pending jobs queued when the queue has no current work', () => {
     expect(queueCountsLabel(countQueueJobs([]))).toBe('No current queue items');
   });
+
+  test('treats a future server status as needing attention', () => {
+    const counts = countQueueJobs([{ status: 'waiting_for_device' }]);
+
+    expect(counts).toEqual({ active: 0, attention: 1, canceled: 0, pending: 0, total: 1 });
+    expect(queueCountsLabel(counts)).toBe('1 needs attention');
+  });
 });

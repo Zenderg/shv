@@ -18,9 +18,24 @@ export function removedJobCategoryIds(
 
 export function disappearedQueueJobs<T extends VisibleQueueJob>(
   previousJobs: T[],
-  currentJobs: VisibleQueueJob[],
-  excludedJobIds: ReadonlySet<string> = new Set()
+  currentJobs: VisibleQueueJob[]
 ): T[] {
   const currentJobIds = new Set(currentJobs.map((job) => job.id));
-  return previousJobs.filter((job) => !currentJobIds.has(job.id) && !excludedJobIds.has(job.id));
+  return previousJobs.filter((job) => !currentJobIds.has(job.id));
+}
+
+export async function confirmedCompletedJobs<T extends VisibleQueueJob>(
+  disappearedJobs: T[],
+  loadJob: (jobId: string) => Promise<Pick<DownloadJob, 'status'>>
+): Promise<T[]> {
+  const completed = await Promise.all(
+    disappearedJobs.map(async (job) => {
+      try {
+        return (await loadJob(job.id)).status === 'completed';
+      } catch {
+        return false;
+      }
+    })
+  );
+  return disappearedJobs.filter((_job, index) => completed[index]);
 }

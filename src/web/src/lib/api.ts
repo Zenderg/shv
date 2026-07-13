@@ -94,6 +94,7 @@ export const api = {
     request<MediaItem>(`/api/media/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
   deleteMedia: (id: string) => request<void>(`/api/media/${id}`, { method: 'DELETE' }),
   queue: () => request<QueueSnapshot>('/api/queue'),
+  job: (id: string) => request<DownloadJob>(`/api/jobs/${id}`),
   createJob: (sourceUrl: string, categoryId: string) =>
     request<DownloadJob>('/api/jobs', { method: 'POST', body: JSON.stringify({ sourceUrl, categoryId }) }),
   retryJob: (id: string) => request<DownloadJob>(`/api/jobs/${id}/retry`, { method: 'POST' }),

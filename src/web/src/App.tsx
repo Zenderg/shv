@@ -6,7 +6,7 @@ import { AppSidebar } from './components/AppSidebar';
 import { InlineNotice, LibrarySkeleton, PageLoadError, QueueSkeleton } from './components/AsyncStates';
 import { MobileNavigation } from './components/MobileNavigation';
 import { appQueryKeys, useCategoriesQuery, useMediaQuery, useQueueQuery, useRuntimeConfigQuery } from './features/app/queries';
-import { disappearedQueueJobs, removedJobCategoryIds } from './features/app/queueTransitions';
+import { confirmedCompletedJobs, disappearedQueueJobs, removedJobCategoryIds } from './features/app/queueTransitions';
 import { AddVideoDialog } from './features/dialogs/AddVideoDialog';
 import { CategoryNameDialog } from './features/dialogs/CategoryNameDialog';
 import { ConfirmDialog } from './features/dialogs/ConfirmDialog';
@@ -17,6 +17,7 @@ import { LibraryGrid } from './features/library/LibraryGrid';
 import { CompletionToasts, type CompletionNotice } from './features/queue/CompletionToasts';
 import { QueuePanel } from './features/queue/QueuePanel';
 import { countQueueJobs, queueCountsLabel } from './features/queue/queueSummary';
+import { sortQueueJobs } from './features/queue/queueStatus';
 import { api, type Category, type DownloadJob, type MediaItem, type QueueSnapshot } from './lib/api';
 import { checkSourceExtension, openSourceWithExtension, type ExtensionStatus } from './lib/extensionBridge';
 import { message } from './utils/format';
@@ -58,7 +59,9 @@ export function App() {
   const [completionAnnouncement, setCompletionAnnouncement] = useState('');
   const [completionNotices, setCompletionNotices] = useState<CompletionNotice[]>([]);
   const [sourceTabOpenedJobIds, setSourceTabOpenedJobIds] = useState<Record<string, boolean>>({});
-  const explicitlyDeletedJobIdsRef = useRef(new Set<string>());
+  const completionCheckGenerationRef = useRef(0);
+  const completionChecksRef = useRef(new Set<string>());
+  const completionNotifiedJobIdsRef = useRef(new Set<string>());
   const previousVisibleJobsRef = useRef<DownloadJob[] | null>(null);
 
   const categories = categoriesQuery.data ?? [];
@@ -71,10 +74,12 @@ export function App() {
   const sortedJobs = useMemo(() => sortQueueJobs(queue.jobs), [queue.jobs]);
   const queueCounts = useMemo(() => countQueueJobs(queue.jobs), [queue.jobs]);
   const queueSummary = useMemo(() => queueCountsLabel(queueCounts), [queueCounts]);
-  const activeProblems = useMemo(
-    () => queue.jobs.filter((job) => ['failed', 'needs_manual_selection', 'needs_subtitle_selection'].includes(job.status)).length,
-    [queue.jobs]
-  );
+  const activeProblems = queueCounts.attention;
+
+  useEffect(() => () => {
+    completionCheckGenerationRef.current += 1;
+    completionChecksRef.current.clear();
+  }, []);
 
   useEffect(() => {
     if (!queueQuery.data) {
@@ -92,13 +97,29 @@ export function App() {
       void queryClient.invalidateQueries({ exact: true, queryKey: appQueryKeys.media(categoryId) });
     }
 
-    const disappearedJobs = disappearedQueueJobs(previousJobs, queueQuery.data.jobs);
-    const completedJobs = disappearedQueueJobs(previousJobs, queueQuery.data.jobs, explicitlyDeletedJobIdsRef.current);
-    for (const disappearedJob of disappearedJobs) {
-      explicitlyDeletedJobIdsRef.current.delete(disappearedJob.id);
+    const disappearedJobs = disappearedQueueJobs(previousJobs, queueQuery.data.jobs).filter(
+      (job) => !completionChecksRef.current.has(job.id) && !completionNotifiedJobIdsRef.current.has(job.id)
+    );
+    if (disappearedJobs.length === 0) {
+      return;
     }
-    if (completedJobs.length > 0) {
-      const notices = completedJobs.map((job) => {
+
+    for (const job of disappearedJobs) {
+      completionChecksRef.current.add(job.id);
+    }
+    const generation = completionCheckGenerationRef.current;
+    void confirmedCompletedJobs(disappearedJobs, api.job).then((completedJobs) => {
+      if (generation !== completionCheckGenerationRef.current) {
+        return;
+      }
+      const newlyCompletedJobs = completedJobs.filter((job) => !completionNotifiedJobIdsRef.current.has(job.id));
+      if (newlyCompletedJobs.length === 0) {
+        return;
+      }
+      for (const job of newlyCompletedJobs) {
+        completionNotifiedJobIdsRef.current.add(job.id);
+      }
+      const notices = newlyCompletedJobs.map((job) => {
         const categoryName = categories.find((category) => category.id === job.categoryId)?.name ?? 'your library';
         return {
           categoryId: job.categoryId,
@@ -113,7 +134,11 @@ export function App() {
           ? `${notices[0].title} finished downloading and was saved to ${notices[0].categoryName}.`
           : `${notices.length} downloads finished and were saved to the library.`
       );
-    }
+    }).finally(() => {
+      for (const job of disappearedJobs) {
+        completionChecksRef.current.delete(job.id);
+      }
+    });
   }, [categories, queryClient, queueQuery.data]);
 
   useEffect(() => {
@@ -544,10 +569,7 @@ export function App() {
         categories={categories}
         jobs={sortedJobs}
         onCancel={(job) => void runQueueAction(job, 'Canceling', () => api.cancelJob(job.id).then(() => undefined))}
-        onDelete={(job) => void runQueueAction(job, 'Deleting', async () => {
-          await api.deleteJob(job.id);
-          explicitlyDeletedJobIdsRef.current.add(job.id);
-        })}
+        onDelete={(job) => void runQueueAction(job, 'Deleting', () => api.deleteJob(job.id))}
         onManual={(job) => void runQueueAction(job, 'Opening source', () => chooseSource(job))}
         onRetry={(job) => void runQueueAction(job, 'Retrying', () => api.retryJob(job.id).then(() => undefined))}
         onSubtitleNext={(job, subtitleTrackUrl) =>
@@ -557,23 +579,6 @@ export function App() {
       />
     );
   }
-}
-
-function sortQueueJobs(jobs: DownloadJob[]): DownloadJob[] {
-  const priority: Record<string, number> = {
-    needs_manual_selection: 0,
-    needs_subtitle_selection: 0,
-    failed: 0,
-    analyzing: 1,
-    downloading: 1,
-    processing: 1,
-    pending: 2,
-    canceled: 3
-  };
-  return [...jobs].sort((left, right) =>
-    (priority[left.status] ?? 2) - (priority[right.status] ?? 2) ||
-    left.createdAt.localeCompare(right.createdAt)
-  );
 }
 
 function omitKey<T>(record: Record<string, T>, key: string): Record<string, T> {

@@ -119,7 +119,7 @@ Category display names may change, but folder names stay stable so existing medi
 
 - Many pages cannot expose reliable metadata until the browser or downloader starts real analysis.
 - A queue item gives the user a recoverable state for failures and manual selection.
-- One active job at a time is easier to cancel, diagnose, and resume after restart.
+- Two bounded active jobs by default balance throughput with cancellation, diagnosis, and restart recovery; deployments may configure another bounded limit.
 
 **Rejected alternatives:**
 

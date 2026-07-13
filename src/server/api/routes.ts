@@ -190,6 +190,15 @@ export function createRouter(services: RouteServices): Router {
     response.status(201).json(services.jobs.create(body.sourceUrl, body.categoryId));
   });
 
+  router.get('/api/jobs/:id', (request, response) => {
+    const job = services.jobs.get(paramId(request));
+    if (!job) {
+      response.status(404).json({ error: 'job_not_found' });
+      return;
+    }
+    response.json(job);
+  });
+
   router.post(
     '/api/jobs/:id/retry',
     asyncRoute(async (request, response) => {
@@ -211,7 +220,7 @@ export function createRouter(services: RouteServices): Router {
     asyncRoute(async (request, response) => {
       const jobId = paramId(request);
       await services.liveBrowser.stop(jobId);
-      services.queueRunner.delete(jobId);
+      await services.queueRunner.delete(jobId);
       response.status(204).end();
     })
   );

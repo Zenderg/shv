@@ -116,7 +116,10 @@ The queue UI shows one honest current-stage indicator rather than a synthetic wh
 
 Download callbacks distinguish confirmed activity from calculable progress. Every received media chunk or advancing ffmpeg `out_time` refreshes the in-memory stall watchdog, including direct responses without `Content-Length`, large HLS segments, browser-impersonated downloads without a total size, and DASH inputs without a known duration. Activity-only heartbeats do not write SQLite. Determinate stage progress is persisted at bounded intervals or meaningful deltas, and guarded by the expected job status so late callbacks cannot overwrite a later phase or cancellation.
 Selected-subtitle transfers use the same activity watchdog and stream response bodies instead of waiting on one opaque
-buffer operation. Download progress logs are emitted only at bounded milestones, including 95%, 99%, and completion,
+buffer operation. Downloaded-file inspection, media normalization, and subtitle burning are watchdog-protected as well;
+their ffprobe/ffmpeg subprocesses receive the stage abort signal. A timed-out monitor preserves its stall reason but waits
+for the aborted work to settle before reporting failure, and job deletion waits for active work before removing durable
+state or job-owned artifacts. Download progress logs are emitted only at bounded milestones, including 95%, 99%, and completion,
 so chunk frequency cannot create a log storm near the end of a large transfer.
 
 Runnable, active, problem, and canceled jobs are returned by `/api/queue`; only `completed` jobs leave the active queue UI automatically.

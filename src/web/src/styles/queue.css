@@ -352,7 +352,10 @@
 
   .completionToasts {
     bottom: 12px;
+    max-height: min(50dvh, 360px);
     max-width: calc(100vw - 24px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
     right: 12px;
   }
 }

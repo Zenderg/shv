@@ -545,7 +545,96 @@ describe('QueueRunner', () => {
     const completed = jobs.requireJob(job.id);
     expect(completed.status).toBe('completed');
     expect(completed.errorMessage).toBeNull();
-    expect(updateProgress).not.toHaveBeenCalled();
+    expect(updateProgress).toHaveBeenCalledTimes(1);
+    expect(updateProgress).toHaveBeenCalledWith(
+      job.id,
+      'downloading',
+      expect.any(String),
+      null,
+      'Inspecting downloaded video'
+    );
+  });
+
+  test('fails media processing that stops reporting activity', async () => {
+    const { categories, config, jobs, mediaFiles } = createServices();
+    config.downloadStallTimeoutMs = 20;
+    const category = categories.create('test');
+    const job = jobs.create('https://example.test/video', category.id);
+    jobs.saveCandidates(job.id, [candidate('https://media.example.test/video.mp4')]);
+    jobs.selectCandidate(job.id, jobs.listCandidates(job.id)[0].id);
+
+    const downloader = {
+      download: async (_candidate, outputPath) => {
+        fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+        fs.writeFileSync(outputPath, 'source-video');
+        return { bytesWritten: 12, filePath: outputPath };
+      }
+    } satisfies Pick<DownloadEngine, 'download'>;
+    const processor = {
+      normalize: (_inputPath, _outputPath, _thumbnailPath, _onProgress, signal?: AbortSignal) =>
+        new Promise<never>((_resolve, reject) => {
+          signal?.addEventListener('abort', () => reject(new JobCanceledError()), { once: true });
+        })
+    } satisfies Pick<MediaProcessor, 'normalize'>;
+    const runner = new QueueRunner(
+      config,
+      jobs,
+      {} as BrowserAnalyzer,
+      downloader as unknown as DownloadEngine,
+      processor as unknown as MediaProcessor,
+      categories,
+      mediaFiles,
+      {} as MediaLibraryService
+    );
+
+    await runner.tick();
+
+    expect(jobs.requireJob(job.id)).toMatchObject({
+      errorCode: 'processing_failed',
+      errorMessage: expect.stringContaining('Media processing stalled'),
+      status: 'failed'
+    });
+  });
+
+  test('fails downloaded-media inspection that stops reporting activity', async () => {
+    const { categories, config, jobs } = createServices();
+    config.downloadStallTimeoutMs = 20;
+    const category = categories.create('test');
+    const job = jobs.create('https://example.test/video', category.id);
+    jobs.saveCandidates(job.id, [candidate('https://media.example.test/video.mp4')]);
+    jobs.selectCandidate(job.id, jobs.listCandidates(job.id)[0].id);
+
+    const downloader = {
+      download: async (_candidate, outputPath) => {
+        fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+        fs.writeFileSync(outputPath, 'source-video');
+        return { bytesWritten: 12, filePath: outputPath };
+      }
+    } satisfies Pick<DownloadEngine, 'download'>;
+    const processor = {
+      probe: (_filePath: string, signal?: AbortSignal) =>
+        new Promise<never>((_resolve, reject) => {
+          signal?.addEventListener('abort', () => reject(new JobCanceledError()), { once: true });
+        })
+    } satisfies Pick<MediaProcessor, 'probe'>;
+    const runner = new QueueRunner(
+      config,
+      jobs,
+      {} as BrowserAnalyzer,
+      downloader as unknown as DownloadEngine,
+      processor as unknown as MediaProcessor,
+      categories,
+      {} as MediaFiles,
+      {} as MediaLibraryService
+    );
+
+    await runner.tick();
+
+    expect(jobs.requireJob(job.id)).toMatchObject({
+      errorCode: 'processing_failed',
+      errorMessage: expect.stringContaining('Media inspection stalled'),
+      status: 'failed'
+    });
   });
 
   test('publishes determinate progress while burning the selected subtitle track', async () => {
@@ -608,6 +697,65 @@ describe('QueueRunner', () => {
     expect(jobs.requireJob(job.id).status).toBe('completed');
     expect(updateProgress).toHaveBeenCalledWith(job.id, 'adding_subtitles', expect.any(String), null, 'Adding subtitles');
     expect(updateProgress).toHaveBeenCalledWith(job.id, 'adding_subtitles', expect.any(String), 0.5, 'Adding subtitles');
+  });
+
+  test('fails subtitle processing that stops reporting activity', async () => {
+    const { categories, config, jobs, mediaFiles } = createServices();
+    config.downloadStallTimeoutMs = 20;
+    const category = categories.create('test');
+    const subtitleUrl = 'https://media.example.test/subtitles/ru.vtt';
+    const job = jobs.create('https://example.test/video', category.id);
+    jobs.saveCandidates(job.id, [{
+      ...candidate('https://media.example.test/video.mp4'),
+      subtitleTracks: [subtitleTrack(subtitleUrl, { format: 'webvtt', isSelected: false })]
+    }]);
+    const selected = jobs.listCandidates(job.id)[0];
+    jobs.selectCandidate(job.id, selected.id);
+    jobs.selectSubtitleTrack(job.id, subtitleUrl);
+
+    const downloader = {
+      download: async (_candidate, outputPath) => {
+        fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+        fs.writeFileSync(outputPath, 'source-video');
+        return { bytesWritten: 12, filePath: outputPath };
+      }
+    } satisfies Pick<DownloadEngine, 'download'>;
+    const processor = {
+      normalize: async (_inputPath, outputPath) => {
+        fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+        fs.writeFileSync(outputPath, 'normalized');
+        return normalizedMedia(outputPath);
+      },
+      burnSubtitle: (_inputPath, _track, _onProgress, signal?: AbortSignal) =>
+        new Promise<never>((_resolve, reject) => {
+          signal?.addEventListener('abort', () => reject(new JobCanceledError()), { once: true });
+        })
+    } satisfies Pick<MediaProcessor, 'burnSubtitle' | 'normalize'>;
+    const session = {
+      close: async () => undefined,
+      fetch: async () => new Response('WEBVTT\n\n'),
+      proxyUrl: 'http://127.0.0.1:1'
+    };
+    const runner = new QueueRunner(
+      config,
+      jobs,
+      {} as BrowserAnalyzer,
+      downloader as unknown as DownloadEngine,
+      processor as unknown as MediaProcessor,
+      categories,
+      mediaFiles,
+      {} as MediaLibraryService,
+      undefined,
+      async () => session as never
+    );
+
+    await runner.tick();
+
+    expect(jobs.requireJob(job.id)).toMatchObject({
+      errorCode: 'subtitle_failed',
+      errorMessage: expect.stringContaining('Subtitle processing stalled'),
+      status: 'failed'
+    });
   });
 
   test('fails a stalled subtitle download with a recoverable network code', async () => {
@@ -677,7 +825,50 @@ describe('QueueRunner', () => {
     expect(jobs.requireJob(job.id).errorMessage).toContain('Subtitle download stalled');
   });
 
-  test('deletes a queued job and removes job-owned artifacts', () => {
+  test('waits for active work to settle before deleting the job', async () => {
+    const { categories, config, jobs } = createServices();
+    const category = categories.create('test');
+    const job = jobs.create('https://example.test/video', category.id);
+    jobs.saveCandidates(job.id, [candidate('https://media.example.test/video.mp4')]);
+    jobs.selectCandidate(job.id, jobs.listCandidates(job.id)[0].id);
+
+    const started = deferred<void>();
+    const abortObserved = deferred<void>();
+    const work = deferred<never>();
+    const downloader = {
+      download: (_candidate, _outputPath, _onProgress, signal?: AbortSignal) => {
+        started.resolve();
+        signal?.addEventListener('abort', () => abortObserved.resolve(), { once: true });
+        return work.promise;
+      }
+    } satisfies Pick<DownloadEngine, 'download'>;
+    const runner = new QueueRunner(
+      config,
+      jobs,
+      {} as BrowserAnalyzer,
+      downloader as unknown as DownloadEngine,
+      {} as MediaProcessor,
+      categories,
+      {} as MediaFiles,
+      {} as MediaLibraryService
+    );
+
+    const tick = runner.tick();
+    await started.promise;
+    const deletion = runner.delete(job.id);
+    await abortObserved.promise;
+    await Promise.resolve();
+
+    expect(jobs.get(job.id)).not.toBeNull();
+
+    work.reject(new JobCanceledError());
+    await deletion;
+    await tick;
+
+    expect(jobs.get(job.id)).toBeNull();
+  });
+
+  test('deletes a queued job and removes job-owned artifacts', async () => {
     const { categories, config, jobs } = createServices();
     const category = categories.create('test');
     const job = jobs.create('https://example.test/video', category.id);
@@ -702,7 +893,7 @@ describe('QueueRunner', () => {
     fs.writeFileSync(manualScreenshot, 'screenshot');
     fs.writeFileSync(thumbnail, 'thumbnail');
 
-    runner.delete(job.id);
+    await runner.delete(job.id);
 
     expect(jobs.get(job.id)).toBeNull();
     expect(jobs.listCandidates(job.id)).toEqual([]);
@@ -711,7 +902,7 @@ describe('QueueRunner', () => {
     expect(fs.existsSync(thumbnail)).toBe(false);
   });
 
-  test('does not remove paths outside artifact roots for an invalid job id', () => {
+  test('does not remove paths outside artifact roots for an invalid job id', async () => {
     const { categories, config, jobs } = createServices();
     const category = categories.create('test');
     jobs.create('https://example.test/video', category.id);
@@ -729,7 +920,7 @@ describe('QueueRunner', () => {
     fs.mkdirSync(victimPath, { recursive: true });
     fs.writeFileSync(path.join(victimPath, 'keep'), 'safe');
 
-    expect(() => runner.delete('../victim')).toThrow(/escapes configured root/);
+    await expect(runner.delete('../victim')).rejects.toThrow(/escapes configured root/);
     expect(fs.existsSync(path.join(victimPath, 'keep'))).toBe(true);
   });
 

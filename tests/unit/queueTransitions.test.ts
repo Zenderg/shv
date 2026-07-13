@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { disappearedQueueJobs, removedJobCategoryIds } from '../../src/web/src/features/app/queueTransitions.js';
+import { confirmedCompletedJobs, disappearedQueueJobs, removedJobCategoryIds } from '../../src/web/src/features/app/queueTransitions.js';
 
 describe('queue transitions', () => {
   test('returns the category of a job that disappeared from the visible queue', () => {
@@ -27,10 +27,23 @@ describe('queue transitions', () => {
     )).toEqual(['category-1', 'category-2']);
   });
 
-  test('returns disappeared jobs while excluding an explicitly deleted job', () => {
+  test('returns all disappeared jobs so the caller can confirm their final status', () => {
     const completed = { id: 'job-completed', categoryId: 'category-1', title: 'Finished video' };
     const deleted = { id: 'job-deleted', categoryId: 'category-2', title: 'Canceled video' };
 
-    expect(disappearedQueueJobs([completed, deleted], [], new Set([deleted.id]))).toEqual([completed]);
+    expect(disappearedQueueJobs([completed, deleted], [])).toEqual([completed, deleted]);
+  });
+
+  test('confirms completion with the job endpoint and ignores deleted or non-completed jobs', async () => {
+    const completed = { id: 'job-completed', categoryId: 'category-1' };
+    const deleted = { id: 'job-deleted', categoryId: 'category-2' };
+    const canceled = { id: 'job-canceled', categoryId: 'category-3' };
+
+    await expect(confirmedCompletedJobs([completed, deleted, canceled], async (jobId) => {
+      if (jobId === deleted.id) {
+        throw new Error('Job not found');
+      }
+      return { status: jobId === completed.id ? 'completed' : 'canceled' };
+    })).resolves.toEqual([completed]);
   });
 });

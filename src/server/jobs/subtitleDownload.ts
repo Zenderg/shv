@@ -105,7 +105,16 @@ async function downloadHlsSubtitleTrack(
   onProgress: TaskProgressCallback,
   signal: AbortSignal
 ): Promise<void> {
-  const manifest = await fetchSubtitleText(track, candidateUrl, candidateHeaders, track.url, session, onProgress, signal);
+  const onResourceActivity: TaskProgressCallback = () => onProgress(activityUpdate('Downloading subtitles'));
+  const manifest = await fetchSubtitleText(
+    track,
+    candidateUrl,
+    candidateHeaders,
+    track.url,
+    session,
+    onResourceActivity,
+    signal
+  );
   const directory = path.dirname(localPath);
   const segmentLines = manifest
     .split(/\r?\n/)
@@ -130,7 +139,7 @@ async function downloadHlsSubtitleTrack(
       candidateHeaders,
       segmentUrl,
       session,
-      onProgress,
+      onResourceActivity,
       signal
     );
     fs.writeFileSync(segmentPath, body);

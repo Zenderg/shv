@@ -41,7 +41,7 @@ export class MediaProcessor {
 
     throwIfAborted(signal);
     onProgress(activityUpdate('Inspecting video'));
-    const probe = await this.probe(inputPath);
+    const probe = await this.probe(inputPath, signal);
     let processingStrategy: NormalizeResult['processingStrategy'] = 'transcoded';
     let remuxRejectionReason: string | undefined;
     if (probe.browserFriendly && path.resolve(inputPath) !== path.resolve(outputPath)) {
@@ -53,7 +53,7 @@ export class MediaProcessor {
       try {
         onProgress(activityUpdate('Remuxing video'));
         await this.remuxToMp4(inputPath, outputPath, probe.durationSeconds, onProgress, signal);
-        const remuxProbe = await this.probe(outputPath);
+        const remuxProbe = await this.probe(outputPath, signal);
         if (hasSuspiciousDurationInflation(probe.durationSeconds, remuxProbe.durationSeconds)) {
           throw new Error(`remux inflated duration from ${probe.durationSeconds}s to ${remuxProbe.durationSeconds}s`);
         }
@@ -69,7 +69,7 @@ export class MediaProcessor {
         await this.transcode(inputPath, outputPath, probe.durationSeconds, onProgress, signal, {
           preserveInputTimestamps: shouldPreserveInputTimestampsAfterRemuxRejection(remuxRejectionReason)
         });
-        const transcodeProbe = await this.probe(outputPath);
+        const transcodeProbe = await this.probe(outputPath, signal);
         assertNoSuspiciousDurationInflation('transcode', probe.durationSeconds, transcodeProbe.durationSeconds, outputPath);
         processingStrategy = 'transcoded';
       }
@@ -79,7 +79,7 @@ export class MediaProcessor {
     } else if (!probe.browserFriendly) {
       onProgress(activityUpdate('Transcoding video'));
       await this.transcode(inputPath, outputPath, probe.durationSeconds, onProgress, signal);
-      const transcodeProbe = await this.probe(outputPath);
+      const transcodeProbe = await this.probe(outputPath, signal);
       assertNoSuspiciousDurationInflation('transcode', probe.durationSeconds, transcodeProbe.durationSeconds, outputPath);
       processingStrategy = 'transcoded';
       if (path.resolve(inputPath) !== path.resolve(outputPath) && fs.existsSync(inputPath)) {
@@ -91,7 +91,7 @@ export class MediaProcessor {
     onProgress(activityUpdate('Creating thumbnail'));
     await this.thumbnail(outputPath, thumbnailPath, signal);
     onProgress(activityUpdate('Finalizing video'));
-    const finalProbe = await this.probe(outputPath);
+    const finalProbe = await this.probe(outputPath, signal);
     throwIfAborted(signal);
     onProgress(progressUpdate(1, 'Finalizing video'));
     return {
@@ -103,7 +103,7 @@ export class MediaProcessor {
     };
   }
 
-  async probe(filePath: string): Promise<ProbeResult> {
+  async probe(filePath: string, signal?: AbortSignal): Promise<ProbeResult> {
     const raw = await run('ffprobe', [
       '-v',
       'error',
@@ -112,7 +112,7 @@ export class MediaProcessor {
       '-show_format',
       '-show_streams',
       filePath
-    ]);
+    ], signal);
     const parsed = JSON.parse(raw) as {
       format?: { duration?: string; format_name?: string; size?: string };
       streams?: FfprobeStream[];
@@ -145,11 +145,11 @@ export class MediaProcessor {
     signal?: AbortSignal
   ): Promise<ProbeResult> {
     const temporaryPath = temporarySubtitledPath(inputPath);
-    const probe = await this.probe(inputPath);
     onProgress(activityUpdate('Adding subtitles'));
+    const probe = await this.probe(inputPath, signal);
     await runProgressFfmpeg(buildBurnSubtitleArgs(inputPath, temporaryPath, subtitleTrack), probe.durationSeconds, onProgress, signal);
     moveFile(temporaryPath, inputPath);
-    return this.probe(inputPath);
+    return this.probe(inputPath, signal);
   }
 
   private async transcode(

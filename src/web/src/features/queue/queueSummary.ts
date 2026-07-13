@@ -1,4 +1,4 @@
-import type { DownloadJob } from '../../lib/api';
+import { queueStatusGroup } from './queueStatus';
 
 export interface QueueCounts {
   active: number;
@@ -8,20 +8,18 @@ export interface QueueCounts {
   total: number;
 }
 
-const ACTIVE_STATUSES = new Set(['analyzing', 'downloading', 'processing', 'adding_subtitles']);
-const ATTENTION_STATUSES = new Set(['failed', 'needs_manual_selection', 'needs_subtitle_selection']);
-
-export function countQueueJobs(jobs: Array<Pick<DownloadJob, 'status'>>): QueueCounts {
+export function countQueueJobs(jobs: Array<{ status: string }>): QueueCounts {
   const counts: QueueCounts = { active: 0, attention: 0, canceled: 0, pending: 0, total: jobs.length };
 
   for (const job of jobs) {
-    if (ACTIVE_STATUSES.has(job.status)) {
+    const group = queueStatusGroup(job.status);
+    if (group === 'active') {
       counts.active += 1;
-    } else if (ATTENTION_STATUSES.has(job.status)) {
+    } else if (group === 'attention') {
       counts.attention += 1;
-    } else if (job.status === 'pending') {
+    } else if (group === 'pending') {
       counts.pending += 1;
-    } else if (job.status === 'canceled') {
+    } else if (group === 'canceled') {
       counts.canceled += 1;
     }
   }

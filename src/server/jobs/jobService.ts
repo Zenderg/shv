@@ -59,9 +59,19 @@ export class JobService extends EventEmitter {
 
   snapshot(): QueueSnapshot {
     const jobs = this.listVisible();
-    const candidatesByJobId: Record<string, MediaCandidate[]> = {};
-    for (const job of jobs) {
-      candidatesByJobId[job.id] = this.listCandidates(job.id);
+    const candidatesByJobId = Object.fromEntries(jobs.map((job) => [job.id, [] as MediaCandidate[]]));
+    const candidateRows = this.db
+      .prepare(
+        `SELECT media_candidates.*
+         FROM media_candidates
+         INNER JOIN download_jobs ON download_jobs.id = media_candidates.job_id
+         WHERE download_jobs.status != 'completed'
+         ORDER BY media_candidates.job_id ASC, media_candidates.confidence DESC, media_candidates.discovered_at ASC`
+      )
+      .all();
+    for (const row of candidateRows) {
+      const candidate = mapMediaCandidate(row as Record<string, unknown>);
+      candidatesByJobId[candidate.jobId]?.push(candidate);
     }
     return { jobs, candidatesByJobId };
   }

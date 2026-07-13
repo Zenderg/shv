@@ -17,6 +17,13 @@ class DownloadStalledError extends Error {
   }
 }
 
+class TaskStalledError extends Error {
+  constructor(jobId: string, timeoutMs: number, progress: number, taskLabel: string) {
+    super(`${taskLabel} stalled for ${Math.round(timeoutMs / 1000)}s without activity (job ${jobId}, last progress ${Math.round(progress * 100)}%).`);
+    this.name = 'TaskStalledError';
+  }
+}
+
 interface ProgressReporterInput {
   jobId: string;
   jobs: JobService;
@@ -61,7 +68,7 @@ export function createJobProgressReporter({
     const shouldPersist = labelChanged
       || determinateChanged
       || progressDelta >= PROGRESS_PERSIST_DELTA
-      || currentProgress === 1
+      || (progressChanged && currentProgress === 1)
       || (progressChanged && now - lastPersistedAt >= PROGRESS_PERSIST_INTERVAL_MS);
     if (!shouldPersist) return;
 
@@ -77,6 +84,7 @@ interface MonitoredJobStageInput<T> extends ProgressReporterInput {
   eventName: string;
   logDeterminateProgress?: boolean;
   run: (onProgress: TaskProgressCallback, signal: AbortSignal) => Promise<T>;
+  stallKind: 'network' | 'processing';
   taskLabel: string;
   timeoutMs: number;
 }
@@ -89,16 +97,20 @@ export async function runMonitoredJobStage<T>({
   run,
   runId,
   signal: parentSignal,
+  stallKind,
   status,
   taskLabel,
   timeoutMs
 }: MonitoredJobStageInput<T>): Promise<T> {
   const stageController = new AbortController();
-  let lastProgress = 0;
+  const initial = jobs.get(jobId);
+  let lastProgress = initial?.stageProgress ?? 0;
+  let lastProgressLabel = initial?.progressLabel ?? null;
   let lastLoggedMilestone = -1;
   let lastActivityAt = Date.now();
   let timeout: NodeJS.Timeout | null = null;
   let settled = false;
+  let abortReason: Error | null = null;
   const persistProgress = createJobProgressReporter({ jobId, jobs, runId, signal: parentSignal, status });
 
   const clearTimer = () => {
@@ -107,7 +119,12 @@ export async function runMonitoredJobStage<T>({
       timeout = null;
     }
   };
-  let finishReject: (reason?: unknown) => void = () => undefined;
+  const requestAbort = (reason: Error) => {
+    if (abortReason) return;
+    abortReason = reason;
+    clearTimer();
+    stageController.abort();
+  };
   const scheduleWatchdog = (delayMs = timeoutMs) => {
     clearTimer();
     timeout = setTimeout(() => {
@@ -116,14 +133,15 @@ export async function runMonitoredJobStage<T>({
         scheduleWatchdog(timeoutMs - idleMs);
         return;
       }
-      const error = new DownloadStalledError(jobId, timeoutMs, lastProgress, taskLabel);
+      const error = stallKind === 'network'
+        ? new DownloadStalledError(jobId, timeoutMs, lastProgress, taskLabel)
+        : new TaskStalledError(jobId, timeoutMs, lastProgress, taskLabel);
       logJobEvent('warn', `${eventName}-stalled`, {
         jobId,
         lastProgress: progressForLog(lastProgress),
         timeoutSeconds: Math.round(timeoutMs / 1000)
       });
-      stageController.abort();
-      finishReject(error);
+      requestAbort(error);
     }, Math.max(1, delayMs));
   };
 
@@ -136,13 +154,17 @@ export async function runMonitoredJobStage<T>({
       removeParentAbortListener();
       callback();
     };
-    finishReject = (error) => settle(() => reject(error));
     removeParentAbortListener = onAbort(parentSignal, () => {
-      stageController.abort();
-      finishReject(new JobCanceledError());
+      requestAbort(new JobCanceledError());
     });
     const onProgress: TaskProgressCallback = (update) => {
+      if (settled || abortReason) return;
       lastActivityAt = Date.now();
+      if (update.label !== undefined && update.label !== lastProgressLabel) {
+        lastProgress = 0;
+        lastLoggedMilestone = -1;
+        lastProgressLabel = update.label;
+      }
       if (update.kind === 'progress') {
         lastProgress = Math.max(lastProgress, clamp01(update.fraction));
         persistProgress({ ...update, fraction: lastProgress });
@@ -156,10 +178,19 @@ export async function runMonitoredJobStage<T>({
       }
     };
 
-    scheduleWatchdog();
-    run(onProgress, stageController.signal).then(
-      (result) => settle(() => resolve(result)),
-      (error) => settle(() => reject(error))
+    if (!abortReason) {
+      scheduleWatchdog();
+    }
+    let running: Promise<T>;
+    try {
+      running = run(onProgress, stageController.signal);
+    } catch (error) {
+      settle(() => reject(abortReason ?? error));
+      return;
+    }
+    running.then(
+      (result) => settle(() => abortReason ? reject(abortReason) : resolve(result)),
+      (error) => settle(() => reject(abortReason ?? error))
     );
   });
 }
