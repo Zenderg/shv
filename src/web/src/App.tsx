@@ -1,12 +1,12 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { SourceExtensionKind } from '../../shared/sourceExtension';
 import { AppHeader } from './components/AppHeader';
 import { AppSidebar } from './components/AppSidebar';
 import { InlineNotice, LibrarySkeleton, PageLoadError, QueueSkeleton } from './components/AsyncStates';
 import { MobileNavigation } from './components/MobileNavigation';
 import { appQueryKeys, useCategoriesQuery, useMediaQuery, useQueueQuery, useRuntimeConfigQuery } from './features/app/queries';
-import { disappearedQueueJobs, removedJobCategoryIds, resolveCompletedJobs } from './features/app/queueTransitions';
+import { useQueueCompletionNotifications } from './features/app/useQueueCompletionNotifications';
 import { AddVideoDialog } from './features/dialogs/AddVideoDialog';
 import { CategoryNameDialog } from './features/dialogs/CategoryNameDialog';
 import { ConfirmDialog } from './features/dialogs/ConfirmDialog';
@@ -14,7 +14,7 @@ import { EditDialog } from './features/dialogs/EditDialog';
 import { ExtensionInstallDialog } from './features/dialogs/ExtensionInstallDialog';
 import { PlayerDialog } from './features/dialogs/PlayerDialog';
 import { LibraryGrid } from './features/library/LibraryGrid';
-import { CompletionToasts, type CompletionNotice } from './features/queue/CompletionToasts';
+import { CompletionToasts } from './features/queue/CompletionToasts';
 import { QueuePanel } from './features/queue/QueuePanel';
 import { countQueueJobs, queueCountsLabel } from './features/queue/queueSummary';
 import { sortQueueJobs } from './features/queue/queueStatus';
@@ -56,16 +56,14 @@ export function App() {
   const [page, setPage] = useState<AppPage>('library');
   const [queueActionJobIds, setQueueActionJobIds] = useState<Record<string, string>>({});
   const [queueActionErrors, setQueueActionErrors] = useState<Record<string, string>>({});
-  const [completionAnnouncement, setCompletionAnnouncement] = useState('');
-  const [completionNotices, setCompletionNotices] = useState<CompletionNotice[]>([]);
   const [sourceTabOpenedJobIds, setSourceTabOpenedJobIds] = useState<Record<string, boolean>>({});
-  const completionCheckGenerationRef = useRef(0);
-  const completionChecksRef = useRef(new Set<string>());
-  const completionNotifiedJobIdsRef = useRef(new Set<string>());
-  const pendingCompletionJobsRef = useRef(new Map<string, DownloadJob>());
-  const previousVisibleJobsRef = useRef<DownloadJob[] | null>(null);
 
   const categories = categoriesQuery.data ?? [];
+  const completionNotifications = useQueueCompletionNotifications({
+    categories,
+    queue: queueQuery.data,
+    queueDataUpdatedAt: queueQuery.dataUpdatedAt
+  });
   const selectedCategory =
     categories.find((category) => category.id === selectedCategoryId) ?? categories[0] ?? null;
   const currentCategoryId = selectedCategory?.id ?? '';
@@ -76,90 +74,6 @@ export function App() {
   const queueCounts = useMemo(() => countQueueJobs(queue.jobs), [queue.jobs]);
   const queueSummary = useMemo(() => queueCountsLabel(queueCounts), [queueCounts]);
   const activeProblems = queueCounts.attention;
-
-  useEffect(() => () => {
-    completionCheckGenerationRef.current += 1;
-    completionChecksRef.current.clear();
-    pendingCompletionJobsRef.current.clear();
-  }, []);
-
-  useEffect(() => {
-    if (!queueQuery.data) {
-      return;
-    }
-    const previousJobs = previousVisibleJobsRef.current;
-    previousVisibleJobsRef.current = queueQuery.data.jobs;
-    if (!previousJobs) {
-      return;
-    }
-
-    // Completed jobs disappear from the queue snapshot, so their media queries
-    // must be refreshed explicitly after the polling response observes removal.
-    for (const categoryId of removedJobCategoryIds(previousJobs, queueQuery.data.jobs)) {
-      void queryClient.invalidateQueries({ exact: true, queryKey: appQueryKeys.media(categoryId) });
-    }
-
-    const currentJobIds = new Set(queueQuery.data.jobs.map((job) => job.id));
-    for (const jobId of pendingCompletionJobsRef.current.keys()) {
-      if (currentJobIds.has(jobId)) {
-        pendingCompletionJobsRef.current.delete(jobId);
-      }
-    }
-    for (const job of disappearedQueueJobs(previousJobs, queueQuery.data.jobs)) {
-      if (!completionNotifiedJobIdsRef.current.has(job.id)) {
-        pendingCompletionJobsRef.current.set(job.id, job);
-      }
-    }
-
-    const jobsToConfirm = [...pendingCompletionJobsRef.current.values()].filter(
-      (job) => !completionChecksRef.current.has(job.id)
-    );
-    if (jobsToConfirm.length === 0) {
-      return;
-    }
-
-    for (const job of jobsToConfirm) {
-      completionChecksRef.current.add(job.id);
-    }
-    const generation = completionCheckGenerationRef.current;
-    void resolveCompletedJobs(jobsToConfirm, api.job).then(({ completed, discarded }) => {
-      if (generation !== completionCheckGenerationRef.current) {
-        return;
-      }
-      const stillPendingCompletedJobs = completed.filter((job) => pendingCompletionJobsRef.current.has(job.id));
-      for (const job of [...completed, ...discarded]) {
-        pendingCompletionJobsRef.current.delete(job.id);
-      }
-      const newlyCompletedJobs = stillPendingCompletedJobs.filter(
-        (job) => !completionNotifiedJobIdsRef.current.has(job.id)
-      );
-      if (newlyCompletedJobs.length === 0) {
-        return;
-      }
-      for (const job of newlyCompletedJobs) {
-        completionNotifiedJobIdsRef.current.add(job.id);
-      }
-      const notices = newlyCompletedJobs.map((job) => {
-        const categoryName = categories.find((category) => category.id === job.categoryId)?.name ?? 'your library';
-        return {
-          categoryId: job.categoryId,
-          categoryName,
-          jobId: job.id,
-          title: job.titleHint || safeHostname(job.sourceUrl)
-        };
-      });
-      setCompletionNotices((current) => [...notices, ...current.filter((notice) => !notices.some((next) => next.jobId === notice.jobId))].slice(0, 4));
-      setCompletionAnnouncement(
-        notices.length === 1
-          ? `${notices[0].title} finished downloading and was saved to ${notices[0].categoryName}.`
-          : `${notices.length} downloads finished and were saved to the library.`
-      );
-    }).finally(() => {
-      for (const job of jobsToConfirm) {
-        completionChecksRef.current.delete(job.id);
-      }
-    });
-  }, [categories, queryClient, queueQuery.data, queueQuery.dataUpdatedAt]);
 
   useEffect(() => {
     function handleSourceHelperEvent(event: MessageEvent) {
@@ -527,13 +441,13 @@ export function App() {
         />
       ) : null}
       <CompletionToasts
-        announcement={completionAnnouncement}
-        notices={completionNotices}
-        onDismiss={(jobId) => setCompletionNotices((current) => current.filter((notice) => notice.jobId !== jobId))}
+        announcement={completionNotifications.announcement}
+        notices={completionNotifications.notices}
+        onDismiss={completionNotifications.dismiss}
         onOpenCategory={(notice) => {
           setSelectedCategoryId(notice.categoryId);
           setPage('library');
-          setCompletionNotices((current) => current.filter((item) => item.jobId !== notice.jobId));
+          completionNotifications.dismiss(notice.jobId);
         }}
       />
     </main>
@@ -605,12 +519,4 @@ function omitKey<T>(record: Record<string, T>, key: string): Record<string, T> {
   const next = { ...record };
   delete next[key];
   return next;
-}
-
-function safeHostname(url: string): string {
-  try {
-    return new URL(url).hostname || 'Completed download';
-  } catch {
-    return 'Completed download';
-  }
 }
