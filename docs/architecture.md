@@ -38,6 +38,10 @@ Video streaming headers must be ASCII-safe. User-facing filenames can contain Un
 - `media-processing`: ffprobe metadata, browser compatibility decision, ffmpeg remux/transcode path, and thumbnail generation.
 - `api`: Express routes, extension package generation, candidate ingestion, cookie upload, and video Range streaming.
 
+Within `jobs`, `JobService` owns durable state transitions and run claims, `QueueRunner` owns orchestration,
+`jobProgressMonitor` owns progress persistence and stall detection, `subtitleDownload` owns subtitle transfer/rewrite,
+and `jobArtifacts` owns job-scoped cleanup. Keep protocol-specific transfer details out of the runner orchestration.
+
 ## Frontend
 
 The React UI is category-first. It contains:

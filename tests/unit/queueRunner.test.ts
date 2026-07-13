@@ -7,7 +7,8 @@ import { CategoryService } from '../../src/server/categories/categoryService.js'
 import type { AppConfig } from '../../src/server/config/appConfig.js';
 import type { DownloadEngine } from '../../src/server/download-engine/downloadEngine.js';
 import { JobService } from '../../src/server/jobs/jobService.js';
-import { QueueRunner, subtitleDownloadHeaders, subtitleTracksForDownload } from '../../src/server/jobs/queueRunner.js';
+import { QueueRunner } from '../../src/server/jobs/queueRunner.js';
+import { subtitleDownloadHeaders, subtitleTracksForDownload } from '../../src/server/jobs/subtitleDownload.js';
 import { MediaFiles } from '../../src/server/media-library/mediaFiles.js';
 import { MediaLibraryService } from '../../src/server/media-library/mediaLibraryService.js';
 import type { MediaProcessor } from '../../src/server/media-processing/mediaProcessor.js';
