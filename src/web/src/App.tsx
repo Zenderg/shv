@@ -1,11 +1,12 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { SourceExtensionKind } from '../../shared/sourceExtension';
 import { AppHeader } from './components/AppHeader';
 import { AppSidebar } from './components/AppSidebar';
 import { InlineNotice, LibrarySkeleton, PageLoadError, QueueSkeleton } from './components/AsyncStates';
 import { MobileNavigation } from './components/MobileNavigation';
 import { appQueryKeys, useCategoriesQuery, useMediaQuery, useQueueQuery, useRuntimeConfigQuery } from './features/app/queries';
+import { removedJobCategoryIds } from './features/app/queueTransitions';
 import { AddVideoDialog } from './features/dialogs/AddVideoDialog';
 import { CategoryNameDialog } from './features/dialogs/CategoryNameDialog';
 import { ConfirmDialog } from './features/dialogs/ConfirmDialog';
@@ -52,6 +53,7 @@ export function App() {
   const [page, setPage] = useState<AppPage>('library');
   const [queueActionJobIds, setQueueActionJobIds] = useState<Record<string, string>>({});
   const [queueActionErrors, setQueueActionErrors] = useState<Record<string, string>>({});
+  const previousVisibleJobsRef = useRef<DownloadJob[] | null>(null);
 
   const categories = categoriesQuery.data ?? [];
   const selectedCategory =
@@ -65,6 +67,23 @@ export function App() {
     () => queue.jobs.filter((job) => ['failed', 'needs_manual_selection', 'needs_subtitle_selection'].includes(job.status)).length,
     [queue.jobs]
   );
+
+  useEffect(() => {
+    if (!queueQuery.data) {
+      return;
+    }
+    const previousJobs = previousVisibleJobsRef.current;
+    previousVisibleJobsRef.current = queueQuery.data.jobs;
+    if (!previousJobs) {
+      return;
+    }
+
+    // Completed jobs disappear from the queue snapshot, so their media queries
+    // must be refreshed explicitly after the polling response observes removal.
+    for (const categoryId of removedJobCategoryIds(previousJobs, queueQuery.data.jobs)) {
+      void queryClient.invalidateQueries({ exact: true, queryKey: appQueryKeys.media(categoryId) });
+    }
+  }, [queryClient, queueQuery.data]);
 
   useEffect(() => {
     function handleSourceHelperEvent(event: MessageEvent) {
