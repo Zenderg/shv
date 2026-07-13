@@ -6,7 +6,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { afterEach, describe, expect, test } from 'vitest';
 import type { MediaCandidate } from '../../src/shared/types.js';
-import { DownloadEngine } from '../../src/server/download-engine/downloadEngine.js';
+import { DownloadEngine, buildHlsFfmpegArgs } from '../../src/server/download-engine/downloadEngine.js';
 import {
   PublicMediaSession,
   type PublicHttpProxyOptions,
@@ -440,6 +440,32 @@ describe('DownloadEngine direct download', () => {
       cookie: 'session=dash-secret'
     }]);
     expect(redirectedHeaders).toEqual([]);
+  });
+
+  test('allows ffmpeg HTTPS inputs to reach the configured HTTP proxy', async () => {
+    let connectTarget: string | undefined;
+    const proxy = http.createServer();
+    proxy.on('connect', (request, socket) => {
+      connectTarget = request.url;
+      socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
+    });
+    servers.push(proxy);
+    await new Promise<void>((resolve) => proxy.listen(0, '127.0.0.1', resolve));
+    const address = proxy.address();
+    if (!address || typeof address === 'string') {
+      throw new Error('Test HTTP proxy did not expose a port');
+    }
+
+    const output = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'shv-https-proxy-')), 'video.mkv');
+    const args = buildHlsFfmpegArgs(
+      'https://media.shv-proxy-regression.invalid/playlist.m3u8',
+      output,
+      `http://127.0.0.1:${address.port}`
+    );
+
+    await expect(run(['-hide_banner', ...args])).rejects.toThrow(/ffmpeg exited with code/);
+
+    expect(connectTarget).toBe('media.shv-proxy-regression.invalid:443');
   });
 
   test('normalizes timestamps while stitching downloaded HLS segments', async () => {

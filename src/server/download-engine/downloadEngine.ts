@@ -524,7 +524,7 @@ function ffmpegNetworkInputArgs(proxyUrl: string, options: { reconnectAtEof?: bo
     '-fflags',
     '+discardcorrupt',
     '-protocol_whitelist',
-    'http,https,tcp,tls,crypto',
+    'http,https,httpproxy,tcp,tls,crypto',
     '-http_proxy',
     proxyUrl,
     '-reconnect',

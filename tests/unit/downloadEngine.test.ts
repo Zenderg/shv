@@ -106,7 +106,7 @@ describe('DownloadEngine ffmpeg helpers', () => {
         '-reconnect_on_network_error',
         '1',
         '-protocol_whitelist',
-        'http,https,tcp,tls,crypto',
+        'http,https,httpproxy,tcp,tls,crypto',
         '-http_proxy',
         'http://127.0.0.1:9999',
         '-http_persistent',
