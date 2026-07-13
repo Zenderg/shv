@@ -5,7 +5,14 @@ import { assertInsideRoot, sanitizeName, uniquePath } from '../utils/fileSafety.
 import type { CategoryService } from '../categories/categoryService.js';
 import type { Category } from '../../shared/types.js';
 
+export interface ReservedVideoPath {
+  path: string;
+  release(): void;
+}
+
 export class MediaFiles {
+  private readonly reservedVideoPaths = new Set<string>();
+
   constructor(
     private readonly config: AppConfig,
     private readonly categories: CategoryService
@@ -14,6 +21,22 @@ export class MediaFiles {
   finalVideoPath(category: Category, desiredFilename: string): string {
     const categoryPath = this.categories.categoryPath(category);
     return uniquePath(categoryPath, sanitizeName(desiredFilename, 'video.mp4'));
+  }
+
+  reserveFinalVideoPath(category: Category, desiredFilename: string): ReservedVideoPath {
+    const categoryPath = this.categories.categoryPath(category);
+    const path = uniquePath(categoryPath, sanitizeName(desiredFilename, 'video.mp4'), this.reservedVideoPaths);
+    this.reservedVideoPaths.add(path);
+    let released = false;
+    return {
+      path,
+      release: () => {
+        if (!released) {
+          this.reservedVideoPaths.delete(path);
+          released = true;
+        }
+      }
+    };
   }
 
   absoluteMediaPath(relativePath: string): string {

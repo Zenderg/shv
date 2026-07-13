@@ -5,7 +5,7 @@ import type { AppConfig } from '../config/appConfig.js';
 import type { BrowserAnalyzer } from '../browser-analyzer/browserAnalyzer.js';
 import type { CategoryService } from '../categories/categoryService.js';
 import type { DownloadEngine } from '../download-engine/downloadEngine.js';
-import type { MediaFiles } from '../media-library/mediaFiles.js';
+import type { MediaFiles, ReservedVideoPath } from '../media-library/mediaFiles.js';
 import type { MediaLibraryService } from '../media-library/mediaLibraryService.js';
 import type { MediaProcessor } from '../media-processing/mediaProcessor.js';
 import { NoopSourceExtractor, type SourceExtractor } from '../source-extractors/sourceExtractorService.js';
@@ -138,6 +138,7 @@ export class QueueRunner {
     let workDir: string | null = null;
     let finalPath: string | null = null;
     let thumbnailPath: string | null = null;
+    let finalPathReservation: ReservedVideoPath | null = null;
     try {
       this.throwIfCanceled(jobId, signal);
       let job = this.jobs.transition(jobId, 'analyzing', 0.05);
@@ -206,7 +207,8 @@ export class QueueRunner {
       this.jobs.transition(job.id, 'processing', 0.82, { selectedCandidateId });
       logJobEvent('info', 'processing-started', { jobId: job.id });
       const title = job.titleHint ?? titleFromUrl(job.sourceUrl);
-      finalPath = this.mediaFiles.finalVideoPath(category, `${title}.mp4`);
+      finalPathReservation = this.mediaFiles.reserveFinalVideoPath(category, `${title}.mp4`);
+      finalPath = finalPathReservation.path;
       const mediaId = job.id;
       thumbnailPath = this.mediaFiles.thumbnailPath(mediaId);
       const normalized = await this.processor.normalize(downloadPath, finalPath, thumbnailPath, (progress) => {
@@ -272,6 +274,7 @@ export class QueueRunner {
       });
       logJobEvent('error', 'job-failed', { error: shortMessage(error), jobId });
     } finally {
+      finalPathReservation?.release();
       if (this.activeControllers.get(jobId) === controller) {
         this.activeControllers.delete(jobId);
       }
