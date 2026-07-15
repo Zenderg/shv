@@ -178,7 +178,8 @@ export class MediaLibraryService {
       if (String(jobRow.output_relative_path ?? '') !== relativePath) {
         throw new JobStateConflictError(`Job ${jobId} does not own output path ${relativePath}`);
       }
-      const media = existing ?? this.insert({ ...input, labels: parseMediaLabelsJson(jobRow.labels_json) }, jobId);
+      const labels = this.labels.canonical(input.categoryId, parseMediaLabelsJson(jobRow.labels_json)).map((label) => label.name);
+      const media = existing ?? this.insert({ ...input, labels }, jobId);
       const now = nowIso();
       const result = this.db
         .prepare(
