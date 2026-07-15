@@ -5,14 +5,9 @@ import { AppHeader } from './components/AppHeader';
 import { AppSidebar } from './components/AppSidebar';
 import { InlineNotice, LibrarySkeleton, PageLoadError, QueueSkeleton } from './components/AsyncStates';
 import { MobileNavigation } from './components/MobileNavigation';
+import { AppDialogs, type DialogState, type ExtensionDialogState } from './features/app/AppDialogs';
 import { appQueryKeys, useCategoriesQuery, useMediaQuery, useQueueQuery, useRuntimeConfigQuery } from './features/app/queries';
 import { useQueueCompletionNotifications } from './features/app/useQueueCompletionNotifications';
-import { AddVideoDialog } from './features/dialogs/AddVideoDialog';
-import { CategoryNameDialog } from './features/dialogs/CategoryNameDialog';
-import { ConfirmDialog } from './features/dialogs/ConfirmDialog';
-import { EditDialog } from './features/dialogs/EditDialog';
-import { ExtensionInstallDialog } from './features/dialogs/ExtensionInstallDialog';
-import { PlayerDialog } from './features/dialogs/PlayerDialog';
 import { LibraryGrid } from './features/library/LibraryGrid';
 import { CompletionToasts } from './features/queue/CompletionToasts';
 import { QueuePanel } from './features/queue/QueuePanel';
@@ -22,21 +17,7 @@ import { api, type Category, type DownloadJob, type MediaItem, type QueueSnapsho
 import { checkSourceExtension, openSourceWithExtension, type ExtensionStatus } from './lib/extensionBridge';
 import { message } from './utils/format';
 
-type DialogState =
-  | { kind: 'none' }
-  | { kind: 'add' }
-  | { kind: 'createCategory' }
-  | { kind: 'play'; item: MediaItem }
-  | { kind: 'edit'; item: MediaItem }
-  | { category: Category; kind: 'deleteCategory' }
-  | { category: Category; kind: 'renameCategory' }
-  | { item: MediaItem; kind: 'deleteMedia' };
-
 type AppPage = 'library' | 'queue';
-
-type ExtensionDialogState =
-  | { kind: 'none' }
-  | { job: DownloadJob | null; kind: 'issue'; status: Exclude<ExtensionStatus, { kind: 'ready' }> };
 
 const EMPTY_QUEUE: QueueSnapshot = { jobs: [], candidatesByJobId: {} };
 
@@ -174,6 +155,51 @@ export function App() {
         setDialog({ kind: 'none' });
         setPage('library');
         await queryClient.invalidateQueries({ queryKey: appQueryKeys.categories });
+      }
+    );
+  }
+
+  function updateMedia(item: MediaItem, body: { title?: string; categoryId?: string }) {
+    return runDialogAction(
+      () => api.updateMedia(item.id, body),
+      async () => {
+        setDialog({ kind: 'none' });
+        await queryClient.resetQueries({ queryKey: appQueryKeys.mediaRoot });
+      }
+    );
+  }
+
+  function renameCategory(category: Category, name: string) {
+    void runDialogAction(
+      () => api.renameCategory(category.id, name),
+      async () => {
+        setSelectedCategoryId(category.id);
+        setDialog({ kind: 'none' });
+        await queryClient.invalidateQueries({ queryKey: appQueryKeys.categories });
+      }
+    );
+  }
+
+  function deleteCategory(category: Category) {
+    return runDialogAction(
+      () => api.deleteCategory(category.id),
+      async () => {
+        setDialog({ kind: 'none' });
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: appQueryKeys.categories }),
+          queryClient.resetQueries({ queryKey: appQueryKeys.mediaRoot }),
+          queryClient.invalidateQueries({ queryKey: appQueryKeys.queue })
+        ]);
+      }
+    );
+  }
+
+  function deleteMedia(item: MediaItem) {
+    return runDialogAction(
+      () => api.deleteMedia(item.id),
+      async () => {
+        setDialog({ kind: 'none' });
+        await queryClient.resetQueries({ queryKey: appQueryKeys.mediaRoot });
       }
     );
   }
@@ -328,123 +354,28 @@ export function App() {
         )}
       </section>
 
-      {dialog.kind === 'add' ? (
-        <AddVideoDialog
-          busy={dialogBusy}
-          categories={categories}
-          error={dialogError}
-          initialCategoryId={currentCategoryId}
-          onClose={closeDialog}
-          onSubmit={(input) => void submitJob(input)}
-        />
-      ) : null}
-      {dialog.kind === 'createCategory' ? (
-        <CategoryNameDialog
-          actionLabel="Create category"
-          busy={dialogBusy}
-          error={dialogError}
-          initialName=""
-          onClose={closeDialog}
-          onSave={(name) => void createCategory(name)}
-          title="New category"
-        />
-      ) : null}
-      {dialog.kind === 'play' ? <PlayerDialog item={dialog.item} onClose={closeDialog} /> : null}
-      {dialog.kind === 'edit' ? (
-        <EditDialog
-          busy={dialogBusy}
-          categories={categories}
-          error={dialogError}
-          item={dialog.item}
-          onClose={closeDialog}
-          onSave={(body) =>
-            runDialogAction(
-              () => api.updateMedia(dialog.item.id, body),
-              async () => {
-                setDialog({ kind: 'none' });
-                await queryClient.resetQueries({ queryKey: appQueryKeys.mediaRoot });
-              }
-            )
-          }
-        />
-      ) : null}
-      {dialog.kind === 'renameCategory' ? (
-        <CategoryNameDialog
-          actionLabel="Save"
-          busy={dialogBusy}
-          error={dialogError}
-          initialName={dialog.category.name}
-          onClose={closeDialog}
-          onSave={(name) =>
-            void runDialogAction(
-              () => api.renameCategory(dialog.category.id, name),
-              async () => {
-                setSelectedCategoryId(dialog.category.id);
-                setDialog({ kind: 'none' });
-                await queryClient.invalidateQueries({ queryKey: appQueryKeys.categories });
-              }
-            )
-          }
-          title="Rename category"
-        />
-      ) : null}
-      {dialog.kind === 'deleteCategory' ? (
-        <ConfirmDialog
-          actionLabel="Delete category"
-          busy={dialogBusy}
-          danger
-          error={dialogError}
-          message={`Delete "${dialog.category.name}" and all videos in it? This removes the saved video files from disk.`}
-          onClose={closeDialog}
-          onConfirm={() =>
-            runDialogAction(
-              () => api.deleteCategory(dialog.category.id),
-              async () => {
-                setDialog({ kind: 'none' });
-                await Promise.all([
-                  queryClient.invalidateQueries({ queryKey: appQueryKeys.categories }),
-                  queryClient.resetQueries({ queryKey: appQueryKeys.mediaRoot }),
-                  queryClient.invalidateQueries({ queryKey: appQueryKeys.queue })
-                ]);
-              }
-            )
-          }
-          title="Delete category"
-        />
-      ) : null}
-      {dialog.kind === 'deleteMedia' ? (
-        <ConfirmDialog
-          actionLabel="Delete video"
-          busy={dialogBusy}
-          danger
-          error={dialogError}
-          message={`Delete "${dialog.item.title}" from the library?`}
-          onClose={closeDialog}
-          onConfirm={() =>
-            runDialogAction(
-              () => api.deleteMedia(dialog.item.id),
-              async () => {
-                setDialog({ kind: 'none' });
-                await queryClient.resetQueries({ queryKey: appQueryKeys.mediaRoot });
-              }
-            )
-          }
-          title="Delete video"
-        />
-      ) : null}
-      {extensionDialog.kind !== 'none' ? (
-        <ExtensionInstallDialog
-          error={extensionDialogError}
-          job={extensionDialog.job}
-          onCheckAgain={() => void recheckExtension(extensionDialog.job)}
-          onClose={() => {
-            setExtensionDialog({ kind: 'none' });
-            setExtensionDialogError(null);
-          }}
-          sourceExtensionProfile={runtimeConfigQuery.data?.sourceExtensionProfile ?? 'prod'}
-          status={extensionDialog.status}
-        />
-      ) : null}
+      <AppDialogs
+        busy={dialogBusy}
+        categories={categories}
+        currentCategoryId={currentCategoryId}
+        dialog={dialog}
+        error={dialogError}
+        extensionDialog={extensionDialog}
+        extensionError={extensionDialogError}
+        onCheckExtension={(job) => void recheckExtension(job)}
+        onClose={closeDialog}
+        onCloseExtension={() => {
+          setExtensionDialog({ kind: 'none' });
+          setExtensionDialogError(null);
+        }}
+        onCreateCategory={(name) => void createCategory(name)}
+        onDeleteCategory={deleteCategory}
+        onDeleteMedia={deleteMedia}
+        onRenameCategory={renameCategory}
+        onSubmitJob={(input) => void submitJob(input)}
+        onUpdateMedia={updateMedia}
+        sourceExtensionProfile={runtimeConfigQuery.data?.sourceExtensionProfile ?? 'prod'}
+      />
       <CompletionToasts
         announcement={completionNotifications.announcement}
         notices={completionNotifications.notices}
