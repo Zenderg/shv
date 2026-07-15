@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
-import type { MediaItem } from '../../shared/types.js';
+import type { MediaItem, MediaPage } from '../../shared/types.js';
 import type { CategoryService } from '../categories/categoryService.js';
 import { JobStateConflictError } from '../jobs/jobService.js';
 import { nowIso, type Db } from '../storage/database.js';
@@ -24,6 +24,20 @@ export interface CreateMediaInput {
   audioCodec: string | null;
 }
 
+interface MediaPageCursor {
+  categoryId: string;
+  createdAt: string;
+  id: string;
+  version: 1;
+}
+
+export class InvalidMediaCursorError extends Error {
+  constructor(message = 'Invalid media cursor') {
+    super(message);
+    this.name = 'InvalidMediaCursorError';
+  }
+}
+
 export class MediaLibraryService {
   constructor(
     private readonly db: Db,
@@ -33,9 +47,49 @@ export class MediaLibraryService {
 
   list(categoryId?: string): MediaItem[] {
     const rows = categoryId
-      ? this.db.prepare('SELECT * FROM media_items WHERE category_id = ? ORDER BY created_at DESC').all(categoryId)
-      : this.db.prepare('SELECT * FROM media_items ORDER BY created_at DESC').all();
+      ? this.db.prepare('SELECT * FROM media_items WHERE category_id = ? ORDER BY created_at DESC, id DESC').all(categoryId)
+      : this.db.prepare('SELECT * FROM media_items ORDER BY created_at DESC, id DESC').all();
     return rows.map((row) => mapMediaItem(row as Record<string, unknown>));
+  }
+
+  page(categoryId: string, limit: number, encodedCursor?: string): MediaPage {
+    const cursor = encodedCursor ? decodeMediaCursor(encodedCursor) : null;
+    if (cursor && cursor.categoryId !== categoryId) {
+      throw new InvalidMediaCursorError('Media cursor belongs to another category');
+    }
+
+    const rows = cursor
+      ? this.db
+          .prepare(
+            `SELECT * FROM media_items
+             WHERE category_id = ?
+               AND (created_at < ? OR (created_at = ? AND id < ?))
+             ORDER BY created_at DESC, id DESC
+             LIMIT ?`
+          )
+          .all(categoryId, cursor.createdAt, cursor.createdAt, cursor.id, limit + 1)
+      : this.db
+          .prepare(
+            `SELECT * FROM media_items
+             WHERE category_id = ?
+             ORDER BY created_at DESC, id DESC
+             LIMIT ?`
+          )
+          .all(categoryId, limit + 1);
+    const pageRows = rows.slice(0, limit);
+    const items = pageRows.map((row) => mapMediaItem(row as Record<string, unknown>));
+    const lastItem = items.at(-1);
+    const totalRow = this.db.prepare('SELECT COUNT(*) AS count FROM media_items WHERE category_id = ?').get(categoryId) as
+      | { count?: number | string }
+      | undefined;
+
+    return {
+      items,
+      nextCursor: rows.length > limit && lastItem
+        ? encodeMediaCursor({ categoryId, createdAt: lastItem.createdAt, id: lastItem.id, version: 1 })
+        : null,
+      total: Number(totalRow?.count ?? 0)
+    };
   }
 
   get(id: string): MediaItem | null {
@@ -203,5 +257,32 @@ export class MediaLibraryService {
       throw new Error('Media item not found');
     }
     return item;
+  }
+}
+
+function encodeMediaCursor(cursor: MediaPageCursor): string {
+  return Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url');
+}
+
+function decodeMediaCursor(value: string): MediaPageCursor {
+  try {
+    const parsed = JSON.parse(Buffer.from(value, 'base64url').toString('utf8')) as Partial<MediaPageCursor> | null;
+    if (
+      parsed?.version !== 1
+      || typeof parsed.categoryId !== 'string'
+      || !parsed.categoryId
+      || typeof parsed.createdAt !== 'string'
+      || !parsed.createdAt
+      || typeof parsed.id !== 'string'
+      || !parsed.id
+    ) {
+      throw new InvalidMediaCursorError();
+    }
+    return parsed as MediaPageCursor;
+  } catch (error) {
+    if (error instanceof InvalidMediaCursorError) {
+      throw error;
+    }
+    throw new InvalidMediaCursorError();
   }
 }

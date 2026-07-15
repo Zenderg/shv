@@ -42,10 +42,10 @@ export function useQueueCompletionNotifications({
       return;
     }
 
-    // Completed jobs disappear from the queue snapshot, so their media queries
-    // must be refreshed explicitly after the polling response observes removal.
+    // Reset infinite media queries to the first page so completed jobs appear at
+    // the top without refetching every page accumulated during a long session.
     for (const categoryId of removedJobCategoryIds(previousJobs, queue.jobs)) {
-      void queryClient.invalidateQueries({ exact: true, queryKey: appQueryKeys.media(categoryId) });
+      void queryClient.resetQueries({ exact: true, queryKey: appQueryKeys.media(categoryId) });
     }
 
     const currentJobIds = new Set(queue.jobs.map((job) => job.id));

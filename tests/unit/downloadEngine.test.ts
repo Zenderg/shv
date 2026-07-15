@@ -164,6 +164,76 @@ describe('DownloadEngine ffmpeg helpers', () => {
     expect(progress.filter((update) => update.kind === 'progress').map((update) => update.fraction)).toEqual([0.5, 0.99, 1]);
   });
 
+  test('downloads at most four plain HLS segments concurrently and assembles playlist order', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'shv-hls-concurrency-'));
+    const outputPath = path.join(tempDir, 'source');
+    const manifest = [
+      '#EXTM3U',
+      ...Array.from({ length: 8 }, (_, index) => `#EXTINF:1,\nseg-${index + 1}.ts`),
+      '#EXT-X-ENDLIST'
+    ].join('\n');
+    let activeRequests = 0;
+    let maxActiveRequests = 0;
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.endsWith('index.m3u8')) {
+        return new Response(manifest);
+      }
+      const segmentNumber = Number(url.match(/seg-(\d+)\.ts/)?.[1] ?? 0);
+      activeRequests += 1;
+      maxActiveRequests = Math.max(maxActiveRequests, activeRequests);
+      await new Promise((resolve) => setTimeout(resolve, (9 - segmentNumber) * 2));
+      activeRequests -= 1;
+      return new Response(String(segmentNumber));
+    });
+    const progress: number[] = [];
+    vi.stubGlobal('fetch', fetchMock);
+
+    try {
+      await new DownloadEngine(undefined, async (url) => url, unsafeTestSessionFactory).download(
+        hlsCandidate(),
+        outputPath,
+        (update) => {
+          if (update.kind === 'progress') progress.push(update.fraction);
+        }
+      );
+    } finally {
+      vi.unstubAllGlobals();
+    }
+
+    expect(maxActiveRequests).toBe(4);
+    expect(fs.readFileSync(outputPath, 'utf8')).toBe('12345678');
+    expect(progress).toEqual([...progress].sort((left, right) => left - right));
+    expect(progress.at(-1)).toBe(1);
+  });
+
+  test('waits for sibling HLS workers and removes partial artifacts after a segment failure', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'shv-hls-cleanup-'));
+    const outputPath = path.join(tempDir, 'source');
+    const manifest = '#EXTM3U\n#EXTINF:1,\nseg-1.ts\n#EXTINF:1,\nseg-2.ts\n#EXTINF:1,\nseg-3.ts\n#EXT-X-ENDLIST';
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.endsWith('index.m3u8')) return new Response(manifest);
+      if (url.endsWith('seg-2.ts')) return new Response('failed', { status: 503 });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      return new Response('segment');
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    try {
+      await expect(new DownloadEngine(undefined, async (url) => url, unsafeTestSessionFactory).download(
+        hlsCandidate(),
+        outputPath,
+        () => undefined
+      )).rejects.toThrow('HLS segment 2 request failed with HTTP 503');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+
+    expect(fs.existsSync(outputPath)).toBe(false);
+    expect(fs.readdirSync(tempDir).some((name) => name.includes('.segments-'))).toBe(false);
+  });
+
   test('rejects private HLS and DASH URLs resolved from manifests before requesting them', async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'shv-manifest-url-safety-'));
     const candidate: MediaCandidate = {
@@ -430,3 +500,22 @@ requests = Requests()
     expect(fs.readFileSync(outputPath)).toEqual(Buffer.from('stale'));
   });
 });
+
+function hlsCandidate(): MediaCandidate {
+  return {
+    bitrate: null,
+    confidence: 0.9,
+    contentType: 'application/vnd.apple.mpegurl',
+    discoveredAt: new Date().toISOString(),
+    durationSeconds: null,
+    headers: {},
+    id: 'candidate-id',
+    jobId: 'job-id',
+    kind: 'hls',
+    manifestType: 'hls',
+    resolution: null,
+    sizeBytes: null,
+    subtitleTracks: [],
+    url: 'https://media.example.test/index.m3u8'
+  };
+}

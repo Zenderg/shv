@@ -1,5 +1,5 @@
 import type { SourceExtensionKind } from '../../../shared/sourceExtension';
-import type { Category, DownloadJob, JobStatus, MediaCandidate, MediaItem, QueueSnapshot, SubtitleTrack } from '../../../shared/types';
+import type { Category, DownloadJob, JobStatus, MediaCandidate, MediaItem, MediaPage, QueueSnapshot, SubtitleTrack } from '../../../shared/types';
 
 export interface RuntimeConfig {
   csrfToken: string;
@@ -96,7 +96,13 @@ export const api = {
   renameCategory: (id: string, name: string) =>
     request<Category>(`/api/categories/${id}`, { method: 'PATCH', body: JSON.stringify({ name }) }),
   deleteCategory: (id: string) => request<void>(`/api/categories/${id}`, { method: 'DELETE' }),
-  media: (categoryId?: string) => request<MediaItem[]>(categoryId ? `/api/media?categoryId=${categoryId}` : '/api/media'),
+  media: (categoryId: string, cursor: string | null = null, limit = 60) => {
+    const params = new URLSearchParams({ categoryId, limit: String(limit) });
+    if (cursor) {
+      params.set('cursor', cursor);
+    }
+    return request<MediaPage>(`/api/media?${params.toString()}`);
+  },
   updateMedia: (id: string, body: { title?: string; categoryId?: string }) =>
     request<MediaItem>(`/api/media/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
   deleteMedia: (id: string) => request<void>(`/api/media/${id}`, { method: 'DELETE' }),
@@ -135,4 +141,4 @@ export const api = {
   }
 };
 
-export type { Category, DownloadJob, JobStatus, MediaCandidate, MediaItem, QueueSnapshot, SubtitleTrack };
+export type { Category, DownloadJob, JobStatus, MediaCandidate, MediaItem, MediaPage, QueueSnapshot, SubtitleTrack };

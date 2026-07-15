@@ -17,13 +17,14 @@
   }
 
   .shell {
-    height: auto;
-    min-height: auto;
-    overflow: visible;
+    grid-template-rows: auto minmax(0, 1fr);
+    height: 100dvh;
+    min-height: 0;
+    overflow: hidden;
   }
 
   .workspace {
-    overflow: visible;
+    overflow-y: auto;
   }
 }
 

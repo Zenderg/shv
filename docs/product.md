@@ -89,6 +89,11 @@ Deleting a category is cascading after explicit UI confirmation: saved media row
 
 Saved media metadata must describe the final normalized file, not just the discovered source candidate.
 
+Large categories load progressively as the user approaches the end of the visible library. The library still reports the
+full category total, preserves newest-first ordering, and virtualizes card rows so the number of mounted video cards stays
+bounded instead of growing with the category. Loading or retrying another page must not replace cards that are already
+available.
+
 ## Queue Contract
 
 The queue runs up to two active jobs by default; deployment may configure another bounded concurrency limit:

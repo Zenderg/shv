@@ -57,29 +57,37 @@ export async function concatenateDownloadedHlsSegments(
   try {
     for (const segment of segments) {
       throwIfAborted(signal);
-      await new Promise<void>((resolve, reject) => {
-        const input = fs.createReadStream(segment.filePath);
-        input.on('error', reject);
-        output.on('error', reject);
-        input.on('end', resolve);
-        input.on('data', (chunk) => {
-          onActivity();
-          input.pause();
-          output.write(chunk, (error) => {
-            if (error) {
-              reject(error);
-              return;
-            }
-            input.resume();
-          });
-        });
+      const input = fs.createReadStream(segment.filePath);
+      const removeAbortListener = onAbort(signal, () => {
+        input.destroy();
+        output.destroy();
       });
+      try {
+        for await (const chunk of input) {
+          throwIfAborted(signal);
+          onActivity();
+          await writeChunk(output, chunk as Buffer);
+        }
+      } catch (error) {
+        if (signal?.aborted) {
+          throw new JobCanceledError();
+        }
+        throw error;
+      } finally {
+        removeAbortListener();
+      }
     }
   } catch (error) {
     output.destroy();
     throw error;
   }
   await endWriteStream(output);
+}
+
+async function writeChunk(stream: fs.WriteStream, chunk: Buffer): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    stream.write(chunk, (error) => (error ? reject(error) : resolve()));
+  });
 }
 
 async function runFfmpegCommand(args: string[], onActivity: () => void, signal?: AbortSignal): Promise<void> {

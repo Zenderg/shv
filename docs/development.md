@@ -81,9 +81,16 @@ node --check extension/chrome-source-helper/content-script.js
 Use the dev seed command when the local library needs fake categories and media rows for UI stress work:
 
 ```bash
-npm run dev:seed
-npm run dev:seed -- --categories 20 --videos 500
+docker compose stop
+npm run dev:seed -- --categories 1 --videos 1000
+docker compose start
 ```
+
+Omit the flags for the default seed, or use `--categories 20 --videos 500` when category navigation is the stress target.
+
+The seed utility opens the bind-mounted SQLite database directly from the host. Keep the Compose service stopped for
+both seed and reset commands; concurrent host and container SQLite connections are not a supported workflow on the
+Docker bind mount and can leave the running container connection unusable until restart.
 
 The command appends data under the local Docker Compose mounts in `./data`. It creates `[dev] ` categories, `dev-seed://` media records, tiny placeholder `.mp4` files, and a few tiny placeholder thumbnails.
 
@@ -94,10 +101,21 @@ The generated data should keep UI edge cases available: long category names, lon
 Remove only generated dev seed data with:
 
 ```bash
+docker compose stop
 npm run dev:seed:reset
+docker compose start
 ```
 
 Reset deletes media rows whose `source_url` starts with `dev-seed://`, removes their placeholder files and thumbnails, and removes empty `[dev] ` categories. It leaves ordinary categories and non-seed media in place.
+
+For a repeatable large-category performance check, seed one category with 1000 videos, open that category in the Docker
+Compose app, and verify all of these before resetting the seed:
+
+- the heading reports the full 1000-item total while the first API response contains no more than 60 items;
+- scrolling near the end fetches another cursor page without clearing the already loaded cards;
+- the number of mounted `.videoCard` elements remains viewport-sized rather than approaching 1000;
+- switching categories returns the workspace to the top;
+- `/assets/*` responses are compressed and immutable, while a missing chunk and an unknown `/api/*` route return 404.
 
 ## README Showcase Data And Screenshots
 

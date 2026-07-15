@@ -60,10 +60,23 @@ accessible primitives, `features` owns library, queue, and dialog flows, `lib` o
 and queue state, including queue polling and targeted invalidation. Radix primitives own modal/dialog and dropdown-menu
 keyboard/focus behavior while project CSS remains the visual source of truth.
 
+The media library uses TanStack Query infinite queries and row virtualization. The server returns keyset-paginated
+`MediaPage` values ordered by `(created_at DESC, id DESC)`; cursors are opaque and bound to the category that produced
+them. The client appends pages only as the last virtual row approaches the viewport, while the virtualizer mounts only
+the rows around the shared workspace scroll container. Category changes reset both scroll position and accumulated pages.
+
 Desktop keeps persistent category navigation. At tablet/mobile widths the same actions move into a focus-trapped drawer
 so category volume cannot push the current library or queue below a long navigation block.
 
 There is intentionally no login, nested categories, duplicate detection, global search, or public-internet deployment assumption.
+
+## HTTP Delivery Contracts
+
+Compressible responses of at least 1 KiB are served with negotiated HTTP compression. Fingerprinted web assets under
+`/assets` are immutable for one year; HTML and non-fingerprinted static files require revalidation; API responses are
+`no-store`. SPA fallback is limited to extensionless requests that accept HTML. Missing asset filenames, API routes, and
+other file-like paths must return a real 404 instead of returning `index.html`, so a stale chunk fails visibly and can be
+recovered by reloading the current HTML.
 
 ## Library Contracts
 
@@ -91,6 +104,9 @@ SQLite uses explicit migrations under `src/server/storage/migrations.ts`. Core t
 
 The filesystem owns media bytes; SQLite owns the index, queue, candidate, and metadata state.
 Each connection configures a bounded SQLite busy timeout so brief write contention waits for the active writer instead of failing a queue progress update immediately.
+
+Media pagination is backed by a composite category and newest-first index. Page queries use a `(created_at, id)` keyset
+rather than offsets so page cost and ordering stay stable as a category grows or receives newly completed downloads.
 
 Captured candidate and subtitle request headers are internal download context. Candidate API responses preserve the candidate shape but strip those headers at the Express DTO boundary so queue and candidate-list reads cannot disclose cookies, authorization values, or custom tokens.
 
@@ -184,6 +200,11 @@ HLS/DASH downloads write to an extensionless work file, so ffmpeg remux calls pa
 
 Plain, unencrypted HLS media playlists whose segments are ordinary `.ts` files are downloaded by the built-in segment downloader. This preserves browser-captured request headers and avoids ffmpeg HLS replay quirks with signed CDN playlists. Complex HLS playlists such as encrypted, byte-range, or fMP4/init-map streams stay on the ffmpeg fallback path.
 
+The built-in HLS path downloads at most four segments concurrently per job, writes results in playlist order, and waits
+for all active workers to settle before deleting temporary segments. The first failure or cancellation aborts sibling
+workers and removes both the segment directory and partial stitched output. This bound is part of the memory, socket, and
+origin-load contract; changing it requires a representative multi-job stress measurement.
+
 HLS progress should come from media-playlist `#EXTINF` durations when every media segment has a finite positive duration.
 If even one segment lacks a valid duration, the built-in downloader falls back to completed segment count and the ffmpeg
 path remains indeterminate. DASH progress uses static MPD `mediaPresentationDuration`, a sole `Period@duration`, or
@@ -206,6 +227,11 @@ If a rejected HLS remux failed because of timestamp or duration inflation, the f
 Do not replace that with trimming flags such as `-shortest` or `-t`. The transcode should still decode the source; the fix is to preserve timestamp intent, not to clip the output after ffmpeg has already expanded discontinuities into extra duration.
 
 Keep the post-transcode duration guard so a future ffmpeg behavior change fails the job instead of saving another inflated MP4.
+
+Subprocess output capture is bounded: ffmpeg stderr keeps only a 16 KiB diagnostic tail and ffprobe-style stdout is capped
+at 4 MiB. Timestamp validation preserves an early matching warning even after later stderr would evict it from the tail.
+Exceeding the stdout cap terminates the process and fails explicitly rather than allowing an untrusted subprocess response
+to grow server memory without a limit.
 
 Selected subtitles are downloaded in the explicit `adding_subtitles` phase after the media source has been normalized. `QueueRunner`
 downloads only selected supported tracks. For plain subtitle files it preserves the captured request context; for subtitle

@@ -5,7 +5,7 @@ import type { MediaCandidate } from '../../shared/types.js';
 import { latestFfmpegTime } from '../media-processing/mediaProcessor.js';
 import { canDownloadPlainHlsSegments, completeHlsSegmentDurationSeconds, parseHlsDurationSeconds, parseHlsResourceUrls, parseHlsSegments, selectBestHlsVariant, type HlsSegment } from './hls.js';
 import { parseDashDurationSeconds, selectBestDashRenditions } from './dash.js';
-import { JobCanceledError, onAbort, throwIfAborted } from '../utils/cancellation.js';
+import { isCancellationError, JobCanceledError, onAbort, throwIfAborted } from '../utils/cancellation.js';
 import { requestHeadersForUrl } from '../utils/downloadRequestHeaders.js';
 import { logJobEvent, safeUrlParts, shortMessage } from '../utils/jobLogger.js';
 import { assertPublicHttpUrlSyntax } from '../utils/networkSafety.js';
@@ -37,6 +37,7 @@ export type PublicUrlValidator = (url: string) => Promise<string>;
 export type PublicMediaSessionFactory = (options?: PublicHttpProxyOptions) => Promise<PublicMediaSessionLike>;
 
 const MAX_SAFE_REDIRECTS = 5;
+const HLS_SEGMENT_CONCURRENCY = 4;
 
 export class DownloadEngine {
   constructor(
@@ -176,7 +177,7 @@ export class DownloadEngine {
       : await this.fetchText(variantUrl, candidate.url, candidate.headers, session, signal);
     const segments = parseHlsSegments(mediaManifest, variantUrl);
     const resourceUrls = parseHlsResourceUrls(mediaManifest, variantUrl);
-    await Promise.all(resourceUrls.map((resourceUrl) => this.validatePublicUrl(resourceUrl)));
+    await runBounded(resourceUrls, HLS_SEGMENT_CONCURRENCY, (resourceUrl) => this.validatePublicUrl(resourceUrl), signal);
     const plainSegmentDownload = canDownloadPlainHlsSegments(mediaManifest, segments);
     const durationSeconds = parseHlsDurationSeconds(mediaManifest);
     logJobEvent('info', 'hls-manifest-selected', {
@@ -217,55 +218,37 @@ export class DownloadEngine {
     const segmentDirectory = `${outputPath}.segments-${process.pid}-${Date.now()}`;
     fs.mkdirSync(segmentDirectory, { recursive: true });
     const totalDuration = completeHlsSegmentDurationSeconds(segments);
-    const downloadedSegments: Array<{ durationSeconds: number | null; filePath: string }> = [];
+    const downloadedSegments = segments.map((segment, index) => ({
+      durationSeconds: segment.durationSeconds,
+      filePath: path.join(segmentDirectory, `segment-${String(index + 1).padStart(6, '0')}.ts`)
+    }));
     let completedDuration = 0;
+    let completedCount = 0;
+    let completed = false;
 
-    const progressForIndex = (index: number): number => {
+    const completedProgress = (): number => {
       if (totalDuration !== null) {
         return completedDuration / totalDuration;
       }
-      return (index + 1) / segments.length;
+      return completedCount / segments.length;
     };
 
     try {
-      for (let index = 0; index < segments.length; index += 1) {
-        throwIfAborted(signal);
-        const segment = segments[index];
-        const segmentPath = path.join(segmentDirectory, `segment-${String(index + 1).padStart(6, '0')}.ts`);
-        const stream = fs.createWriteStream(segmentPath, { flags: 'w' });
-        const response = await this.fetchPublic(segment.uri, capturedUrl, headers, session, { signal });
-        if (!response.ok) {
-          await response.body?.cancel();
-          throw new Error(`HLS segment ${index + 1} request failed with HTTP ${response.status}`);
-        }
-        if (!response.body) {
-          throw new Error(`HLS segment ${index + 1} response did not include a body`);
-        }
-
-        const reader = response.body.getReader();
-        const removeAbortListener = onAbort(signal, () => {
-          void reader.cancel().catch(() => undefined);
-          stream.destroy();
-        });
-        try {
-          while (true) {
-            throwIfAborted(signal);
-            const { done, value } = await reader.read();
-            if (done) {
-              break;
-            }
-            await writeChunk(stream, value);
-            onProgress(activityUpdate());
-          }
-        } finally {
-          removeAbortListener();
-        }
-        await endWriteStream(stream);
-        downloadedSegments.push({ durationSeconds: segment.durationSeconds, filePath: segmentPath });
-
+      await runBounded(segments, HLS_SEGMENT_CONCURRENCY, async (segment, index, segmentSignal) => {
+        await this.downloadHlsSegment(
+          segment,
+          index,
+          capturedUrl,
+          headers,
+          downloadedSegments[index].filePath,
+          onProgress,
+          session,
+          segmentSignal
+        );
         completedDuration += segment.durationSeconds ?? 0;
-        onProgress(progressUpdate(Math.min(0.99, progressForIndex(index))));
-      }
+        completedCount += 1;
+        onProgress(progressUpdate(Math.min(0.99, completedProgress())));
+      }, signal);
 
       try {
         await stitchDownloadedHlsSegments(downloadedSegments, outputPath, () => onProgress(activityUpdate()), signal);
@@ -275,6 +258,9 @@ export class DownloadEngine {
           segmentCount: downloadedSegments.length
         });
       } catch (error) {
+        if (signal?.aborted || isCancellationError(error)) {
+          throw new JobCanceledError();
+        }
         logJobEvent('warn', 'hls-segments-stitch-fallback', {
           error: shortMessage(error),
           jobId: jobIdFromOutputPath(outputPath),
@@ -284,14 +270,63 @@ export class DownloadEngine {
         fs.rmSync(outputPath, { force: true });
         await concatenateDownloadedHlsSegments(downloadedSegments, outputPath, () => onProgress(activityUpdate()), signal);
       }
-    } catch (error) {
-      throw error;
+      completed = true;
     } finally {
-      fs.rmSync(segmentDirectory, { recursive: true, force: true });
+      await fs.promises.rm(segmentDirectory, { recursive: true, force: true });
+      if (!completed) {
+        await fs.promises.rm(outputPath, { force: true });
+      }
     }
 
     onProgress(progressUpdate(1));
     return { filePath: outputPath, bytesWritten: fs.statSync(outputPath).size };
+  }
+
+  private async downloadHlsSegment(
+    segment: HlsSegment,
+    index: number,
+    capturedUrl: string,
+    headers: Record<string, string>,
+    segmentPath: string,
+    onProgress: TaskProgressCallback,
+    session: PublicMediaSessionLike,
+    signal: AbortSignal
+  ): Promise<void> {
+    const response = await this.fetchPublic(segment.uri, capturedUrl, headers, session, { signal });
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw new Error(`HLS segment ${index + 1} request failed with HTTP ${response.status}`);
+    }
+    if (!response.body) {
+      throw new Error(`HLS segment ${index + 1} response did not include a body`);
+    }
+
+    const stream = fs.createWriteStream(segmentPath, { flags: 'w' });
+    const reader = response.body.getReader();
+    const removeAbortListener = onAbort(signal, () => {
+      void reader.cancel().catch(() => undefined);
+      stream.destroy();
+    });
+    try {
+      while (true) {
+        throwIfAborted(signal);
+        const { done, value } = await reader.read();
+        if (done) {
+          break;
+        }
+        await writeChunk(stream, value);
+        onProgress(activityUpdate());
+      }
+      await endWriteStream(stream);
+    } catch (error) {
+      stream.destroy();
+      if (signal.aborted) {
+        throw new JobCanceledError();
+      }
+      throw error;
+    } finally {
+      removeAbortListener();
+    }
   }
 
   private async downloadDash(
@@ -496,4 +531,48 @@ async function writeChunk(stream: fs.WriteStream, chunk: Uint8Array): Promise<vo
 
 function isRedirect(status: number): boolean {
   return status === 301 || status === 302 || status === 303 || status === 307 || status === 308;
+}
+
+async function runBounded<T>(
+  items: readonly T[],
+  concurrency: number,
+  task: (item: T, index: number, signal: AbortSignal) => Promise<unknown>,
+  parentSignal?: AbortSignal
+): Promise<void> {
+  const controller = new AbortController();
+  const removeParentAbortListener = onAbort(parentSignal, () => controller.abort());
+  let nextIndex = 0;
+  let firstError: unknown;
+
+  const worker = async () => {
+    while (firstError === undefined && !controller.signal.aborted) {
+      const index = nextIndex;
+      if (index >= items.length) {
+        return;
+      }
+      nextIndex += 1;
+      try {
+        await task(items[index], index, controller.signal);
+      } catch (error) {
+        if (firstError === undefined) {
+          firstError = error;
+          controller.abort();
+        }
+      }
+    }
+  };
+
+  try {
+    const workers = Array.from({ length: Math.min(concurrency, items.length) }, () => worker());
+    await Promise.allSettled(workers);
+  } finally {
+    removeParentAbortListener();
+  }
+
+  if (parentSignal?.aborted) {
+    throw new JobCanceledError();
+  }
+  if (firstError !== undefined) {
+    throw firstError;
+  }
 }

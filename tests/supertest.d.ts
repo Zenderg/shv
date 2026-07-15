@@ -2,6 +2,7 @@ declare module 'supertest' {
   interface TestResponse {
     body: unknown;
     headers: Record<string, string | string[] | undefined>;
+    text: string;
   }
 
   interface TestRequest {
@@ -11,6 +12,7 @@ declare module 'supertest' {
     parse(
       parser: (response: NodeJS.ReadableStream, callback: (error: Error | null, body?: unknown) => void) => void
     ): TestRequest;
+    query(params: Record<string, string | number | boolean>): TestRequest;
     expect(status: number): Promise<TestResponse>;
   }
 

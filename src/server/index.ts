@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import compression from 'compression';
 import express, { type RequestHandler } from 'express';
 import { fileURLToPath } from 'node:url';
 import { createCsrfToken, createRouter, errorHandler } from './api/routes.js';
@@ -16,6 +17,7 @@ import { MediaLibraryService } from './media-library/mediaLibraryService.js';
 import { MediaProcessor } from './media-processing/mediaProcessor.js';
 import { YtDlpSourceExtractor } from './source-extractors/sourceExtractorService.js';
 import { openDatabase } from './storage/database.js';
+import { apiCachePolicy, apiNotFound, createWebRouter, resourceNotFound } from './web/staticDelivery.js';
 
 const CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
@@ -55,15 +57,16 @@ export function createApp() {
   const app = express();
   app.disable('x-powered-by');
   app.use(securityHeaders());
+  app.use(compression({ threshold: 1_024 }));
+  app.use('/api', apiCachePolicy);
   app.use(express.json({ limit: '1mb' }));
   app.use(createRouter({ config, csrfToken, categories, extensionDebug, jobs, queueRunner, liveBrowser, mediaFiles, mediaLibrary }));
+  app.use('/api', apiNotFound);
+  app.use(['/media', '/thumbnails', '/extension'], resourceNotFound);
 
   const webRoot = resolveWebRoot();
   if (fs.existsSync(webRoot)) {
-    app.use(express.static(webRoot));
-    app.get('/{*splat}', (_request, response) => {
-      response.sendFile(path.join(webRoot, 'index.html'));
-    });
+    app.use(createWebRouter(webRoot));
   }
 
   app.use(errorHandler);

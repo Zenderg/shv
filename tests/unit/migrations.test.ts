@@ -54,5 +54,8 @@ describe('applyMigrations', () => {
     expect(jobColumns).toEqual(expect.arrayContaining(['active_run_id', 'output_relative_path']));
     expect(mediaColumns).toContain('job_id');
     expect(migrationIds).toContain(5);
+    expect(migrationIds).toContain(6);
+    const mediaIndexes = db.prepare('PRAGMA index_list(media_items)').all().map((row) => String((row as { name: unknown }).name));
+    expect(mediaIndexes).toContain('media_items_category_created_at_id_idx');
   });
 });

@@ -4,6 +4,45 @@
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
 }
 
+.virtualLibrary {
+  min-height: 1px;
+  width: 100%;
+}
+
+.virtualLibraryCanvas {
+  position: relative;
+  width: 100%;
+}
+
+.virtualLibraryRow,
+.virtualLibraryStatusRow {
+  display: grid;
+  gap: 18px;
+  left: 0;
+  padding-bottom: 18px;
+  position: absolute;
+  top: 0;
+  width: 100%;
+}
+
+.libraryLoadStatus {
+  align-items: center;
+  color: var(--color-muted);
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  min-height: 64px;
+  text-align: center;
+}
+
+.libraryLoadStatus .secondaryButton {
+  background: var(--color-surface-muted);
+  border-radius: 6px;
+  color: var(--color-text);
+  min-height: 40px;
+  padding: 0 14px;
+}
+
 .videoCard {
   box-shadow: var(--shadow-card);
   display: grid;

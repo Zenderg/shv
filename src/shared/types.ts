@@ -36,6 +36,12 @@ export interface MediaItem {
   updatedAt: string;
 }
 
+export interface MediaPage {
+  items: MediaItem[];
+  nextCursor: string | null;
+  total: number;
+}
+
 export interface DownloadJob {
   id: string;
   sourceUrl: string;

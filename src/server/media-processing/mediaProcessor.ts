@@ -1,12 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
 import { Transform, type Readable, type Writable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import type { SubtitleTrack } from '../../shared/types.js';
-import { JobCanceledError, onAbort, throwIfAborted } from '../utils/cancellation.js';
+import { JobCanceledError, throwIfAborted } from '../utils/cancellation.js';
 import { activityUpdate, progressUpdate, type TaskProgressCallback } from '../utils/taskProgress.js';
-import { latestFfmpegTime, runMediaCommand, runProgressFfmpeg, runWithStderr } from './mediaProcessRunner.js';
+import { runMediaCommand, runProgressFfmpeg, runWithStderr } from './mediaProcessRunner.js';
 
 export { latestFfmpegTime } from './mediaProcessRunner.js';
 
@@ -180,39 +179,7 @@ export class MediaProcessor {
     signal?: AbortSignal,
     options: TranscodeOptions = {}
   ): Promise<void> {
-    await new Promise<void>((resolve, reject) => {
-      const child = spawn('ffmpeg', buildTranscodeArgs(inputPath, outputPath, options), { stdio: ['ignore', 'ignore', 'pipe'] });
-      const removeAbortListener = onAbort(signal, () => child.kill('SIGTERM'));
-      const stderr: Buffer[] = [];
-      let progressLog = '';
-      let lastReportedTime = -1;
-      child.stderr.on('data', (chunk: Buffer) => {
-        stderr.push(chunk);
-        progressLog = `${progressLog}${chunk.toString('utf8')}`.slice(-12000);
-        const current = latestFfmpegTime(progressLog);
-        if (current != null && current > lastReportedTime) {
-          lastReportedTime = current;
-          onProgress(durationSeconds ? progressUpdate(Math.min(0.99, current / durationSeconds)) : activityUpdate());
-        }
-      });
-      child.on('error', (error) => {
-        removeAbortListener();
-        reject(error);
-      });
-      child.on('close', (code) => {
-        removeAbortListener();
-        if (signal?.aborted) {
-          reject(new JobCanceledError());
-          return;
-        }
-        if (code === 0) {
-          onProgress(progressUpdate(1));
-          resolve();
-        } else {
-          reject(new Error(`ffmpeg exited with code ${code}: ${Buffer.concat(stderr).toString('utf8')}`));
-        }
-      });
-    });
+    await runProgressFfmpeg(buildTranscodeArgs(inputPath, outputPath, options), durationSeconds, onProgress, signal);
   }
 
   private async remuxToMp4(
@@ -222,56 +189,24 @@ export class MediaProcessor {
     onProgress: TaskProgressCallback,
     signal?: AbortSignal
   ): Promise<void> {
-    await new Promise<void>((resolve, reject) => {
-      const child = spawn('ffmpeg', [
-        '-hide_banner',
-        '-y',
-        '-i',
-        inputPath,
-        '-nostats',
-        '-progress',
-        'pipe:2',
-        '-map',
-        '0:v:0',
-        '-map',
-        '0:a:0?',
-        '-c',
-        'copy',
-        '-movflags',
-        '+faststart',
-        outputPath
-      ], { stdio: ['ignore', 'ignore', 'pipe'] });
-      const removeAbortListener = onAbort(signal, () => child.kill('SIGTERM'));
-      const stderr: Buffer[] = [];
-      let progressLog = '';
-      let lastReportedTime = -1;
-      child.stderr.on('data', (chunk: Buffer) => {
-        stderr.push(chunk);
-        progressLog = `${progressLog}${chunk.toString('utf8')}`.slice(-12000);
-        const current = latestFfmpegTime(progressLog);
-        if (current != null && current > lastReportedTime) {
-          lastReportedTime = current;
-          onProgress(durationSeconds ? progressUpdate(Math.min(0.99, current / durationSeconds)) : activityUpdate());
-        }
-      });
-      child.on('error', (error) => {
-        removeAbortListener();
-        reject(error);
-      });
-      child.on('close', (code) => {
-        removeAbortListener();
-        if (signal?.aborted) {
-          reject(new JobCanceledError());
-          return;
-        }
-        if (code === 0) {
-          onProgress(progressUpdate(1));
-          resolve();
-        } else {
-          reject(new Error(`ffmpeg exited with code ${code}: ${Buffer.concat(stderr).toString('utf8')}`));
-        }
-      });
-    });
+    await runProgressFfmpeg([
+      '-hide_banner',
+      '-y',
+      '-i',
+      inputPath,
+      '-nostats',
+      '-progress',
+      'pipe:2',
+      '-map',
+      '0:v:0',
+      '-map',
+      '0:a:0?',
+      '-c',
+      'copy',
+      '-movflags',
+      '+faststart',
+      outputPath
+    ], durationSeconds, onProgress, signal);
   }
 
   private async thumbnail(inputPath: string, thumbnailPath: string, signal?: AbortSignal): Promise<void> {
@@ -515,7 +450,12 @@ function shortProcessingMessage(error: unknown): string {
 }
 
 async function assertPlayableTimestamps(filePath: string, signal?: AbortSignal): Promise<void> {
-  const stderr = await runWithStderr('ffmpeg', ['-hide_banner', '-v', 'warning', '-i', filePath, '-map', '0:v:0', '-f', 'null', '-'], signal);
+  const stderr = await runWithStderr(
+    'ffmpeg',
+    ['-hide_banner', '-v', 'warning', '-i', filePath, '-map', '0:v:0', '-f', 'null', '-'],
+    signal,
+    hasTimestampWarnings
+  );
   if (hasTimestampWarnings(stderr)) {
     throw new Error(`ffmpeg reported invalid timestamps while validating remuxed output: ${firstTimestampWarning(stderr)}`);
   }

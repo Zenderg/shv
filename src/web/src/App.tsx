@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { SourceExtensionKind } from '../../shared/sourceExtension';
 import { AppHeader } from './components/AppHeader';
 import { AppSidebar } from './components/AppSidebar';
@@ -42,6 +42,7 @@ const EMPTY_QUEUE: QueueSnapshot = { jobs: [], candidatesByJobId: {} };
 
 export function App() {
   const queryClient = useQueryClient();
+  const workspaceRef = useRef<HTMLElement>(null);
   const categoriesQuery = useCategoriesQuery();
   const queueQuery = useQueueQuery();
   const runtimeConfigQuery = useRuntimeConfigQuery();
@@ -68,7 +69,8 @@ export function App() {
     categories.find((category) => category.id === selectedCategoryId) ?? categories[0] ?? null;
   const currentCategoryId = selectedCategory?.id ?? '';
   const mediaQuery = useMediaQuery(currentCategoryId);
-  const media = mediaQuery.data ?? [];
+  const media = useMemo(() => mediaQuery.data?.pages.flatMap((mediaPage) => mediaPage.items) ?? [], [mediaQuery.data]);
+  const mediaTotal = mediaQuery.data?.pages[0]?.total ?? 0;
   const queue = queueQuery.data ?? EMPTY_QUEUE;
   const sortedJobs = useMemo(() => sortQueueJobs(queue.jobs), [queue.jobs]);
   const queueCounts = useMemo(() => countQueueJobs(queue.jobs), [queue.jobs]);
@@ -112,6 +114,10 @@ export function App() {
     };
   }, [runtimeConfigQuery.data?.sourceExtensionProfile]);
 
+  useEffect(() => {
+    workspaceRef.current?.scrollTo({ top: 0 });
+  }, [currentCategoryId, page]);
+
   function showDialog(nextDialog: DialogState) {
     setDialogError(null);
     setDialog(nextDialog);
@@ -154,7 +160,6 @@ export function App() {
         setPage('queue');
         await Promise.all([
           queryClient.invalidateQueries({ queryKey: appQueryKeys.categories }),
-          queryClient.invalidateQueries({ queryKey: appQueryKeys.mediaRoot }),
           queryClient.invalidateQueries({ queryKey: appQueryKeys.queue })
         ]);
       }
@@ -282,14 +287,14 @@ export function App() {
         selectedCategoryId={currentCategoryId}
       />
 
-      <section className="workspace">
+      <section className="workspace" ref={workspaceRef}>
         <AppHeader
           activeProblems={activeProblems}
           busy={dialogBusy || categoriesQuery.isPending}
           categoryName={selectedCategory?.name ?? null}
           extensionUpdateAvailable={extensionStatus?.kind === 'outdated'}
           loading={page === 'queue' ? queueLoading : libraryLoading}
-          mediaCount={media.length}
+          mediaCount={mediaTotal}
           onAdd={() => showDialog({ kind: 'add' })}
           onUpdateExtension={() => {
             if (extensionStatus?.kind === 'outdated') {
@@ -357,7 +362,7 @@ export function App() {
               () => api.updateMedia(dialog.item.id, body),
               async () => {
                 setDialog({ kind: 'none' });
-                await queryClient.invalidateQueries({ queryKey: appQueryKeys.mediaRoot });
+                await queryClient.resetQueries({ queryKey: appQueryKeys.mediaRoot });
               }
             )
           }
@@ -398,7 +403,7 @@ export function App() {
                 setDialog({ kind: 'none' });
                 await Promise.all([
                   queryClient.invalidateQueries({ queryKey: appQueryKeys.categories }),
-                  queryClient.invalidateQueries({ queryKey: appQueryKeys.mediaRoot }),
+                  queryClient.resetQueries({ queryKey: appQueryKeys.mediaRoot }),
                   queryClient.invalidateQueries({ queryKey: appQueryKeys.queue })
                 ]);
               }
@@ -420,7 +425,7 @@ export function App() {
               () => api.deleteMedia(dialog.item.id),
               async () => {
                 setDialog({ kind: 'none' });
-                await queryClient.invalidateQueries({ queryKey: appQueryKeys.mediaRoot });
+                await queryClient.resetQueries({ queryKey: appQueryKeys.mediaRoot });
               }
             )
           }
@@ -467,12 +472,18 @@ export function App() {
       <LibraryGrid
         categories={categories}
         categoryName={selectedCategory?.name ?? null}
+        hasNextPage={Boolean(mediaQuery.hasNextPage)}
+        isFetchingNextPage={mediaQuery.isFetchingNextPage}
         items={media}
+        nextPageError={mediaQuery.isFetchNextPageError}
         onAdd={() => showDialog({ kind: 'add' })}
         onCreateCategory={() => showDialog({ kind: 'createCategory' })}
         onDelete={(item) => showDialog({ item, kind: 'deleteMedia' })}
         onEdit={(item) => showDialog({ kind: 'edit', item })}
+        onLoadMore={() => void mediaQuery.fetchNextPage()}
         onPlay={(item) => showDialog({ kind: 'play', item })}
+        scrollElementRef={workspaceRef}
+        total={mediaTotal}
       />
     );
   }

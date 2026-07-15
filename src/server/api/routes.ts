@@ -13,7 +13,7 @@ import type { QueueRunner } from '../jobs/queueRunner.js';
 import type { LiveBrowserService } from '../browser-live/liveBrowserService.js';
 import type { ExtensionDebugService } from '../extension-debug/extensionDebugService.js';
 import type { MediaFiles } from '../media-library/mediaFiles.js';
-import type { MediaLibraryService } from '../media-library/mediaLibraryService.js';
+import { InvalidMediaCursorError, type MediaLibraryService } from '../media-library/mediaLibraryService.js';
 import { buildZipArchive, type ZipEntryInput } from '../utils/zipArchive.js';
 import { candidateResponses, queueSnapshotResponse } from './candidateResponses.js';
 import {
@@ -108,8 +108,12 @@ export function createRouter(services: RouteServices): Router {
   });
 
   router.get('/api/media', (request, response) => {
-    const categoryId = typeof request.query.categoryId === 'string' ? request.query.categoryId : undefined;
-    response.json(services.mediaLibrary.list(categoryId));
+    const query = z.object({
+      categoryId: z.string().uuid(),
+      cursor: z.string().min(1).max(1_024).optional(),
+      limit: z.coerce.number().int().min(1).max(100).default(60)
+    }).parse(request.query);
+    response.json(services.mediaLibrary.page(query.categoryId, query.limit, query.cursor));
   });
 
   router.patch('/api/media/:id', (request, response) => {
@@ -669,6 +673,10 @@ export function errorHandler(error: unknown, _request: Request, response: Respon
   }
   if (error instanceof JobStateConflictError) {
     response.status(409).json({ error: error.code, message: error.message });
+    return;
+  }
+  if (error instanceof InvalidMediaCursorError) {
+    response.status(400).json({ error: 'invalid_media_cursor', message: error.message });
     return;
   }
   console.error('[shv] api-error', error);

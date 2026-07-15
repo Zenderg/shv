@@ -73,6 +73,35 @@ describe('MediaLibraryService', () => {
     expect(jobs.outputRelativePath(job.id)).toBeNull();
     expect((db.prepare('SELECT job_id FROM media_items WHERE id = ?').get(first.id) as { job_id: string }).job_id).toBe(job.id);
   });
+
+  test('paginates a category by a stable created-at and id cursor', () => {
+    const { categories, db, mediaLibrary } = createServices();
+    const category = categories.create('test');
+    const otherCategory = categories.create('other');
+    const insert = db.prepare(
+      `INSERT INTO media_items (
+        id, category_id, title, filename, relative_path, size_bytes, source_url, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)`
+    );
+    const createdAt = '2026-07-15T12:00:00.000Z';
+    for (const id of ['a', 'b', 'c']) {
+      insert.run(id, category.id, id, `${id}.mp4`, `${category.folderName}/${id}.mp4`, `https://example.test/${id}`, createdAt, createdAt);
+    }
+    insert.run('other', otherCategory.id, 'other', 'other.mp4', `${otherCategory.folderName}/other.mp4`, 'https://example.test/other', createdAt, createdAt);
+
+    const first = mediaLibrary.page(category.id, 2);
+    expect(first.items.map((item) => item.id)).toEqual(['c', 'b']);
+    expect(first.total).toBe(3);
+    expect(first.nextCursor).not.toBeNull();
+
+    insert.run('new-top', category.id, 'new', 'new.mp4', `${category.folderName}/new.mp4`, 'https://example.test/new', '2026-07-15T13:00:00.000Z', '2026-07-15T13:00:00.000Z');
+    const second = mediaLibrary.page(category.id, 2, first.nextCursor!);
+
+    expect(second.items.map((item) => item.id)).toEqual(['a']);
+    expect(second.nextCursor).toBeNull();
+    expect(second.total).toBe(4);
+    expect(() => mediaLibrary.page(otherCategory.id, 2, first.nextCursor!)).toThrow('another category');
+  });
 });
 
 function createServices() {

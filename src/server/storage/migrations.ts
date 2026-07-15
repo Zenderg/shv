@@ -117,6 +117,14 @@ export const migrations: Migration[] = [
         ON media_items(job_id)
         WHERE job_id IS NOT NULL;
     `
+  },
+  {
+    id: 6,
+    name: 'media_library_keyset_pagination',
+    sql: `
+      CREATE INDEX media_items_category_created_at_id_idx
+        ON media_items(category_id, created_at DESC, id DESC);
+    `
   }
 ];
 

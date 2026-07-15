@@ -1,5 +1,5 @@
-import { useQuery } from '@tanstack/react-query';
-import { api } from '../../lib/api';
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
+import { api, type MediaPage } from '../../lib/api';
 
 export const appQueryKeys = {
   categories: ['categories'] as const,
@@ -17,9 +17,11 @@ export function useCategoriesQuery() {
 }
 
 export function useMediaQuery(categoryId: string) {
-  return useQuery({
+  return useInfiniteQuery({
     enabled: categoryId.length > 0,
-    queryFn: () => api.media(categoryId),
+    getNextPageParam: (lastPage: MediaPage) => lastPage.nextCursor ?? undefined,
+    initialPageParam: null as string | null,
+    queryFn: ({ pageParam }: { pageParam: string | null }) => api.media(categoryId, pageParam),
     queryKey: appQueryKeys.media(categoryId)
   });
 }
