@@ -241,6 +241,7 @@ export function App() {
       }
       if (job) {
         await openSourceWithExtension({ jobId: job.id, sourceUrl: job.sourceUrl, titleHint: job.titleHint }, profile);
+        setSourceTabOpenedJobIds((current) => ({ ...current, [job.id]: true }));
       }
       setExtensionDialog({ kind: 'none' });
     } catch (caught) {
