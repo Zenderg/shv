@@ -1,8 +1,8 @@
-# shv
+# shv — Self-hosted Video Library and Downloader
 
-Self-hosted local video library and downloader for a trusted home LAN or VPN.
+`shv` is a personal, self-hosted video library and downloader for one trusted user on a home LAN or VPN. It stores videos in local category folders and supports direct video files, HLS, DASH, browser-assisted source capture, and YouTube through `yt-dlp`.
 
-`shv` is intentionally personal and local: one user, Docker Compose deployment, no built-in accounts, and no public-internet deployment assumption.
+The application runs with Docker Compose and combines a React web UI, a TypeScript and Express backend, SQLite metadata, FFmpeg media processing, and a Chromium helper extension. It has no built-in accounts and does not support public-internet deployment.
 
 ## Features
 
