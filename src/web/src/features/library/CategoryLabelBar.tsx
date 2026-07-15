@@ -25,19 +25,22 @@ export function CategoryLabelBar({
         >
           All
         </button>
-        {summary.items.map((label) => (
-          <button
-            aria-pressed={activeLabel?.toLowerCase() === label.name.toLowerCase()}
-            className="filterChip"
-            key={label.name.toLowerCase()}
-            onClick={() => onSelect(label.name)}
-            title={`${label.name}: ${label.count} videos`}
-            type="button"
-          >
-            <span>{label.name}</span>
-            <span aria-hidden="true" className="filterChipCount">{label.count}</span>
-          </button>
-        ))}
+        {summary.items.map((label) => {
+          const isActive = activeLabel?.toLowerCase() === label.name.toLowerCase();
+          return (
+            <button
+              aria-pressed={isActive}
+              className="filterChip"
+              key={label.name.toLowerCase()}
+              onClick={() => onSelect(isActive ? null : label.name)}
+              title={isActive ? `Clear ${label.name} filter` : `${label.name}: ${label.count} videos`}
+              type="button"
+            >
+              <span>{label.name}</span>
+              <span aria-hidden="true" className="filterChipCount">{label.count}</span>
+            </button>
+          );
+        })}
       </div>
       <button className="manageLabelsButton" onClick={onManage} type="button">Manage</button>
     </section>

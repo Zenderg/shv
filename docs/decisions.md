@@ -141,6 +141,8 @@ their current saved videos instead of owning a separately maintained label catal
   automatically.
 - Creating labels only through video assignment keeps the normal add/edit flow compact and prevents empty organizational
   objects.
+- Compact label chips on cards make a video's overlapping classifications visible where the user is already browsing;
+  selecting a chip reuses the category's single-select filter rather than introducing another navigation model.
 - A category-scoped management dialog covers the uncommon bulk rename/remove workflow without adding a permanent global
   administration surface.
 
@@ -149,10 +151,12 @@ their current saved videos instead of owning a separately maintained label catal
 - Nested category folders.
 - A manually maintained category-label catalog with empty labels.
 - A standalone global label-management page.
-- Persistently rendering every label on every library card.
+- Putting labels over thumbnails, where they would compete with playback and duration controls.
 
-Filtering is single-select and server-side so pagination totals and cursors remain truthful. Renaming to an existing label
-merges assignments within the current category; other categories are not changed.
+Filtering is single-select and server-side so pagination totals and cursors remain truthful. Category-bar chips toggle
+their active filter off on a second selection; card chips only select a filter because their role is navigation from a
+video's metadata. Renaming to an existing label merges assignments within the current category; other categories are not
+changed.
 
 ## Queue First, No Metadata Preview Gate
 

@@ -25,6 +25,7 @@ interface LibraryGridProps {
   onEdit: (item: MediaItem) => void;
   onLoadMore: () => void;
   onPlay: (item: MediaItem) => void;
+  onSelectLabel: (label: string) => void;
   scrollElementRef: RefObject<HTMLElement | null>;
   total: number;
 }
@@ -67,6 +68,7 @@ function EmptyLibrary({ activeLabel, categoryName, onAdd, onClearLabel, onCreate
 }
 
 function VirtualLibraryGrid({
+  activeLabel,
   hasNextPage,
   isFetchingNextPage,
   items,
@@ -75,6 +77,7 @@ function VirtualLibraryGrid({
   onEdit,
   onLoadMore,
   onPlay,
+  onSelectLabel,
   scrollElementRef,
   total
 }: LibraryGridProps) {
@@ -178,12 +181,14 @@ function VirtualLibraryGrid({
                 const itemIndex = virtualRow.index * columnCount + columnIndex;
                 return (
                   <VideoCard
+                    activeLabel={activeLabel}
                     item={item}
                     itemIndex={itemIndex}
                     key={item.id}
                     onDelete={onDelete}
                     onEdit={onEdit}
                     onPlay={onPlay}
+                    onSelectLabel={onSelectLabel}
                     total={total}
                   />
                 );
@@ -200,18 +205,22 @@ function VirtualLibraryGrid({
 }
 
 function VideoCard({
+  activeLabel,
   item,
   itemIndex,
   onDelete,
   onEdit,
   onPlay,
+  onSelectLabel,
   total
 }: {
+  activeLabel: string | null;
   item: MediaItem;
   itemIndex: number;
   onDelete: (item: MediaItem) => void;
   onEdit: (item: MediaItem) => void;
   onPlay: (item: MediaItem) => void;
+  onSelectLabel: (label: string) => void;
   total: number;
 }) {
   return (
@@ -238,6 +247,23 @@ function VideoCard({
       <div className="videoMeta">
         <h2>{item.title}</h2>
         <p>{formatResolution(item)} · {formatBytes(item.sizeBytes)}</p>
+        {item.labels.length > 0 ? (
+          <div aria-label="Video labels" className="videoCardLabels" role="group">
+            {item.labels.map((label) => (
+              <button
+                aria-label={`Filter videos by ${label}`}
+                aria-pressed={activeLabel?.toLowerCase() === label.toLowerCase()}
+                className="videoCardLabel"
+                key={label.toLowerCase()}
+                onClick={() => onSelectLabel(label)}
+                title={`Show videos labeled ${label}`}
+                type="button"
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        ) : null}
         <MediaActionsMenu item={item} onDelete={onDelete} onEdit={onEdit} />
       </div>
     </article>

@@ -371,6 +371,7 @@ export function App() {
         onEdit={(item) => showDialog({ kind: 'edit', item })}
         onLoadMore={() => void mediaQuery.fetchNextPage()}
         onPlay={(item) => showDialog({ kind: 'play', item })}
+        onSelectLabel={libraryLabels.select}
         scrollElementRef={workspaceRef}
         total={mediaTotal}
       />

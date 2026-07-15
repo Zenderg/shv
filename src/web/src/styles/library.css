@@ -201,6 +201,40 @@
   font-size: 13px;
 }
 
+.videoCardLabels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.videoCardLabel {
+  background: var(--color-surface-muted);
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  color: var(--color-muted);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  max-width: 100%;
+  min-height: 32px;
+  overflow: hidden;
+  padding: 0 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.videoCardLabel:hover {
+  border-color: var(--color-border-strong);
+  color: var(--color-text);
+}
+
+.videoCardLabel[aria-pressed="true"] {
+  background: var(--color-accent-strong);
+  border-color: var(--color-accent-strong);
+  color: var(--color-accent-contrast);
+}
+
 .mediaActionsButton {
   bottom: 12px;
   position: absolute;

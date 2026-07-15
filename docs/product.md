@@ -87,8 +87,10 @@ videos currently inside it. A label appears in a category when at least one save
 last such assignment is removed. There is no empty-label catalog or separate label-creation flow.
 
 The category label bar is a contextual, single-select server-side filter. `All` clears the filter; selecting a label
-shows only matching videos and reports the filtered count against the full category total. Labels stay out of persistent
-card metadata so the main browsing grid remains quiet. If an active label disappears, browsing returns to `All`.
+shows only matching videos and selecting that active label again clears the filter. The filtered count is reported against
+the full category total. Assigned labels also appear as compact chips on each video card; selecting one applies the same
+category filter, but card chips do not toggle an active filter off. If an active label disappears, browsing returns to
+`All`.
 
 Labels can be entered optionally while adding a link and can be replaced with any set while editing a saved video. The
 category-scoped management dialog renames a label across that category or removes it from every video in that category.
