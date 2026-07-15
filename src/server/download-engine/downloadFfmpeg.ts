@@ -1,9 +1,9 @@
 import type { DashRepresentation } from './dash.js';
 import { requestHeadersForUrl } from '../utils/downloadRequestHeaders.js';
-import { assertPublicHttpUrlSyntax } from '../utils/networkSafety.js';
+import { normalizeHttpUrl } from '../utils/mediaUrl.js';
 
 export function buildHlsFfmpegArgs(variantUrl: string, outputPath: string, proxyUrl: string): string[] {
-  assertPublicHttpUrlSyntax(variantUrl);
+  normalizeHttpUrl(variantUrl);
   return [
     '-y',
     ...ffmpegNetworkInputArgs(proxyUrl, { reconnectAtEof: false }),
@@ -35,9 +35,9 @@ export function buildDashFfmpegArgs(
     throw new Error('DASH manifest did not include a playable media representation');
   }
 
-  assertPublicHttpUrlSyntax(primaryInput);
+  normalizeHttpUrl(primaryInput);
   if (audio) {
-    assertPublicHttpUrlSyntax(audio.baseUrl);
+    normalizeHttpUrl(audio.baseUrl);
   }
 
   args.push(

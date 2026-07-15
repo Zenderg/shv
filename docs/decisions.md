@@ -38,6 +38,23 @@ If remote access is needed, an external reverse proxy, VPN, or access layer owns
 
 Local commands are still fine for tests, builds, scripts, seed data, and screenshot capture.
 
+## Container Network Defines Media Reachability
+
+**Decision:** The downloader accepts HTTP(S) media destinations reachable through the container's configured DNS and routing. It does not classify resolved addresses as public or private, and media URLs must not contain embedded credentials.
+
+**Why:**
+
+- The supported deployment is one trusted user on a home LAN or user-managed VPN, where operator-defined DNS and routing are part of intended media connectivity.
+- Address-range classification cannot distinguish an intentional local or VPN-routed source from an unwanted server-side request in this trust model, and it can reject valid routes.
+- One loopback media proxy keeps Node, browser-impersonated, and ffmpeg traffic on the same connection path. It resolves with system DNS and connects to an address from that snapshot, avoiding a second hostname lookup between resolution and connection.
+- Captured credentials remain origin-bound independently of destination address classification.
+
+**Rejected alternatives:**
+
+- Requiring every media destination to resolve only to globally routable addresses.
+- Maintaining host-specific or address-range exceptions for operator-defined network routes.
+- Removing the media proxy and duplicating transport and origin-lock behavior across downloader backends.
+
 ## Origin-Lock Authenticated Media Inputs
 
 **Decision:** ffmpeg inputs that receive captured request headers use a dedicated loopback proxy restricted to the input URL's origin.
@@ -46,16 +63,16 @@ Local commands are still fine for tests, builds, scripts, seed data, and screens
 
 - ffmpeg applies one header set to an input and can otherwise replay `Authorization` or `Cookie` after a cross-origin redirect.
 - The origin lock rejects that redirect before the destination receives a request while preserving legitimate same-origin redirects.
-- The proxy still validates the complete DNS snapshot for every connection, so the origin restriction and SSRF/DNS-rebinding protection compose instead of replacing one another.
+- The proxy resolves through system DNS and connects to an address from that snapshot, while the origin restriction is enforced independently of destination address classification.
 - This invariant is independent of an ffmpeg-version-specific redirect option and remains testable against the production distro package.
 
 **Rejected alternatives:**
 
-- Relying only on the general public-address proxy, which permits redirects between public origins and therefore does not keep credentials origin-bound.
+- Relying only on the general media proxy, which permits redirects between origins and therefore does not keep credentials origin-bound.
 - Depending on ffmpeg's `max_redirects` option, which is unavailable in the current stable Debian media package.
 - Moving the production browser runtime to a rolling distro or an unsupported musl-based image solely to obtain that option.
 
-The headerless HLS ffmpeg fallback continues to use the general validating proxy because its manifests may legitimately reference several public origins.
+The headerless HLS ffmpeg fallback continues to use the general media proxy because its manifests may legitimately reference several origins.
 
 ## TypeScript Modular Monolith
 

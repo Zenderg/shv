@@ -11,10 +11,10 @@ import {
 } from '../../src/server/download-engine/downloadEngine.js';
 import type { MediaCandidate } from '../../src/shared/types.js';
 import type { DashRepresentation } from '../../src/server/download-engine/dash.js';
-import type { PublicMediaSessionLike } from '../../src/server/utils/publicHttpProxy.js';
+import type { MediaSessionLike } from '../../src/server/utils/mediaHttpProxy.js';
 import { progressUpdate, type TaskProgressUpdate } from '../../src/server/utils/taskProgress.js';
 
-const unsafeTestSessionFactory = async (): Promise<PublicMediaSessionLike> => ({
+const testSessionFactory = async (): Promise<MediaSessionLike> => ({
   proxyUrl: 'http://127.0.0.1:1',
   close: async () => undefined,
   fetch: (url, init) => globalThis.fetch(url, init as RequestInit) as never
@@ -80,6 +80,24 @@ describe('DownloadEngine ffmpeg helpers', () => {
     expect(headerValues[0]).toContain('Authorization: Bearer secret');
     expect(headerValues[0]).toContain('Cookie: session=secret');
     expect(headerValues[1]).toBe('');
+  });
+
+  test('accepts DASH inputs reachable through container DNS and routing', () => {
+    const routedVideo = { ...video, baseUrl: 'http://198.18.3.203/video.webm' };
+    const localAudio = { ...audio, baseUrl: 'http://127.0.0.1/audio.webm' };
+    const args = buildDashFfmpegArgs(
+      routedVideo,
+      localAudio,
+      {},
+      '/work/source',
+      'http://198.18.3.203/manifest.mpd',
+      {
+        audio: 'http://127.0.0.1:9998',
+        video: 'http://127.0.0.1:9999'
+      }
+    );
+
+    expect(args).toEqual(expect.arrayContaining([routedVideo.baseUrl, localAudio.baseUrl]));
   });
 
   test('rejects DASH input without a direct media representation', () => {
@@ -152,7 +170,7 @@ describe('DownloadEngine ffmpeg helpers', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     try {
-      await new DownloadEngine(undefined, async (url) => url, unsafeTestSessionFactory).download(
+      await new DownloadEngine(undefined, async (url) => url, testSessionFactory).download(
         candidate,
         outputPath,
         (update) => progress.push(update)
@@ -190,7 +208,7 @@ describe('DownloadEngine ffmpeg helpers', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     try {
-      await new DownloadEngine(undefined, async (url) => url, unsafeTestSessionFactory).download(
+      await new DownloadEngine(undefined, async (url) => url, testSessionFactory).download(
         hlsCandidate(),
         outputPath,
         (update) => {
@@ -221,7 +239,7 @@ describe('DownloadEngine ffmpeg helpers', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     try {
-      await expect(new DownloadEngine(undefined, async (url) => url, unsafeTestSessionFactory).download(
+      await expect(new DownloadEngine(undefined, async (url) => url, testSessionFactory).download(
         hlsCandidate(),
         outputPath,
         () => undefined
@@ -234,8 +252,8 @@ describe('DownloadEngine ffmpeg helpers', () => {
     expect(fs.readdirSync(tempDir).some((name) => name.includes('.segments-'))).toBe(false);
   });
 
-  test('rejects private HLS and DASH URLs resolved from manifests before requesting them', async () => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'shv-manifest-url-safety-'));
+  test('allows HLS variants reachable through container DNS and routing', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'shv-manifest-network-route-'));
     const candidate: MediaCandidate = {
       bitrate: null,
       confidence: 0.9,
@@ -252,51 +270,55 @@ describe('DownloadEngine ffmpeg helpers', () => {
       subtitleTracks: [],
       url: 'https://1.1.1.1/master.m3u8'
     };
+    const routedVariant = 'http://198.18.3.203/private.m3u8';
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nhttp://127.0.0.1/private.m3u8'))
-      .mockResolvedValueOnce(new Response('<MPD><Period><AdaptationSet mimeType="video/mp4"><Representation bandwidth="1"><BaseURL>http://169.254.169.254/video.mp4</BaseURL></Representation></AdaptationSet></Period></MPD>'));
+      .mockResolvedValueOnce(new Response(`#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\n${routedVariant}`))
+      .mockResolvedValueOnce(new Response(null, { status: 503 }));
     vi.stubGlobal('fetch', fetchMock);
 
     try {
-      await expect(new DownloadEngine(undefined, undefined, unsafeTestSessionFactory).download(candidate, path.join(tempDir, 'source'), () => undefined)).rejects.toThrow(/public address/);
-      await expect(new DownloadEngine(undefined, undefined, unsafeTestSessionFactory).download({ ...candidate, kind: 'dash', manifestType: 'dash' }, path.join(tempDir, 'dash-source'), () => undefined)).rejects.toThrow(
-        /public address/
-      );
+      await expect(new DownloadEngine(undefined, undefined, testSessionFactory).download(
+        candidate,
+        path.join(tempDir, 'source'),
+        () => undefined
+      )).rejects.toThrow('Manifest request failed with HTTP 503');
       expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([candidate.url, routedVariant]);
     } finally {
       vi.unstubAllGlobals();
     }
   });
 
-  test('rejects HLS and DASH redirects to private targets before following them', async () => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'shv-manifest-redirect-safety-'));
+  test('follows redirects to media reachable through container DNS and routing', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'shv-media-network-redirect-'));
     const candidate: MediaCandidate = {
       bitrate: null,
       confidence: 0.9,
-      contentType: 'application/vnd.apple.mpegurl',
+      contentType: 'video/mp4',
       discoveredAt: new Date().toISOString(),
       durationSeconds: null,
       headers: {},
       id: 'candidate-id',
       jobId: 'job-id',
-      kind: 'hls',
-      manifestType: 'hls',
+      kind: 'direct',
+      manifestType: null,
       resolution: null,
       sizeBytes: null,
       subtitleTracks: [],
-      url: 'https://1.1.1.1/master.m3u8'
+      url: 'https://1.1.1.1/video.mp4'
     };
+    const redirectedUrl = 'http://169.254.169.254/video.mp4';
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response(null, { headers: { location: 'http://127.0.0.1/private.m3u8' }, status: 302 }))
-      .mockResolvedValueOnce(new Response(null, { headers: { location: 'http://169.254.169.254/video.mp4' }, status: 302 }));
+      .mockResolvedValueOnce(new Response(null, { headers: { location: redirectedUrl }, status: 302 }))
+      .mockResolvedValueOnce(new Response('video-bytes', { headers: { 'content-length': '11' } }));
     vi.stubGlobal('fetch', fetchMock);
 
     try {
-      await expect(new DownloadEngine(undefined, undefined, unsafeTestSessionFactory).download(candidate, path.join(tempDir, 'hls-source'), () => undefined)).rejects.toThrow(/public address/);
-      await expect(new DownloadEngine(undefined, undefined, unsafeTestSessionFactory).download({ ...candidate, kind: 'dash', manifestType: 'dash' }, path.join(tempDir, 'dash-source'), () => undefined)).rejects.toThrow(
-        /public address/
-      );
+      const outputPath = path.join(tempDir, 'source');
+      await new DownloadEngine(undefined, undefined, testSessionFactory).download(candidate, outputPath, () => undefined);
+      expect(fs.readFileSync(outputPath, 'utf8')).toBe('video-bytes');
       expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([candidate.url, redirectedUrl]);
       expect(fetchMock.mock.calls.every(([, options]) => options.redirect === 'manual')).toBe(true);
     } finally {
       vi.unstubAllGlobals();
@@ -329,7 +351,7 @@ describe('DownloadEngine ffmpeg helpers', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     try {
-      const engine = new DownloadEngine(undefined, async (url) => url, unsafeTestSessionFactory);
+      const engine = new DownloadEngine(undefined, async (url) => url, testSessionFactory);
       await engine.download(candidate, path.join(tempDir, 'cross-origin.mp4'), () => undefined);
       await engine.download(candidate, path.join(tempDir, 'same-origin.mp4'), () => undefined);
 

@@ -8,8 +8,8 @@ import { parseDashDurationSeconds, selectBestDashRenditions } from './dash.js';
 import { isCancellationError, JobCanceledError, onAbort, throwIfAborted } from '../utils/cancellation.js';
 import { requestHeadersForUrl } from '../utils/downloadRequestHeaders.js';
 import { logJobEvent, safeUrlParts, shortMessage } from '../utils/jobLogger.js';
-import { assertPublicHttpUrlSyntax } from '../utils/networkSafety.js';
-import { PublicMediaSession, type PublicHttpProxyOptions, type PublicMediaSessionLike } from '../utils/publicHttpProxy.js';
+import { MediaSession, type MediaHttpProxyOptions, type MediaSessionLike } from '../utils/mediaHttpProxy.js';
+import { normalizeHttpUrl } from '../utils/mediaUrl.js';
 import { activityUpdate, progressUpdate, type TaskProgressCallback } from '../utils/taskProgress.js';
 import type { Response as UndiciResponse } from 'undici';
 import { downloadBrowserRequestMedia } from './browserRequestDownloader.js';
@@ -33,8 +33,8 @@ export interface BrowserRequestDownloadInput {
 }
 
 export type BrowserRequestDownloadRunner = (input: BrowserRequestDownloadInput) => Promise<DownloadResult>;
-export type PublicUrlValidator = (url: string) => Promise<string>;
-export type PublicMediaSessionFactory = (options?: PublicHttpProxyOptions) => Promise<PublicMediaSessionLike>;
+export type MediaUrlValidator = (url: string) => Promise<string>;
+export type MediaSessionFactory = (options?: MediaHttpProxyOptions) => Promise<MediaSessionLike>;
 
 const MAX_SAFE_REDIRECTS = 5;
 const HLS_SEGMENT_CONCURRENCY = 4;
@@ -42,8 +42,8 @@ const HLS_SEGMENT_CONCURRENCY = 4;
 export class DownloadEngine {
   constructor(
     private readonly browserRequestDownloader: BrowserRequestDownloadRunner = downloadBrowserRequestMedia,
-    private readonly validatePublicUrl: PublicUrlValidator = async (url) => assertPublicHttpUrlSyntax(url),
-    private readonly createMediaSession: PublicMediaSessionFactory = (options) => PublicMediaSession.start(options)
+    private readonly validateMediaUrl: MediaUrlValidator = async (url) => normalizeHttpUrl(url),
+    private readonly createMediaSession: MediaSessionFactory = (options) => MediaSession.start(options)
   ) {}
 
   async download(
@@ -56,7 +56,7 @@ export class DownloadEngine {
     throwIfAborted(signal);
     const session = await this.createMediaSession();
     try {
-      await this.validatePublicUrl(candidate.url);
+      await this.validateMediaUrl(candidate.url);
       if (candidate.manifestType === 'hls') {
         return await this.downloadHls(candidate, outputPath, onProgress, session, signal);
       }
@@ -76,7 +76,7 @@ export class DownloadEngine {
     candidate: MediaCandidate,
     outputPath: string,
     onProgress: TaskProgressCallback,
-    session: PublicMediaSessionLike,
+    session: MediaSessionLike,
     signal?: AbortSignal
   ): Promise<DownloadResult> {
     const existingBytes = fs.existsSync(outputPath) ? fs.statSync(outputPath).size : 0;
@@ -94,7 +94,7 @@ export class DownloadEngine {
     candidate: MediaCandidate,
     outputPath: string,
     onProgress: TaskProgressCallback,
-    session: PublicMediaSessionLike,
+    session: MediaSessionLike,
     signal?: AbortSignal
   ): Promise<DownloadResult> {
     const existingBytes = fs.existsSync(outputPath) ? fs.statSync(outputPath).size : 0;
@@ -103,11 +103,11 @@ export class DownloadEngine {
       additionalHeaders.Range = `bytes=${existingBytes}-`;
     }
 
-    let response = await this.fetchPublic(candidate.url, candidate.url, candidate.headers, session, { additionalHeaders, signal });
+    let response = await this.fetchMedia(candidate.url, candidate.url, candidate.headers, session, { additionalHeaders, signal });
     let retriedWithoutRange = false;
     if (existingBytes > 0 && response.status === 206 && !hasRequestedContentRange(response, existingBytes)) {
       await response.body?.cancel();
-      response = await this.fetchPublic(candidate.url, candidate.url, candidate.headers, session, { signal });
+      response = await this.fetchMedia(candidate.url, candidate.url, candidate.headers, session, { signal });
       retriedWithoutRange = true;
     }
     if (retriedWithoutRange && response.status !== 200) {
@@ -166,18 +166,18 @@ export class DownloadEngine {
     candidate: MediaCandidate,
     outputPath: string,
     onProgress: TaskProgressCallback,
-    session: PublicMediaSessionLike,
+    session: MediaSessionLike,
     signal?: AbortSignal
   ): Promise<DownloadResult> {
     const manifest = await this.fetchText(candidate.url, candidate.url, candidate.headers, session, signal);
     const variantUrl = selectBestHlsVariant(manifest, candidate.url);
-    await this.validatePublicUrl(variantUrl);
+    await this.validateMediaUrl(variantUrl);
     const mediaManifest = variantUrl === candidate.url
       ? manifest
       : await this.fetchText(variantUrl, candidate.url, candidate.headers, session, signal);
     const segments = parseHlsSegments(mediaManifest, variantUrl);
     const resourceUrls = parseHlsResourceUrls(mediaManifest, variantUrl);
-    await runBounded(resourceUrls, HLS_SEGMENT_CONCURRENCY, (resourceUrl) => this.validatePublicUrl(resourceUrl), signal);
+    await runBounded(resourceUrls, HLS_SEGMENT_CONCURRENCY, (resourceUrl) => this.validateMediaUrl(resourceUrl), signal);
     const plainSegmentDownload = canDownloadPlainHlsSegments(mediaManifest, segments);
     const durationSeconds = parseHlsDurationSeconds(mediaManifest);
     logJobEvent('info', 'hls-manifest-selected', {
@@ -211,7 +211,7 @@ export class DownloadEngine {
     headers: Record<string, string>,
     outputPath: string,
     onProgress: TaskProgressCallback,
-    session: PublicMediaSessionLike,
+    session: MediaSessionLike,
     signal?: AbortSignal
   ): Promise<DownloadResult> {
     fs.rmSync(outputPath, { force: true });
@@ -289,10 +289,10 @@ export class DownloadEngine {
     headers: Record<string, string>,
     segmentPath: string,
     onProgress: TaskProgressCallback,
-    session: PublicMediaSessionLike,
+    session: MediaSessionLike,
     signal: AbortSignal
   ): Promise<void> {
-    const response = await this.fetchPublic(segment.uri, capturedUrl, headers, session, { signal });
+    const response = await this.fetchMedia(segment.uri, capturedUrl, headers, session, { signal });
     if (!response.ok) {
       await response.body?.cancel();
       throw new Error(`HLS segment ${index + 1} request failed with HTTP ${response.status}`);
@@ -333,23 +333,23 @@ export class DownloadEngine {
     candidate: MediaCandidate,
     outputPath: string,
     onProgress: TaskProgressCallback,
-    session: PublicMediaSessionLike,
+    session: MediaSessionLike,
     signal?: AbortSignal
   ): Promise<DownloadResult> {
     const manifest = await this.fetchText(candidate.url, candidate.url, candidate.headers, session, signal);
     const selected = selectBestDashRenditions(manifest, candidate.url);
     const durationSeconds = parseDashDurationSeconds(manifest) ?? positiveDuration(candidate.durationSeconds);
     if (selected.video) {
-      await this.validatePublicUrl(selected.video.baseUrl);
+      await this.validateMediaUrl(selected.video.baseUrl);
     }
     if (selected.audio) {
-      await this.validatePublicUrl(selected.audio.baseUrl);
+      await this.validateMediaUrl(selected.audio.baseUrl);
     }
     if (!selected.video) {
       throw new Error('DASH manifest did not include a playable media representation');
     }
 
-    const inputSessions: PublicMediaSessionLike[] = [];
+    const inputSessions: MediaSessionLike[] = [];
     try {
       const videoSession = await this.createMediaSession(originLockedProxyOptions(selected.video.baseUrl));
       inputSessions.push(videoSession);
@@ -421,10 +421,10 @@ export class DownloadEngine {
     url: string,
     capturedUrl: string,
     capturedHeaders: Record<string, string>,
-    session: PublicMediaSessionLike,
+    session: MediaSessionLike,
     signal?: AbortSignal
   ): Promise<string> {
-    const response = await this.fetchPublic(url, capturedUrl, capturedHeaders, session, { signal });
+    const response = await this.fetchMedia(url, capturedUrl, capturedHeaders, session, { signal });
     if (!response.ok) {
       await response.body?.cancel();
       throw new Error(`Manifest request failed with HTTP ${response.status}`);
@@ -432,14 +432,14 @@ export class DownloadEngine {
     return response.text();
   }
 
-  private async fetchPublic(
+  private async fetchMedia(
     url: string,
     capturedUrl: string,
     capturedHeaders: Record<string, string>,
-    session: PublicMediaSessionLike,
+    session: MediaSessionLike,
     options: { additionalHeaders?: Record<string, string>; signal?: AbortSignal }
   ): Promise<UndiciResponse> {
-    let targetUrl = await this.validatePublicUrl(url);
+    let targetUrl = await this.validateMediaUrl(url);
 
     for (let redirectCount = 0; redirectCount <= MAX_SAFE_REDIRECTS; redirectCount += 1) {
       const response = await session.fetch(targetUrl, {
@@ -464,7 +464,7 @@ export class DownloadEngine {
       }
 
       await response.body?.cancel();
-      targetUrl = await this.validatePublicUrl(new URL(location, targetUrl).toString());
+      targetUrl = await this.validateMediaUrl(new URL(location, targetUrl).toString());
     }
 
     throw new Error('Media request redirect handling failed unexpectedly');
@@ -509,7 +509,7 @@ function positiveDuration(value: number | null): number | null {
   return value !== null && Number.isFinite(value) && value > 0 ? value : null;
 }
 
-function originLockedProxyOptions(url: string): PublicHttpProxyOptions {
+function originLockedProxyOptions(url: string): MediaHttpProxyOptions {
   return { allowedOrigins: new Set([new URL(url).origin]) };
 }
 

@@ -4,17 +4,17 @@ import type { MediaCandidate, SubtitleTrack } from '../../shared/types.js';
 import { onAbort, throwIfAborted } from '../utils/cancellation.js';
 import { requestHeadersForUrl } from '../utils/downloadRequestHeaders.js';
 import { logJobEvent, safeUrlParts } from '../utils/jobLogger.js';
-import { assertPublicHttpUrlSyntax } from '../utils/networkSafety.js';
-import type { PublicMediaSessionLike } from '../utils/publicHttpProxy.js';
+import type { MediaSessionLike } from '../utils/mediaHttpProxy.js';
+import { normalizeHttpUrl } from '../utils/mediaUrl.js';
 import { activityUpdate, progressUpdate, type TaskProgressCallback } from '../utils/taskProgress.js';
 
 const MAX_SUBTITLE_REDIRECTS = 5;
-type PublicMediaResponse = Awaited<ReturnType<PublicMediaSessionLike['fetch']>>;
-export type PublicMediaSessionFactory = () => Promise<PublicMediaSessionLike>;
+type MediaResponse = Awaited<ReturnType<MediaSessionLike['fetch']>>;
+export type MediaSessionFactory = () => Promise<MediaSessionLike>;
 
 interface DownloadSelectedSubtitleTracksInput {
   candidate: MediaCandidate;
-  createMediaSession: PublicMediaSessionFactory;
+  createMediaSession: MediaSessionFactory;
   onProgress: TaskProgressCallback;
   signal: AbortSignal;
   workDir: string;
@@ -88,7 +88,7 @@ async function downloadSubtitleFile(
   localPath: string,
   candidateUrl: string,
   candidateHeaders: Record<string, string>,
-  session: PublicMediaSessionLike,
+  session: MediaSessionLike,
   onProgress: TaskProgressCallback,
   signal: AbortSignal
 ): Promise<void> {
@@ -101,7 +101,7 @@ async function downloadHlsSubtitleTrack(
   localPath: string,
   candidateUrl: string,
   candidateHeaders: Record<string, string>,
-  session: PublicMediaSessionLike,
+  session: MediaSessionLike,
   onProgress: TaskProgressCallback,
   signal: AbortSignal
 ): Promise<void> {
@@ -129,7 +129,7 @@ async function downloadHlsSubtitleTrack(
       continue;
     }
     segmentIndex += 1;
-    const segmentUrl = assertPublicHttpUrlSyntax(new URL(trimmed, track.url).toString());
+    const segmentUrl = normalizeHttpUrl(new URL(trimmed, track.url).toString());
     const segmentExtension = path.extname(new URL(segmentUrl).pathname) || '.vtt';
     const segmentName = `subtitle-segment-${segmentIndex}${segmentExtension}`;
     const segmentPath = path.join(directory, segmentName);
@@ -157,7 +157,7 @@ async function fetchSubtitleText(
   candidateUrl: string,
   candidateHeaders: Record<string, string>,
   url: string,
-  session: PublicMediaSessionLike,
+  session: MediaSessionLike,
   onProgress: TaskProgressCallback,
   signal: AbortSignal
 ): Promise<string> {
@@ -170,7 +170,7 @@ async function fetchSubtitleBinary(
   candidateUrl: string,
   candidateHeaders: Record<string, string>,
   url: string,
-  session: PublicMediaSessionLike,
+  session: MediaSessionLike,
   onProgress: TaskProgressCallback,
   signal: AbortSignal
 ): Promise<Buffer> {
@@ -179,7 +179,7 @@ async function fetchSubtitleBinary(
 }
 
 async function readSubtitleResponse(
-  response: PublicMediaResponse,
+  response: MediaResponse,
   onProgress: TaskProgressCallback,
   signal: AbortSignal
 ): Promise<Buffer> {
@@ -214,10 +214,10 @@ async function fetchSubtitleResponse(
   candidateUrl: string,
   candidateHeaders: Record<string, string>,
   url: string,
-  session: PublicMediaSessionLike,
+  session: MediaSessionLike,
   signal: AbortSignal
 ) {
-  let targetUrl = assertPublicHttpUrlSyntax(url);
+  let targetUrl = normalizeHttpUrl(url);
   for (let redirectCount = 0; redirectCount <= MAX_SUBTITLE_REDIRECTS; redirectCount += 1) {
     const response = await session.fetch(targetUrl, {
       headers: subtitleDownloadHeaders(track, candidateUrl, candidateHeaders, targetUrl),
@@ -240,7 +240,7 @@ async function fetchSubtitleResponse(
     if (redirectCount === MAX_SUBTITLE_REDIRECTS) {
       throw new Error(`Subtitle request exceeded ${MAX_SUBTITLE_REDIRECTS} redirects`);
     }
-    targetUrl = assertPublicHttpUrlSyntax(new URL(location, targetUrl).toString());
+    targetUrl = normalizeHttpUrl(new URL(location, targetUrl).toString());
   }
   throw new Error('Subtitle redirect handling failed unexpectedly');
 }

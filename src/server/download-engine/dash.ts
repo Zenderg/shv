@@ -1,5 +1,5 @@
 import { XMLParser } from 'fast-xml-parser';
-import { normalizeHttpUrl } from '../utils/networkSafety.js';
+import { normalizeHttpUrl } from '../utils/mediaUrl.js';
 
 export interface DashRepresentation {
   id: string | null;

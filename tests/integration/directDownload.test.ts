@@ -9,12 +9,12 @@ import type { MediaCandidate } from '../../src/shared/types.js';
 import { DownloadEngine, buildHlsFfmpegArgs } from '../../src/server/download-engine/downloadEngine.js';
 import type { TaskProgressUpdate } from '../../src/server/utils/taskProgress.js';
 import {
-  PublicMediaSession,
-  type PublicHttpProxyOptions,
-  type PublicMediaSessionLike
-} from '../../src/server/utils/publicHttpProxy.js';
+  MediaSession,
+  type MediaHttpProxyOptions,
+  type MediaSessionLike
+} from '../../src/server/utils/mediaHttpProxy.js';
 
-const unsafeTestSessionFactory = async (): Promise<PublicMediaSessionLike> => ({
+const testSessionFactory = async (): Promise<MediaSessionLike> => ({
   proxyUrl: 'http://127.0.0.1:1',
   close: async () => undefined,
   fetch: (url, init) => globalThis.fetch(url, init as RequestInit) as never
@@ -62,7 +62,7 @@ describe('DownloadEngine direct download', () => {
     };
     const output = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'xxx-download-')), 'video.mp4');
 
-    const result = await new DownloadEngine(undefined, async (url) => url, unsafeTestSessionFactory).download(candidate, output, () => undefined);
+    const result = await new DownloadEngine().download(candidate, output, () => undefined);
 
     expect(result.bytesWritten).toBe(content.length);
     expect(fs.readFileSync(output)).toEqual(content);
@@ -87,7 +87,7 @@ describe('DownloadEngine direct download', () => {
     const output = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'shv-unknown-total-')), 'video.mp4');
     const updates: TaskProgressUpdate[] = [];
 
-    await new DownloadEngine(undefined, async (url) => url, unsafeTestSessionFactory).download(candidate, output, (update) => updates.push(update));
+    await new DownloadEngine(undefined, async (url) => url, testSessionFactory).download(candidate, output, (update) => updates.push(update));
 
     expect(updates).toContainEqual({ kind: 'activity' });
     expect(updates.at(-1)).toEqual({ kind: 'progress', fraction: 1 });
@@ -138,7 +138,7 @@ describe('DownloadEngine direct download', () => {
     const output = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'shv-resume-download-')), 'video.mp4');
     fs.writeFileSync(output, 'stale');
 
-    const result = await new DownloadEngine(undefined, async (url) => url, unsafeTestSessionFactory).download(candidate, output, () => undefined);
+    const result = await new DownloadEngine(undefined, async (url) => url, testSessionFactory).download(candidate, output, () => undefined);
 
     expect(ranges).toEqual(['bytes=5-', undefined]);
     expect(result.bytesWritten).toBe(content.length);
@@ -182,7 +182,7 @@ describe('DownloadEngine direct download', () => {
     const output = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'shv-resume-download-')), 'video.mp4');
     fs.writeFileSync(output, existing);
 
-    await expect(new DownloadEngine(undefined, async (url) => url, unsafeTestSessionFactory).download(candidate, output, () => undefined)).rejects.toThrow(
+    await expect(new DownloadEngine(undefined, async (url) => url, testSessionFactory).download(candidate, output, () => undefined)).rejects.toThrow(
       'Download resume retry returned HTTP 206; expected a complete HTTP 200 response'
     );
     expect(ranges).toEqual([`bytes=${existing.length}-`, undefined]);
@@ -226,7 +226,7 @@ describe('DownloadEngine direct download', () => {
     const output = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'shv-resume-download-')), 'video.mp4');
     fs.writeFileSync(output, existing);
 
-    const result = await new DownloadEngine(undefined, async (url) => url, unsafeTestSessionFactory).download(candidate, output, () => undefined);
+    const result = await new DownloadEngine(undefined, async (url) => url, testSessionFactory).download(candidate, output, () => undefined);
 
     expect(result.bytesWritten).toBe(existing.length + remaining.length);
     expect(fs.readFileSync(output)).toEqual(Buffer.concat([existing, remaining]));
@@ -254,7 +254,7 @@ describe('DownloadEngine direct download', () => {
     fs.writeFileSync(output, existing);
     const updates: TaskProgressUpdate[] = [];
 
-    await new DownloadEngine(undefined, async (url) => url, unsafeTestSessionFactory).download(candidate, output, (update) => updates.push(update));
+    await new DownloadEngine(undefined, async (url) => url, testSessionFactory).download(candidate, output, (update) => updates.push(update));
 
     expect(updates).toContainEqual({ kind: 'progress', fraction: 0.99 });
     expect(fs.readFileSync(output)).toEqual(Buffer.concat([existing, remaining]));
@@ -322,7 +322,7 @@ describe('DownloadEngine direct download', () => {
     const output = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'xxx-hls-download-')), 'video.ts');
     const progress: TaskProgressUpdate[] = [];
 
-    const result = await new DownloadEngine(undefined, async (url) => url, unsafeTestSessionFactory).download(candidate, output, (value) => progress.push(value));
+    const result = await new DownloadEngine(undefined, async (url) => url, testSessionFactory).download(candidate, output, (value) => progress.push(value));
 
     expect(result.bytesWritten).toBe(firstSegment.length + secondSegment.length);
     expect(fs.readFileSync(output)).toEqual(Buffer.concat([firstSegment, secondSegment]));
@@ -400,7 +400,7 @@ describe('DownloadEngine direct download', () => {
     };
     const output = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'shv-cross-origin-hls-')), 'video.ts');
 
-    await new DownloadEngine(undefined, async (url) => url, unsafeTestSessionFactory).download(candidate, output, () => undefined);
+    await new DownloadEngine(undefined, async (url) => url, testSessionFactory).download(candidate, output, () => undefined);
 
     expect(manifestHeaders).toEqual([
       { authorization: 'Bearer secret', cookie: 'session=secret', custom: 'custom-secret' }
@@ -479,7 +479,7 @@ describe('DownloadEngine direct download', () => {
       discoveredAt: new Date().toISOString()
     };
     const output = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'shv-cross-origin-dash-')), 'video.mkv');
-    const proxySessionFactory = (options: PublicHttpProxyOptions = {}) => PublicMediaSession.start({
+    const proxySessionFactory = (options: MediaHttpProxyOptions = {}) => MediaSession.start({
       ...options,
       connect: (_address, port) => net.connect({ host: '127.0.0.1', port }),
       resolve: async () => [{ address: '93.184.216.34', family: 4 }]
@@ -615,7 +615,7 @@ describe('DownloadEngine direct download', () => {
     };
     const output = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'xxx-hls-download-')), 'video.ts');
 
-    const proxySessionFactory = (options: PublicHttpProxyOptions = {}) => PublicMediaSession.start({
+    const proxySessionFactory = (options: MediaHttpProxyOptions = {}) => MediaSession.start({
       ...options,
       connect: (_address, port) => net.connect({ host: '127.0.0.1', port }),
       resolve: async () => [{ address: '93.184.216.34', family: 4 }]

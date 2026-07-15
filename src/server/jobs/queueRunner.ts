@@ -12,7 +12,7 @@ import { NoopSourceExtractor, type SourceExtractor } from '../source-extractors/
 import { JobCanceledError, isCancellationError, throwIfAborted } from '../utils/cancellation.js';
 import { titleFromUrl } from '../utils/fileSafety.js';
 import { logJobEvent, safeUrlParts, shortMessage } from '../utils/jobLogger.js';
-import { PublicMediaSession } from '../utils/publicHttpProxy.js';
+import { MediaSession } from '../utils/mediaHttpProxy.js';
 import { classifyJobFailure, type FailingJobStage } from './jobFailure.js';
 import { cleanupCanceledArtifacts, cleanupCompletedWorkDir, cleanupJobArtifacts } from './jobArtifacts.js';
 import { runMonitoredJobStage } from './jobProgressMonitor.js';
@@ -20,7 +20,7 @@ import type { JobService } from './jobService.js';
 import {
   downloadSelectedSubtitleTracks,
   subtitleTracksForDownload,
-  type PublicMediaSessionFactory
+  type MediaSessionFactory
 } from './subtitleDownload.js';
 
 export class QueueRunner {
@@ -41,7 +41,7 @@ export class QueueRunner {
     private readonly mediaFiles: MediaFiles,
     private readonly mediaLibrary: MediaLibraryService,
     private readonly sourceExtractors: SourceExtractor = new NoopSourceExtractor(),
-    private readonly createMediaSession: PublicMediaSessionFactory = () => PublicMediaSession.start()
+    private readonly createMediaSession: MediaSessionFactory = () => MediaSession.start()
   ) {
     this.maxConcurrentJobs = config.maxConcurrentJobs ?? 2;
   }

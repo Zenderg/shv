@@ -1,4 +1,4 @@
-import { normalizeHttpUrl } from '../utils/networkSafety.js';
+import { normalizeHttpUrl } from '../utils/mediaUrl.js';
 
 export interface HlsVariant {
   uri: string;

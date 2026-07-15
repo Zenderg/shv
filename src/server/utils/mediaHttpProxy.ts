@@ -1,34 +1,41 @@
+import { lookup } from 'node:dns/promises';
 import net from 'node:net';
 import { ProxyAgent, fetch as undiciFetch, type RequestInit, type Response } from 'undici';
-import { assertPublicHttpUrlSyntax, resolvePublicHostname, type HostnameResolver } from './networkSafety.js';
+import { normalizeHttpUrl } from './mediaUrl.js';
 
 const MAX_PROXY_HEADER_BYTES = 64 * 1024;
 
-export type PublicProxyConnector = (address: string, port: number) => net.Socket;
+export interface ResolvedMediaAddress {
+  address: string;
+  family: 4 | 6;
+}
 
-export interface PublicHttpProxyOptions {
+export type HostnameResolver = (hostname: string) => Promise<ResolvedMediaAddress[]>;
+export type MediaProxyConnector = (address: string, port: number) => net.Socket;
+
+export interface MediaHttpProxyOptions {
   allowedOrigins?: ReadonlySet<string>;
-  connect?: PublicProxyConnector;
+  connect?: MediaProxyConnector;
   resolve?: HostnameResolver;
 }
 
-export interface PublicMediaSessionLike {
+export interface MediaSessionLike {
   readonly proxyUrl: string;
   close(): Promise<void>;
   fetch(url: string, init?: Omit<RequestInit, 'dispatcher'>): Promise<Response>;
 }
 
-export class PublicMediaSession implements PublicMediaSessionLike {
+export class MediaSession implements MediaSessionLike {
   private constructor(
-    private readonly proxy: PublicHttpProxy,
+    private readonly proxy: MediaHttpProxy,
     private readonly dispatcher: ProxyAgent,
     readonly proxyUrl: string
   ) {}
 
-  static async start(options: PublicHttpProxyOptions = {}): Promise<PublicMediaSession> {
-    const proxy = new PublicHttpProxy(options);
+  static async start(options: MediaHttpProxyOptions = {}): Promise<MediaSession> {
+    const proxy = new MediaHttpProxy(options);
     const proxyUrl = await proxy.start();
-    return new PublicMediaSession(proxy, new ProxyAgent(proxyUrl), proxyUrl);
+    return new MediaSession(proxy, new ProxyAgent(proxyUrl), proxyUrl);
   }
 
   fetch(url: string, init: Omit<RequestInit, 'dispatcher'> = {}): Promise<Response> {
@@ -42,18 +49,19 @@ export class PublicMediaSession implements PublicMediaSessionLike {
 }
 
 /**
- * A loopback-only HTTP/CONNECT proxy that resolves each destination, validates
- * the complete DNS answer set, and dials an IP from that exact snapshot.
+ * A loopback-only HTTP/CONNECT proxy that resolves each destination and dials
+ * an IP from that exact system DNS snapshot. Optional origin restrictions keep
+ * captured request headers from following ffmpeg redirects to another origin.
  */
-export class PublicHttpProxy {
+export class MediaHttpProxy {
   private readonly server = net.createServer((socket) => this.handle(socket));
   private readonly sockets = new Set<net.Socket>();
-  private readonly connect: PublicProxyConnector;
+  private readonly connect: MediaProxyConnector;
   private readonly resolve?: HostnameResolver;
   private readonly allowedOrigins?: ReadonlySet<string>;
   private started = false;
 
-  constructor(options: PublicHttpProxyOptions = {}) {
+  constructor(options: MediaHttpProxyOptions = {}) {
     this.connect = options.connect ?? ((address, port) => net.connect({ host: address, port }));
     this.resolve = options.resolve;
     this.allowedOrigins = options.allowedOrigins;
@@ -71,7 +79,7 @@ export class PublicHttpProxy {
     });
     const address = this.server.address();
     if (!address || typeof address === 'string') {
-      throw new Error('Public media proxy did not expose a TCP port');
+      throw new Error('Media proxy did not expose a TCP port');
     }
     return `http://127.0.0.1:${address.port}`;
   }
@@ -119,7 +127,7 @@ export class PublicHttpProxy {
       }
 
       const isConnect = method.toUpperCase() === 'CONNECT';
-      const targetUrl = isConnect ? parseConnectTarget(target) : new URL(assertPublicHttpUrlSyntax(target));
+      const targetUrl = isConnect ? parseConnectTarget(target) : new URL(normalizeHttpUrl(target));
       if (!isConnect && targetUrl.protocol !== 'http:') {
         throw new Error('HTTPS proxy requests must use CONNECT');
       }
@@ -127,8 +135,20 @@ export class PublicHttpProxy {
         throw new Error('Destination origin rejected');
       }
       const port = parsePort(targetUrl);
-      const addresses = await resolvePublicHostname(targetUrl.hostname, this.resolve);
-      const upstream = this.connect(addresses[0].address, port);
+      let addresses: ResolvedMediaAddress[];
+      try {
+        addresses = await resolveHostname(targetUrl.hostname, this.resolve);
+      } catch {
+        this.reject(client, 502, 'Destination resolution failed');
+        return;
+      }
+      let upstream: net.Socket;
+      try {
+        upstream = this.connect(addresses[0].address, port);
+      } catch {
+        this.reject(client, 502, 'Upstream connection failed');
+        return;
+      }
       this.track(upstream);
 
       upstream.once('connect', () => {
@@ -150,6 +170,26 @@ export class PublicHttpProxy {
     if (socket.destroyed) return;
     socket.end(`HTTP/1.1 ${status} ${message}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
   }
+}
+
+const systemResolver: HostnameResolver = async (hostname) => {
+  const addresses = await lookup(hostname, { all: true, verbatim: true });
+  return addresses.map(({ address, family }) => ({ address, family: family as 4 | 6 }));
+};
+
+async function resolveHostname(
+  rawHostname: string,
+  resolver: HostnameResolver = systemResolver
+): Promise<ResolvedMediaAddress[]> {
+  const hostname = rawHostname.replace(/^\[|\]$/g, '').toLowerCase();
+  const family = net.isIP(hostname);
+  const addresses = family === 0
+    ? await resolver(hostname)
+    : [{ address: hostname, family: family as 4 | 6 }];
+  if (addresses.length === 0) {
+    throw new Error(`Media hostname did not resolve: ${rawHostname}`);
+  }
+  return addresses;
 }
 
 function parseConnectTarget(target: string): URL {
