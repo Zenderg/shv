@@ -28,7 +28,7 @@ export function MobileHeader({
         </button>
       </Dialog.Trigger>
       <div className="mobileHeaderTitle">
-        <strong>{page === 'queue' ? 'Queue' : categoryName ?? 'Library'}</strong>
+        <h1>{page === 'queue' ? 'Queue' : categoryName ?? 'Library'}</h1>
         <span>
           {page === 'queue' ? queueSummary : librarySummary}
         </span>

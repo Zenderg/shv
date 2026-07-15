@@ -112,7 +112,7 @@
 
 .downloadButton {
   background: var(--color-accent-strong);
-  color: var(--color-text);
+  color: var(--color-accent-contrast);
 }
 
 .extensionDialog footer button {

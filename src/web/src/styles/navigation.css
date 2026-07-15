@@ -236,7 +236,7 @@
   min-width: 0;
 }
 
-.mobileHeaderTitle strong,
+.mobileHeaderTitle h1,
 .mobileHeaderTitle span {
   display: block;
   overflow: hidden;
@@ -244,7 +244,7 @@
   white-space: nowrap;
 }
 
-.mobileHeaderTitle strong {
+.mobileHeaderTitle h1 {
   font-size: 16px;
 }
 
