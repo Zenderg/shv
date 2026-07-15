@@ -27,14 +27,14 @@ export function CategoryActionsMenu({
       <DropdownMenu.Portal>
         <DropdownMenu.Content
           align="end"
-          className="categoryMenu"
+          className="actionsMenu"
           data-category-menu-root={category.id}
           sideOffset={4}
         >
-          <DropdownMenu.Item className="categoryMenuItem" onSelect={() => onRename(category)}>
+          <DropdownMenu.Item className="actionsMenuItem" onSelect={() => onRename(category)}>
             Rename
           </DropdownMenu.Item>
-          <DropdownMenu.Item className="categoryMenuItem dangerMenuItem" onSelect={() => onDelete(category)}>
+          <DropdownMenu.Item className="actionsMenuItem dangerMenuItem" onSelect={() => onDelete(category)}>
             Delete
           </DropdownMenu.Item>
         </DropdownMenu.Content>

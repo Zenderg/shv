@@ -263,6 +263,9 @@ export function App() {
 
   const libraryLoading = categoriesQuery.isPending || (Boolean(currentCategoryId) && mediaQuery.isPending);
   const queueLoading = queueQuery.isPending;
+  const librarySummary = libraryLoading
+    ? 'Loading videos…'
+    : `${mediaTotal} saved videos${activeProblems ? `, ${activeProblems} need attention` : ''}`;
   const currentRefetchError = page === 'queue'
     ? queueQuery.isRefetchError
     : categoriesQuery.isRefetchError || mediaQuery.isRefetchError;
@@ -274,6 +277,7 @@ export function App() {
         addDisabled={dialogBusy || categoriesQuery.isPending}
         categories={categories}
         extensionUpdateAvailable={extensionStatus?.kind === 'outdated'}
+        librarySummary={librarySummary}
         onAdd={() => showDialog({ kind: 'add' })}
         onChooseCategory={(categoryId) => {
           setSelectedCategoryId(categoryId);
@@ -401,7 +405,6 @@ export function App() {
     }
     return (
       <LibraryGrid
-        categories={categories}
         categoryName={selectedCategory?.name ?? null}
         hasNextPage={Boolean(mediaQuery.hasNextPage)}
         isFetchingNextPage={mediaQuery.isFetchingNextPage}

@@ -70,10 +70,12 @@ export function QueuePanel({
                 <dt>Destination</dt>
                 <dd>{categoryNames[job.categoryId] ?? 'Unknown category'}</dd>
               </div>
-              <div>
-                <dt>{job.status === 'pending' ? 'Queue' : 'Progress'}</dt>
-                <dd>{jobProgressContext(job.status, pendingPositions[job.id])}</dd>
-              </div>
+              {job.status === 'pending' ? (
+                <div>
+                  <dt>Queue</dt>
+                  <dd>{jobProgressContext(job.status, pendingPositions[job.id])}</dd>
+                </div>
+              ) : null}
             </dl>
 
             {presentation.showProgress ? <JobProgress job={job} title={title} /> : null}

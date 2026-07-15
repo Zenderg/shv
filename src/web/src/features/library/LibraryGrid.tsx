@@ -1,7 +1,8 @@
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
-import { EditIcon, PlayIcon, TrashIcon } from '../../components/icons';
-import type { Category, MediaItem } from '../../lib/api';
+import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
+import { MediaActionsMenu } from '../../components/MediaActionsMenu';
+import { PlayIcon } from '../../components/icons';
+import type { MediaItem } from '../../lib/api';
 import { formatBytes, formatDuration, formatResolution } from '../../utils/format';
 import {
   LIBRARY_GRID_GAP,
@@ -11,7 +12,6 @@ import {
 } from './libraryVirtualization';
 
 interface LibraryGridProps {
-  categories: Category[];
   categoryName: string | null;
   hasNextPage: boolean;
   isFetchingNextPage: boolean;
@@ -59,7 +59,6 @@ function EmptyLibrary({ categoryName, onAdd, onCreateCategory }: LibraryGridProp
 }
 
 function VirtualLibraryGrid({
-  categories,
   hasNextPage,
   isFetchingNextPage,
   items,
@@ -75,10 +74,6 @@ function VirtualLibraryGrid({
   const [containerWidth, setContainerWidth] = useState(0);
   const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
   const [scrollMargin, setScrollMargin] = useState(0);
-  const categoryNames = useMemo(
-    () => Object.fromEntries(categories.map((category) => [category.id, category.name])),
-    [categories]
-  );
   const columnCount = libraryColumnCount(containerWidth, viewportWidth);
   const itemRowCount = libraryRowCount(items.length, columnCount);
   const hasStatusRow = hasNextPage || isFetchingNextPage || nextPageError;
@@ -175,7 +170,6 @@ function VirtualLibraryGrid({
                 const itemIndex = virtualRow.index * columnCount + columnIndex;
                 return (
                   <VideoCard
-                    categoryName={categoryNames[item.categoryId] ?? 'Unknown'}
                     item={item}
                     itemIndex={itemIndex}
                     key={item.id}
@@ -198,7 +192,6 @@ function VirtualLibraryGrid({
 }
 
 function VideoCard({
-  categoryName,
   item,
   itemIndex,
   onDelete,
@@ -206,7 +199,6 @@ function VideoCard({
   onPlay,
   total
 }: {
-  categoryName: string;
   item: MediaItem;
   itemIndex: number;
   onDelete: (item: MediaItem) => void;
@@ -238,15 +230,7 @@ function VideoCard({
       <div className="videoMeta">
         <h2>{item.title}</h2>
         <p>{formatResolution(item)} · {formatBytes(item.sizeBytes)}</p>
-        <span>{categoryName}</span>
-      </div>
-      <div className="cardActions">
-        <button aria-label={`Edit ${item.title}`} onClick={() => onEdit(item)} title="Rename or move" type="button">
-          <EditIcon />
-        </button>
-        <button aria-label={`Delete ${item.title}`} onClick={() => onDelete(item)} title="Delete" type="button">
-          <TrashIcon />
-        </button>
+        <MediaActionsMenu item={item} onDelete={onDelete} onEdit={onEdit} />
       </div>
     </article>
   );
@@ -278,5 +262,5 @@ function LibraryLoadStatus({
 
 function estimatedRowHeight(containerWidth: number, columnCount: number): number {
   const width = Math.max(280, (containerWidth - LIBRARY_GRID_GAP * (columnCount - 1)) / columnCount);
-  return Math.ceil(width * 9 / 16 + 154 + LIBRARY_GRID_GAP);
+  return Math.ceil(width * 9 / 16 + 100 + LIBRARY_GRID_GAP);
 }

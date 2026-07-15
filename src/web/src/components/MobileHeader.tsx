@@ -5,6 +5,7 @@ export function MobileHeader({
   addDisabled = false,
   categoryName,
   extensionUpdateAvailable,
+  librarySummary,
   onAdd,
   onUpdateExtension,
   page,
@@ -13,6 +14,7 @@ export function MobileHeader({
   addDisabled?: boolean;
   categoryName: string | null;
   extensionUpdateAvailable: boolean;
+  librarySummary: string;
   onAdd: () => void;
   onUpdateExtension: () => void;
   page: 'library' | 'queue';
@@ -28,7 +30,7 @@ export function MobileHeader({
       <div className="mobileHeaderTitle">
         <strong>{page === 'queue' ? 'Queue' : categoryName ?? 'Library'}</strong>
         <span>
-          {queueSummary}
+          {page === 'queue' ? queueSummary : librarySummary}
         </span>
       </div>
       <div className="mobileHeaderActions">

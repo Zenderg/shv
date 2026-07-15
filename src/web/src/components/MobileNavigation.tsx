@@ -10,6 +10,7 @@ export interface MobileNavigationProps {
   addDisabled?: boolean;
   categories: Category[];
   extensionUpdateAvailable: boolean;
+  librarySummary: string;
   onAdd: () => void;
   onChooseCategory: (categoryId: string) => void;
   onCreateCategory: () => void;
@@ -28,6 +29,7 @@ export function MobileNavigation({
   addDisabled,
   categories,
   extensionUpdateAvailable,
+  librarySummary,
   onAdd,
   onChooseCategory,
   onCreateCategory,
@@ -55,6 +57,7 @@ export function MobileNavigation({
           addDisabled={addDisabled ?? categories.length === 0}
           categoryName={selectedCategory?.name ?? null}
           extensionUpdateAvailable={extensionUpdateAvailable}
+          librarySummary={librarySummary}
           onAdd={onAdd}
           onUpdateExtension={onUpdateExtension}
           page={page}

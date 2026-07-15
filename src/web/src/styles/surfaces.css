@@ -9,7 +9,7 @@
   box-shadow: var(--shadow-panel);
 }
 
-.cardActions button,
+.mediaActionsButton,
 .playerDialog header button,
 .formDialog header button {
   background: var(--color-surface-muted);
