@@ -75,6 +75,48 @@ describe('MediaLibraryService', () => {
     expect((db.prepare('SELECT job_id FROM media_items WHERE id = ?').get(first.id) as { job_id: string }).job_id).toBe(job.id);
   });
 
+  test('canonicalizes labels from jobs that complete after a matching label is saved', () => {
+    const { categories, config, jobs, mediaFiles, mediaLibrary } = createServices();
+    const category = categories.create('test');
+    const firstJob = jobs.create('https://example.test/first', category.id, ['studio']);
+    const secondJob = jobs.create('https://example.test/second', category.id, ['Studio']);
+
+    const complete = (jobId: string, filename: string) => {
+      const claimed = jobs.claimNextRunnableJob()!;
+      expect(claimed.job.id).toBe(jobId);
+      jobs.transitionActive(jobId, claimed.runId, 'analyzing', 'downloading', null);
+      jobs.transitionActive(jobId, claimed.runId, 'downloading', 'processing', null);
+      const finalFilePath = path.join(config.libraryRoot, category.folderName, filename);
+      expect(jobs.reserveOutputPath(jobId, claimed.runId, mediaFiles.relativeMediaPath(finalFilePath)).reserved).toBe(true);
+      fs.mkdirSync(path.dirname(finalFilePath), { recursive: true });
+      fs.writeFileSync(finalFilePath, 'video');
+      return mediaLibrary.completeJob(jobId, claimed.runId, {
+        audioCodec: 'aac',
+        categoryId: category.id,
+        container: 'mp4',
+        durationSeconds: 12,
+        finalFilePath,
+        height: 1080,
+        sizeBytes: 5,
+        sourceUrl: `https://example.test/${filename}`,
+        thumbnailPath: null,
+        title: filename,
+        videoCodec: 'h264',
+        width: 1920
+      });
+    };
+
+    const first = complete(firstJob.id, 'first.mp4');
+    const second = complete(secondJob.id, 'second.mp4');
+
+    expect(first.labels).toEqual(['studio']);
+    expect(second.labels).toEqual(['studio']);
+    expect(mediaLibrary.categoryLabelSummary(category.id)).toEqual({
+      items: [{ count: 2, name: 'studio' }],
+      total: 2
+    });
+  });
+
   test('paginates a category by a stable created-at and id cursor', () => {
     const { categories, db, mediaLibrary } = createServices();
     const category = categories.create('test');
