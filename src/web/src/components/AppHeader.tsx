@@ -2,23 +2,21 @@ import { PlusIcon, UpdateIcon } from './icons';
 import { queueCountsLabel, type QueueCounts } from '../features/queue/queueSummary';
 
 export function AppHeader({
-  activeProblems,
   busy,
   categoryName,
   extensionUpdateAvailable,
   loading,
-  mediaCount,
+  librarySummary,
   onAdd,
   onUpdateExtension,
   page,
   queueCounts
 }: {
-  activeProblems: number;
   busy: boolean;
   categoryName: string | null;
   extensionUpdateAvailable: boolean;
   loading: boolean;
-  mediaCount: number;
+  librarySummary: string;
   onAdd: () => void;
   onUpdateExtension: () => void;
   page: 'library' | 'queue';
@@ -33,7 +31,7 @@ export function AppHeader({
             ? page === 'queue' ? 'Loading queue…' : 'Loading videos…'
             : page === 'queue'
             ? queueCountsLabel(queueCounts)
-            : `${mediaCount} saved videos${activeProblems ? `, ${activeProblems} need attention` : ''}`}
+            : librarySummary}
         </p>
       </div>
       <div className="topbarActions">

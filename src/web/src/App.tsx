@@ -9,6 +9,8 @@ import { appQueryKeys, useCategoriesQuery, useMediaQuery, useQueueQuery, useRunt
 import { useSourceExtensionWorkflow } from './features/app/useSourceExtensionWorkflow';
 import { useQueueCompletionNotifications } from './features/app/useQueueCompletionNotifications';
 import { LibraryGrid } from './features/library/LibraryGrid';
+import { CategoryLabelBar } from './features/library/CategoryLabelBar';
+import { useLibraryLabels } from './features/library/useLibraryLabels';
 import { CompletionToasts } from './features/queue/CompletionToasts';
 import { QueuePanel } from './features/queue/QueuePanel';
 import { countQueueJobs, queueCountsLabel } from './features/queue/queueSummary';
@@ -48,9 +50,13 @@ export function App() {
   const selectedCategory =
     categories.find((category) => category.id === selectedCategoryId) ?? categories[0] ?? null;
   const currentCategoryId = selectedCategory?.id ?? '';
-  const mediaQuery = useMediaQuery(currentCategoryId);
+  const libraryLabels = useLibraryLabels(currentCategoryId);
+  const activeLabel = libraryLabels.activeLabel;
+  const categoryLabelsQuery = libraryLabels.query;
+  const mediaQuery = useMediaQuery(currentCategoryId, activeLabel);
   const media = useMemo(() => mediaQuery.data?.pages.flatMap((mediaPage) => mediaPage.items) ?? [], [mediaQuery.data]);
   const mediaTotal = mediaQuery.data?.pages[0]?.total ?? 0;
+  const categoryLabelSummary = categoryLabelsQuery.data ?? { items: [], total: activeLabel ? 0 : mediaTotal };
   const queue = queueQuery.data ?? EMPTY_QUEUE;
   const sortedJobs = useMemo(() => sortQueueJobs(queue.jobs), [queue.jobs]);
   const queueCounts = useMemo(() => countQueueJobs(queue.jobs), [queue.jobs]);
@@ -59,7 +65,7 @@ export function App() {
 
   useEffect(() => {
     workspaceRef.current?.scrollTo({ top: 0 });
-  }, [currentCategoryId, page]);
+  }, [activeLabel, currentCategoryId, page]);
 
   function showDialog(nextDialog: DialogState) {
     setDialogError(null);
@@ -86,7 +92,7 @@ export function App() {
     }
   }
 
-  async function submitJob(input: { sourceUrl: string; categoryId: string; newCategoryName: string }) {
+  async function submitJob(input: { sourceUrl: string; categoryId: string; labels: string[]; newCategoryName: string }) {
     await runDialogAction(
       async () => {
         let categoryId = input.categoryId;
@@ -94,7 +100,7 @@ export function App() {
           const category = await api.createCategory(input.newCategoryName.trim());
           categoryId = category.id;
         }
-        await api.createJob(input.sourceUrl.trim(), categoryId);
+        await api.createJob(input.sourceUrl.trim(), categoryId, input.labels);
         return categoryId;
       },
       async (categoryId) => {
@@ -121,12 +127,15 @@ export function App() {
     );
   }
 
-  function updateMedia(item: MediaItem, body: { title?: string; categoryId?: string }) {
+  function updateMedia(item: MediaItem, body: { title?: string; categoryId?: string; labels?: string[] }) {
     return runDialogAction(
       () => api.updateMedia(item.id, body),
       async () => {
         setDialog({ kind: 'none' });
-        await queryClient.resetQueries({ queryKey: appQueryKeys.mediaRoot });
+        await Promise.all([
+          queryClient.resetQueries({ queryKey: appQueryKeys.mediaRoot }),
+          queryClient.invalidateQueries({ queryKey: appQueryKeys.categoryLabelsRoot })
+        ]);
       }
     );
   }
@@ -150,6 +159,7 @@ export function App() {
         await Promise.all([
           queryClient.invalidateQueries({ queryKey: appQueryKeys.categories }),
           queryClient.resetQueries({ queryKey: appQueryKeys.mediaRoot }),
+          queryClient.invalidateQueries({ queryKey: appQueryKeys.categoryLabelsRoot }),
           queryClient.invalidateQueries({ queryKey: appQueryKeys.queue })
         ]);
       }
@@ -161,9 +171,34 @@ export function App() {
       () => api.deleteMedia(item.id),
       async () => {
         setDialog({ kind: 'none' });
-        await queryClient.resetQueries({ queryKey: appQueryKeys.mediaRoot });
+        await Promise.all([
+          queryClient.resetQueries({ queryKey: appQueryKeys.mediaRoot }),
+          queryClient.invalidateQueries({ queryKey: appQueryKeys.categoryLabels(item.categoryId) })
+        ]);
       }
     );
+  }
+
+  async function renameCategoryLabel(from: string, to: string): Promise<boolean> {
+    let succeeded = false;
+    await runDialogAction(
+      () => libraryLabels.rename(from, to),
+      () => {
+        succeeded = true;
+      }
+    );
+    return succeeded;
+  }
+
+  async function removeCategoryLabel(label: string): Promise<boolean> {
+    let succeeded = false;
+    await runDialogAction(
+      () => libraryLabels.remove(label),
+      () => {
+        succeeded = true;
+      }
+    );
+    return succeeded;
   }
 
   async function runQueueAction(job: DownloadJob, action: string, operation: () => Promise<void>) {
@@ -183,10 +218,10 @@ export function App() {
   const queueLoading = queueQuery.isPending;
   const librarySummary = libraryLoading
     ? 'Loading videos…'
-    : `${mediaTotal} saved videos${activeProblems ? `, ${activeProblems} need attention` : ''}`;
+    : `${activeLabel ? `${mediaTotal} of ${categoryLabelSummary.total}` : mediaTotal} saved videos${activeProblems ? `, ${activeProblems} need attention` : ''}`;
   const currentRefetchError = page === 'queue'
     ? queueQuery.isRefetchError
-    : categoriesQuery.isRefetchError || mediaQuery.isRefetchError;
+    : categoriesQuery.isRefetchError || mediaQuery.isRefetchError || categoryLabelsQuery.isError;
 
   return (
     <main className="shell">
@@ -232,23 +267,33 @@ export function App() {
 
       <section className="workspace" ref={workspaceRef}>
         <AppHeader
-          activeProblems={activeProblems}
           busy={dialogBusy || categoriesQuery.isPending}
           categoryName={selectedCategory?.name ?? null}
           extensionUpdateAvailable={sourceExtension.status?.kind === 'outdated'}
           loading={page === 'queue' ? queueLoading : libraryLoading}
-          mediaCount={mediaTotal}
+          librarySummary={librarySummary}
           onAdd={() => showDialog({ kind: 'add' })}
           onUpdateExtension={sourceExtension.showUpdateIssue}
           page={page}
           queueCounts={queueCounts}
         />
 
+        {page === 'library' ? (
+          <CategoryLabelBar
+            activeLabel={activeLabel}
+            onManage={() => selectedCategory && showDialog({ category: selectedCategory, kind: 'manageLabels' })}
+            onSelect={libraryLabels.select}
+            summary={categoryLabelSummary}
+          />
+        ) : null}
+
         {currentRefetchError ? (
           <InlineNotice
             action={
               <button
-                onClick={() => void (page === 'queue' ? queueQuery.refetch() : Promise.all([categoriesQuery.refetch(), mediaQuery.refetch()]))}
+                onClick={() => void (page === 'queue'
+                  ? queueQuery.refetch()
+                  : Promise.all([categoriesQuery.refetch(), mediaQuery.refetch(), categoryLabelsQuery.refetch()]))}
                 type="button"
               >
                 Retry
@@ -269,6 +314,7 @@ export function App() {
       <AppDialogs
         busy={dialogBusy}
         categories={categories}
+        categoryLabelSummary={categoryLabelSummary}
         currentCategoryId={currentCategoryId}
         dialog={dialog}
         error={dialogError}
@@ -280,7 +326,9 @@ export function App() {
         onCreateCategory={(name) => void createCategory(name)}
         onDeleteCategory={deleteCategory}
         onDeleteMedia={deleteMedia}
+        onRemoveCategoryLabel={removeCategoryLabel}
         onRenameCategory={renameCategory}
+        onRenameCategoryLabel={renameCategoryLabel}
         onSubmitJob={(input) => void submitJob(input)}
         onUpdateMedia={updateMedia}
         sourceExtensionProfile={runtimeConfigQuery.data?.sourceExtensionProfile ?? 'prod'}
@@ -311,11 +359,13 @@ export function App() {
     return (
       <LibraryGrid
         categoryName={selectedCategory?.name ?? null}
+        activeLabel={activeLabel}
         hasNextPage={Boolean(mediaQuery.hasNextPage)}
         isFetchingNextPage={mediaQuery.isFetchingNextPage}
         items={media}
         nextPageError={mediaQuery.isFetchNextPageError}
         onAdd={() => showDialog({ kind: 'add' })}
+        onClearLabel={() => libraryLabels.select(null)}
         onCreateCategory={() => showDialog({ kind: 'createCategory' })}
         onDelete={(item) => showDialog({ item, kind: 'deleteMedia' })}
         onEdit={(item) => showDialog({ kind: 'edit', item })}

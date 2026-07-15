@@ -1,5 +1,6 @@
 import type { Category, DownloadJob, JobStatus, MediaCandidate, MediaItem, SubtitleTrack } from '../../shared/types.js';
 import { parseJsonObject } from './database.js';
+import { parseMediaLabelsJson } from '../utils/mediaLabels.js';
 
 type Row = Record<string, unknown>;
 
@@ -28,6 +29,7 @@ export function mapMediaItem(row: Row): MediaItem {
     videoCodec: row.video_codec === null ? null : String(row.video_codec),
     audioCodec: row.audio_codec === null ? null : String(row.audio_codec),
     sourceUrl: String(row.source_url),
+    labels: parseMediaLabelsJson(row.labels_json),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at)
   };
@@ -45,6 +47,7 @@ export function mapDownloadJob(row: Row): DownloadJob {
     errorMessage: row.error_message === null ? null : String(row.error_message),
     stageProgress: row.stage_progress === null || row.stage_progress === undefined ? null : Number(row.stage_progress),
     progressLabel: row.progress_label === null || row.progress_label === undefined ? null : String(row.progress_label),
+    labels: parseMediaLabelsJson(row.labels_json),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
     startedAt: row.started_at === null ? null : String(row.started_at),

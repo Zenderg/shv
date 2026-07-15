@@ -1,7 +1,9 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { DialogBackdrop, DialogClose, DialogTitle } from '../../components/DialogBackdrop';
 import { CloseIcon, PlusIcon } from '../../components/icons';
 import type { Category } from '../../lib/api';
+import { useCategoryLabelsQuery } from '../app/queries';
+import { LabelInput, type LabelInputHandle } from '../labels/LabelInput';
 
 export function AddVideoDialog({
   busy,
@@ -16,12 +18,15 @@ export function AddVideoDialog({
   error: string | null;
   initialCategoryId: string;
   onClose: () => void;
-  onSubmit: (input: { sourceUrl: string; categoryId: string; newCategoryName: string }) => void;
+  onSubmit: (input: { sourceUrl: string; categoryId: string; labels: string[]; newCategoryName: string }) => void;
 }) {
   const [sourceUrl, setSourceUrl] = useState('');
   const [categoryMode, setCategoryMode] = useState<'existing' | 'new'>(categories.length > 0 ? 'existing' : 'new');
   const [categoryId, setCategoryId] = useState(initialCategoryId || categories[0]?.id || '');
   const [newCategoryName, setNewCategoryName] = useState('');
+  const [labels, setLabels] = useState<string[]>([]);
+  const labelInputRef = useRef<LabelInputHandle>(null);
+  const labelsQuery = useCategoryLabelsQuery(categoryMode === 'existing' ? categoryId : '');
   const canSubmit =
     sourceUrl.trim().length > 0 && (categoryMode === 'new' ? newCategoryName.trim().length > 0 : categoryId.length > 0);
 
@@ -34,6 +39,7 @@ export function AddVideoDialog({
           onSubmit({
             sourceUrl,
             categoryId: categoryMode === 'existing' ? categoryId : '',
+            labels: labelInputRef.current?.value() ?? labels,
             newCategoryName: categoryMode === 'new' ? newCategoryName : ''
           });
         }}
@@ -101,6 +107,13 @@ export function AddVideoDialog({
             />
           </label>
         )}
+        <LabelInput
+          availableLabels={labelsQuery.data?.items.map((label) => label.name) ?? []}
+          disabled={busy}
+          labels={labels}
+          onChange={setLabels}
+          ref={labelInputRef}
+        />
         {error ? <p className="inlineDialogError" role="alert">{error}</p> : null}
         <button disabled={busy || !canSubmit} type="submit">
           <PlusIcon />

@@ -19,6 +19,7 @@ declare module 'supertest' {
   const request: (app: unknown) => {
     delete(path: string): TestRequest;
     get(path: string): TestRequest;
+    patch(path: string): TestRequest;
     post(path: string): TestRequest;
   };
   export default request;

@@ -51,6 +51,7 @@ function completedJob(): DownloadJob {
     errorCode: null,
     errorMessage: null,
     id: '3df39a19-7ca7-4900-af01-665c9d614460',
+    labels: [],
     progressLabel: null,
     selectedCandidateId: null,
     sourceUrl: 'https://example.test/video.mp4',

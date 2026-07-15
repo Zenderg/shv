@@ -14,6 +14,7 @@ import type { LiveBrowserService } from '../browser-live/liveBrowserService.js';
 import type { ExtensionDebugService } from '../extension-debug/extensionDebugService.js';
 import type { MediaFiles } from '../media-library/mediaFiles.js';
 import { InvalidMediaCursorError, type MediaLibraryService } from '../media-library/mediaLibraryService.js';
+import { MAX_MEDIA_LABELS, MAX_MEDIA_LABEL_LENGTH } from '../utils/mediaLabels.js';
 import { buildZipArchive, type ZipEntryInput } from '../utils/zipArchive.js';
 import { candidateResponses, queueSnapshotResponse } from './candidateResponses.js';
 import {
@@ -35,6 +36,10 @@ const httpUrlSchema = z.string().url().refine(
   },
   { message: 'URL must use http or https' }
 );
+const mediaLabelSchema = z.string().transform((value) => value.normalize('NFKC').trim().replace(/\s+/gu, ' ')).pipe(
+  z.string().min(1).max(MAX_MEDIA_LABEL_LENGTH)
+);
+const mediaLabelsSchema = z.array(mediaLabelSchema).max(MAX_MEDIA_LABELS);
 
 export interface RouteServices {
   config: AppConfig;
@@ -107,17 +112,51 @@ export function createRouter(services: RouteServices): Router {
     response.status(204).end();
   });
 
+  router.get('/api/categories/:id/labels', (request, response) => {
+    const categoryId = paramId(request);
+    if (!services.categories.get(categoryId)) {
+      response.status(404).json({ error: 'category_not_found' });
+      return;
+    }
+    response.json(services.mediaLibrary.categoryLabelSummary(categoryId));
+  });
+
+  router.patch('/api/categories/:id/labels', (request, response) => {
+    const categoryId = paramId(request);
+    if (!services.categories.get(categoryId)) {
+      response.status(404).json({ error: 'category_not_found' });
+      return;
+    }
+    const body = z.object({ from: mediaLabelSchema, to: mediaLabelSchema }).parse(request.body);
+    response.json(services.mediaLibrary.renameCategoryLabel(categoryId, body.from, body.to));
+  });
+
+  router.delete('/api/categories/:id/labels', (request, response) => {
+    const categoryId = paramId(request);
+    if (!services.categories.get(categoryId)) {
+      response.status(404).json({ error: 'category_not_found' });
+      return;
+    }
+    const body = z.object({ label: mediaLabelSchema }).parse(request.body);
+    response.json(services.mediaLibrary.removeCategoryLabel(categoryId, body.label));
+  });
+
   router.get('/api/media', (request, response) => {
     const query = z.object({
       categoryId: z.string().uuid(),
       cursor: z.string().min(1).max(1_024).optional(),
+      label: mediaLabelSchema.optional(),
       limit: z.coerce.number().int().min(1).max(100).default(60)
     }).parse(request.query);
-    response.json(services.mediaLibrary.page(query.categoryId, query.limit, query.cursor));
+    response.json(services.mediaLibrary.page(query.categoryId, query.limit, query.cursor, query.label));
   });
 
   router.patch('/api/media/:id', (request, response) => {
-    const body = z.object({ title: z.string().min(1).max(140).optional(), categoryId: z.string().uuid().optional() }).parse(request.body);
+    const body = z.object({
+      title: z.string().min(1).max(140).optional(),
+      categoryId: z.string().uuid().optional(),
+      labels: mediaLabelsSchema.optional()
+    }).parse(request.body);
     let item = services.mediaLibrary.get(request.params.id);
     if (!item) {
       response.status(404).json({ error: 'media_not_found' });
@@ -128,6 +167,9 @@ export function createRouter(services: RouteServices): Router {
     }
     if (body.categoryId) {
       item = services.mediaLibrary.move(item.id, body.categoryId);
+    }
+    if (body.labels !== undefined) {
+      item = services.mediaLibrary.setLabels(item.id, body.labels);
     }
     response.json(item);
   });
@@ -190,8 +232,12 @@ export function createRouter(services: RouteServices): Router {
   }
 
   router.post('/api/jobs', (request, response) => {
-    const body = z.object({ sourceUrl: httpUrlSchema, categoryId: z.string().uuid() }).parse(request.body);
-    response.status(201).json(services.jobs.create(body.sourceUrl, body.categoryId));
+    const body = z.object({
+      sourceUrl: httpUrlSchema,
+      categoryId: z.string().uuid(),
+      labels: mediaLabelsSchema.optional().default([])
+    }).parse(request.body);
+    response.status(201).json(services.jobs.create(body.sourceUrl, body.categoryId, body.labels));
   });
 
   router.get('/api/jobs/:id', (request, response) => {

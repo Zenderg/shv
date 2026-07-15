@@ -3,8 +3,11 @@ import { api, type MediaPage } from '../../lib/api';
 
 export const appQueryKeys = {
   categories: ['categories'] as const,
+  categoryLabelsRoot: ['category-labels'] as const,
+  categoryLabels: (categoryId: string) => ['category-labels', categoryId] as const,
   mediaRoot: ['media'] as const,
-  media: (categoryId: string) => ['media', categoryId] as const,
+  mediaCategory: (categoryId: string) => ['media', categoryId] as const,
+  media: (categoryId: string, label: string | null) => ['media', categoryId, label] as const,
   queue: ['queue'] as const,
   runtimeConfig: ['runtime-config'] as const
 };
@@ -16,13 +19,21 @@ export function useCategoriesQuery() {
   });
 }
 
-export function useMediaQuery(categoryId: string) {
+export function useCategoryLabelsQuery(categoryId: string) {
+  return useQuery({
+    enabled: categoryId.length > 0,
+    queryFn: () => api.categoryLabels(categoryId),
+    queryKey: appQueryKeys.categoryLabels(categoryId)
+  });
+}
+
+export function useMediaQuery(categoryId: string, label: string | null) {
   return useInfiniteQuery({
     enabled: categoryId.length > 0,
     getNextPageParam: (lastPage: MediaPage) => lastPage.nextCursor ?? undefined,
     initialPageParam: null as string | null,
-    queryFn: ({ pageParam }: { pageParam: string | null }) => api.media(categoryId, pageParam),
-    queryKey: appQueryKeys.media(categoryId)
+    queryFn: ({ pageParam }: { pageParam: string | null }) => api.media(categoryId, pageParam, 60, label),
+    queryKey: appQueryKeys.media(categoryId, label)
   });
 }
 

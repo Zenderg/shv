@@ -14,11 +14,11 @@ describe('media pagination route', () => {
 
     const response = await request(app)
       .get('/api/media')
-      .query({ categoryId: CATEGORY_ID, cursor: 'opaque-cursor', limit: 30 })
+      .query({ categoryId: CATEGORY_ID, cursor: 'opaque-cursor', label: 'Studio A', limit: 30 })
       .expect(200);
 
     expect(response.body).toEqual({ items: [], nextCursor: null, total: 0 });
-    expect(page).toHaveBeenCalledWith(CATEGORY_ID, 30, 'opaque-cursor');
+    expect(page).toHaveBeenCalledWith(CATEGORY_ID, 30, 'opaque-cursor', 'Studio A');
   });
 
   test('rejects invalid limits and cursors as client errors', async () => {

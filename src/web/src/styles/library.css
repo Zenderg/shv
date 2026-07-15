@@ -4,6 +4,69 @@
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
 }
 
+.categoryLabelBar {
+  align-items: start;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  margin: -6px 0 24px;
+}
+
+.categoryLabelScroller {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.filterChip,
+.manageLabelsButton {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  color: var(--color-muted);
+  font-size: 13px;
+  font-weight: 700;
+  min-height: 38px;
+  padding: 0 13px;
+}
+
+.filterChip {
+  max-width: 280px;
+}
+
+.filterChip > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.filterChipCount {
+  color: var(--color-subtle);
+  font-variant-numeric: tabular-nums;
+}
+
+.filterChip[aria-pressed="true"] {
+  background: var(--color-accent-strong);
+  border-color: var(--color-accent-strong);
+  color: var(--color-accent-contrast);
+}
+
+.filterChip[aria-pressed="true"] .filterChipCount {
+  color: inherit;
+  opacity: 0.74;
+}
+
+.manageLabelsButton {
+  background: transparent;
+  color: var(--color-text);
+}
+
+.filterChip:hover,
+.manageLabelsButton:hover {
+  border-color: var(--color-border-strong);
+}
+
 .virtualLibrary {
   min-height: 1px;
   width: 100%;

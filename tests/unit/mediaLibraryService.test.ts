@@ -40,7 +40,7 @@ describe('MediaLibraryService', () => {
   test('atomically and idempotently links one completed media item to its job', () => {
     const { categories, config, db, jobs, mediaFiles, mediaLibrary } = createServices();
     const category = categories.create('test');
-    const job = jobs.create('https://example.test/video', category.id);
+    const job = jobs.create('https://example.test/video', category.id, [' Studio A ', 'studio a', 'Series One']);
     const claimed = jobs.claimNextRunnableJob()!;
     jobs.transitionActive(job.id, claimed.runId, 'analyzing', 'downloading', null);
     jobs.transitionActive(job.id, claimed.runId, 'downloading', 'processing', null);
@@ -68,6 +68,7 @@ describe('MediaLibraryService', () => {
     const repeated = mediaLibrary.completeJob(job.id, claimed.runId, input);
 
     expect(repeated.id).toBe(first.id);
+    expect(first.labels).toEqual(['Series One', 'Studio A']);
     expect(mediaLibrary.list()).toHaveLength(1);
     expect(jobs.requireJob(job.id)).toMatchObject({ status: 'completed', stageProgress: 1 });
     expect(jobs.outputRelativePath(job.id)).toBeNull();
@@ -102,7 +103,97 @@ describe('MediaLibraryService', () => {
     expect(second.total).toBe(4);
     expect(() => mediaLibrary.page(otherCategory.id, 2, first.nextCursor!)).toThrow('another category');
   });
+
+  test('derives category labels from videos and preserves them across moves', () => {
+    const { categories, config, mediaLibrary } = createServices();
+    const firstCategory = categories.create('first');
+    const secondCategory = categories.create('second');
+    const first = createMedia(mediaLibrary, config, firstCategory.id, firstCategory.folderName, 'first', [
+      ' Studio A ',
+      'studio a',
+      'Series One'
+    ]);
+    createMedia(mediaLibrary, config, firstCategory.id, firstCategory.folderName, 'second', ['Studio A']);
+
+    expect(first.labels).toEqual(['Series One', 'Studio A']);
+    expect(mediaLibrary.categoryLabelSummary(firstCategory.id)).toEqual({
+      items: [
+        { count: 1, name: 'Series One' },
+        { count: 2, name: 'Studio A' }
+      ],
+      total: 2
+    });
+
+    mediaLibrary.move(first.id, secondCategory.id);
+
+    expect(mediaLibrary.categoryLabelSummary(firstCategory.id).items).toEqual([{ count: 1, name: 'Studio A' }]);
+    expect(mediaLibrary.categoryLabelSummary(secondCategory.id).items).toEqual([
+      { count: 1, name: 'Series One' },
+      { count: 1, name: 'Studio A' }
+    ]);
+
+    mediaLibrary.renameCategoryLabel(secondCategory.id, 'Series One', 'Studio A');
+    expect(mediaLibrary.get(first.id)?.labels).toEqual(['Studio A']);
+    expect(mediaLibrary.categoryLabelSummary(firstCategory.id).items).toEqual([{ count: 1, name: 'Studio A' }]);
+
+    mediaLibrary.removeCategoryLabel(secondCategory.id, 'Studio A');
+    expect(mediaLibrary.get(first.id)?.labels).toEqual([]);
+    expect(mediaLibrary.categoryLabelSummary(secondCategory.id)).toEqual({ items: [], total: 1 });
+  });
+
+  test('filters paginated media by a label-bound cursor', () => {
+    const { categories, db, mediaLibrary } = createServices();
+    const category = categories.create('test');
+    const insert = db.prepare(
+      `INSERT INTO media_items (
+        id, category_id, title, filename, relative_path, size_bytes, source_url, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)`
+    );
+    const createdAt = '2026-07-15T12:00:00.000Z';
+    for (const id of ['a', 'b', 'c']) {
+      insert.run(id, category.id, id, `${id}.mp4`, `${category.folderName}/${id}.mp4`, `https://example.test/${id}`, createdAt, createdAt);
+    }
+    db.prepare('INSERT INTO media_item_labels (media_item_id, name, label_key) VALUES (?, ?, ?)').run('a', 'Series', 'series');
+    db.prepare('INSERT INTO media_item_labels (media_item_id, name, label_key) VALUES (?, ?, ?)').run('c', 'Series', 'series');
+
+    const first = mediaLibrary.page(category.id, 1, undefined, ' series ');
+    expect(first.items.map((item) => item.id)).toEqual(['c']);
+    expect(first.total).toBe(2);
+    expect(first.nextCursor).not.toBeNull();
+
+    const second = mediaLibrary.page(category.id, 1, first.nextCursor!, 'SERIES');
+    expect(second.items.map((item) => item.id)).toEqual(['a']);
+    expect(() => mediaLibrary.page(category.id, 1, first.nextCursor!, 'other')).toThrow('another label filter');
+  });
 });
+
+function createMedia(
+  mediaLibrary: MediaLibraryService,
+  config: AppConfig,
+  categoryId: string,
+  folderName: string,
+  title: string,
+  labels: string[]
+) {
+  const finalFilePath = path.join(config.libraryRoot, folderName, `${title}.mp4`);
+  fs.mkdirSync(path.dirname(finalFilePath), { recursive: true });
+  fs.writeFileSync(finalFilePath, title);
+  return mediaLibrary.create({
+    audioCodec: 'aac',
+    categoryId,
+    container: 'mp4',
+    durationSeconds: 12,
+    finalFilePath,
+    height: 1080,
+    labels,
+    sizeBytes: title.length,
+    sourceUrl: `https://example.test/${title}`,
+    thumbnailPath: null,
+    title,
+    videoCodec: 'h264',
+    width: 1920
+  });
+}
 
 function createServices() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'xxx-library-'));

@@ -1,5 +1,5 @@
 import type { SourceExtensionKind } from '../../../shared/sourceExtension';
-import type { Category, DownloadJob, JobStatus, MediaCandidate, MediaItem, MediaPage, QueueSnapshot, SubtitleTrack } from '../../../shared/types';
+import type { Category, CategoryLabelSummary, DownloadJob, JobStatus, MediaCandidate, MediaItem, MediaPage, QueueSnapshot, SubtitleTrack } from '../../../shared/types';
 
 export interface RuntimeConfig {
   csrfToken: string;
@@ -96,14 +96,28 @@ export const api = {
   renameCategory: (id: string, name: string) =>
     request<Category>(`/api/categories/${id}`, { method: 'PATCH', body: JSON.stringify({ name }) }),
   deleteCategory: (id: string) => request<void>(`/api/categories/${id}`, { method: 'DELETE' }),
-  media: (categoryId: string, cursor: string | null = null, limit = 60) => {
+  categoryLabels: (categoryId: string) => request<CategoryLabelSummary>(`/api/categories/${categoryId}/labels`),
+  renameCategoryLabel: (categoryId: string, from: string, to: string) =>
+    request<CategoryLabelSummary>(`/api/categories/${categoryId}/labels`, {
+      method: 'PATCH',
+      body: JSON.stringify({ from, to })
+    }),
+  removeCategoryLabel: (categoryId: string, label: string) =>
+    request<CategoryLabelSummary>(`/api/categories/${categoryId}/labels`, {
+      method: 'DELETE',
+      body: JSON.stringify({ label })
+    }),
+  media: (categoryId: string, cursor: string | null = null, limit = 60, label: string | null = null) => {
     const params = new URLSearchParams({ categoryId, limit: String(limit) });
     if (cursor) {
       params.set('cursor', cursor);
     }
+    if (label) {
+      params.set('label', label);
+    }
     return request<MediaPage>(`/api/media?${params.toString()}`);
   },
-  updateMedia: (id: string, body: { title?: string; categoryId?: string }) =>
+  updateMedia: (id: string, body: { title?: string; categoryId?: string; labels?: string[] }) =>
     request<MediaItem>(`/api/media/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
   deleteMedia: (id: string) => request<void>(`/api/media/${id}`, { method: 'DELETE' }),
   queue: () => request<QueueSnapshot>('/api/queue'),
@@ -117,8 +131,8 @@ export const api = {
       throw error;
     }
   },
-  createJob: (sourceUrl: string, categoryId: string) =>
-    request<DownloadJob>('/api/jobs', { method: 'POST', body: JSON.stringify({ sourceUrl, categoryId }) }),
+  createJob: (sourceUrl: string, categoryId: string, labels: string[] = []) =>
+    request<DownloadJob>('/api/jobs', { method: 'POST', body: JSON.stringify({ sourceUrl, categoryId, labels }) }),
   retryJob: (id: string) => request<DownloadJob>(`/api/jobs/${id}/retry`, { method: 'POST' }),
   cancelJob: (id: string) => request<DownloadJob>(`/api/jobs/${id}/cancel`, { method: 'POST' }),
   deleteJob: (id: string) => request<void>(`/api/jobs/${id}`, { method: 'DELETE' }),
@@ -141,4 +155,4 @@ export const api = {
   }
 };
 
-export type { Category, DownloadJob, JobStatus, MediaCandidate, MediaItem, MediaPage, QueueSnapshot, SubtitleTrack };
+export type { Category, CategoryLabelSummary, DownloadJob, JobStatus, MediaCandidate, MediaItem, MediaPage, QueueSnapshot, SubtitleTrack };

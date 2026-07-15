@@ -6,6 +6,16 @@ import { JobService } from '../../src/server/jobs/jobService.js';
 import { openDatabase } from '../../src/server/storage/database.js';
 
 describe('JobService', () => {
+  test('normalizes labels and preserves them through retries', () => {
+    const { service, categoryId } = createJobService();
+    const job = service.create('https://example.test/page', categoryId, [' Studio A ', 'studio a', 'Series One']);
+
+    expect(job.labels).toEqual(['Studio A', 'Series One']);
+    failClaimedJob(service, job.id, 'temporary failure');
+
+    expect(service.retry(job.id).labels).toEqual(['Studio A', 'Series One']);
+  });
+
   test('merges newly captured candidates without deleting existing manual choices', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'xxx-jobs-'));
     const db = openDatabase(path.join(root, 'db.sqlite'));

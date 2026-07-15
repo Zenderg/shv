@@ -12,12 +12,14 @@ import {
 } from './libraryVirtualization';
 
 interface LibraryGridProps {
+  activeLabel: string | null;
   categoryName: string | null;
   hasNextPage: boolean;
   isFetchingNextPage: boolean;
   items: MediaItem[];
   nextPageError: boolean;
   onAdd: () => void;
+  onClearLabel: () => void;
   onCreateCategory: () => void;
   onDelete: (item: MediaItem) => void;
   onEdit: (item: MediaItem) => void;
@@ -34,20 +36,26 @@ export function LibraryGrid(props: LibraryGridProps) {
   return <VirtualLibraryGrid {...props} />;
 }
 
-function EmptyLibrary({ categoryName, onAdd, onCreateCategory }: LibraryGridProps) {
+function EmptyLibrary({ activeLabel, categoryName, onAdd, onClearLabel, onCreateCategory }: LibraryGridProps) {
   return (
     <section className="emptyState">
       <PlayIcon />
-      <h2>{categoryName ? `No videos in ${categoryName}` : 'Start your library'}</h2>
+      <h2>{activeLabel ? `No videos labeled ${activeLabel}` : categoryName ? `No videos in ${categoryName}` : 'Start your library'}</h2>
       <p>
-        {categoryName
+        {activeLabel
+          ? 'The label may have changed while this filter was active.'
+          : categoryName
           ? 'Add a video link; completed downloads will appear here.'
           : 'Create a category or add a video link to begin your local library.'}
       </p>
       <div className="emptyStateActions">
-        <button className="primaryButton" onClick={onAdd} type="button">
-          {categoryName ? 'Add video' : 'Add first video'}
-        </button>
+        {activeLabel ? (
+          <button className="primaryButton" onClick={onClearLabel} type="button">Clear filter</button>
+        ) : (
+          <button className="primaryButton" onClick={onAdd} type="button">
+            {categoryName ? 'Add video' : 'Add first video'}
+          </button>
+        )}
         {!categoryName ? (
           <button className="secondaryButton" onClick={onCreateCategory} type="button">
             Create category

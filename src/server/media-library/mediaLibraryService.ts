@@ -1,13 +1,15 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
-import type { MediaItem, MediaPage } from '../../shared/types.js';
+import type { CategoryLabelSummary, MediaItem, MediaPage } from '../../shared/types.js';
 import type { CategoryService } from '../categories/categoryService.js';
 import { JobStateConflictError } from '../jobs/jobService.js';
 import { nowIso, type Db } from '../storage/database.js';
 import { mapMediaItem } from '../storage/rowMappers.js';
 import { sanitizeName, uniquePath } from '../utils/fileSafety.js';
+import { normalizeMediaLabel, normalizeMediaLabels, parseMediaLabelsJson } from '../utils/mediaLabels.js';
 import type { MediaFiles } from './mediaFiles.js';
+import { MediaLabelService } from './mediaLabelService.js';
 
 export interface CreateMediaInput {
   categoryId: string;
@@ -22,13 +24,15 @@ export interface CreateMediaInput {
   container: string | null;
   videoCodec: string | null;
   audioCodec: string | null;
+  labels?: string[];
 }
 
 interface MediaPageCursor {
   categoryId: string;
   createdAt: string;
   id: string;
-  version: 1;
+  labelKey: string | null;
+  version: 2;
 }
 
 export class InvalidMediaCursorError extends Error {
@@ -39,54 +43,76 @@ export class InvalidMediaCursorError extends Error {
 }
 
 export class MediaLibraryService {
+  private readonly labels: MediaLabelService;
+
   constructor(
     private readonly db: Db,
     private readonly categories: CategoryService,
     private readonly mediaFiles: MediaFiles
-  ) {}
+  ) {
+    this.labels = new MediaLabelService(db);
+  }
 
   list(categoryId?: string): MediaItem[] {
     const rows = categoryId
       ? this.db.prepare('SELECT * FROM media_items WHERE category_id = ? ORDER BY created_at DESC, id DESC').all(categoryId)
       : this.db.prepare('SELECT * FROM media_items ORDER BY created_at DESC, id DESC').all();
-    return rows.map((row) => mapMediaItem(row as Record<string, unknown>));
+    return this.mapRows(rows as Record<string, unknown>[]);
   }
 
-  page(categoryId: string, limit: number, encodedCursor?: string): MediaPage {
+  page(categoryId: string, limit: number, encodedCursor?: string, label?: string): MediaPage {
+    const labelKey = label ? normalizeMediaLabel(label)?.key ?? null : null;
     const cursor = encodedCursor ? decodeMediaCursor(encodedCursor) : null;
     if (cursor && cursor.categoryId !== categoryId) {
       throw new InvalidMediaCursorError('Media cursor belongs to another category');
     }
+    if (cursor && cursor.labelKey !== labelKey) {
+      throw new InvalidMediaCursorError('Media cursor belongs to another label filter');
+    }
+
+    const labelClause = labelKey
+      ? `AND EXISTS (
+           SELECT 1 FROM media_item_labels
+           WHERE media_item_labels.media_item_id = media_items.id
+             AND media_item_labels.label_key = ?
+         )`
+      : '';
+    const filterParams = labelKey ? [categoryId, labelKey] : [categoryId];
 
     const rows = cursor
       ? this.db
           .prepare(
-            `SELECT * FROM media_items
-             WHERE category_id = ?
+            `SELECT media_items.* FROM media_items
+             WHERE media_items.category_id = ?
+               ${labelClause}
                AND (created_at < ? OR (created_at = ? AND id < ?))
              ORDER BY created_at DESC, id DESC
              LIMIT ?`
           )
-          .all(categoryId, cursor.createdAt, cursor.createdAt, cursor.id, limit + 1)
+          .all(...filterParams, cursor.createdAt, cursor.createdAt, cursor.id, limit + 1)
       : this.db
           .prepare(
-            `SELECT * FROM media_items
-             WHERE category_id = ?
+            `SELECT media_items.* FROM media_items
+             WHERE media_items.category_id = ?
+             ${labelClause}
              ORDER BY created_at DESC, id DESC
              LIMIT ?`
           )
-          .all(categoryId, limit + 1);
+          .all(...filterParams, limit + 1);
     const pageRows = rows.slice(0, limit);
-    const items = pageRows.map((row) => mapMediaItem(row as Record<string, unknown>));
+    const items = this.mapRows(pageRows as Record<string, unknown>[]);
     const lastItem = items.at(-1);
-    const totalRow = this.db.prepare('SELECT COUNT(*) AS count FROM media_items WHERE category_id = ?').get(categoryId) as
+    const totalRow = this.db.prepare(
+      `SELECT COUNT(*) AS count FROM media_items
+       WHERE media_items.category_id = ? ${labelClause}`
+    ).get(...filterParams) as
       | { count?: number | string }
       | undefined;
 
     return {
       items,
       nextCursor: rows.length > limit && lastItem
-        ? encodeMediaCursor({ categoryId, createdAt: lastItem.createdAt, id: lastItem.id, version: 1 })
+        ? encodeMediaCursor({ categoryId, createdAt: lastItem.createdAt, id: lastItem.id, labelKey, version: 2 })
         : null,
       total: Number(totalRow?.count ?? 0)
     };
@@ -94,7 +120,7 @@ export class MediaLibraryService {
 
   get(id: string): MediaItem | null {
     const row = this.db.prepare('SELECT * FROM media_items WHERE id = ?').get(id);
-    return row ? mapMediaItem(row as Record<string, unknown>) : null;
+    return row ? this.mapRows([row as Record<string, unknown>])[0] ?? null : null;
   }
 
   create(input: CreateMediaInput): MediaItem {
@@ -103,11 +129,23 @@ export class MediaLibraryService {
       throw new Error('Category not found');
     }
 
-    const created = this.insert(input, null);
-    if (!created) {
-      throw new Error('Media item creation failed');
+    let transactionStarted = false;
+    try {
+      this.db.exec('BEGIN IMMEDIATE');
+      transactionStarted = true;
+      const created = this.insert({
+        ...input,
+        labels: this.labels.canonical(input.categoryId, input.labels).map((label) => label.name)
+      }, null);
+      this.db.exec('COMMIT');
+      transactionStarted = false;
+      return created;
+    } catch (error) {
+      if (transactionStarted) {
+        this.db.exec('ROLLBACK');
+      }
+      throw error;
     }
-    return created;
   }
 
   completeJob(jobId: string, runId: string, input: CreateMediaInput): MediaItem {
@@ -120,10 +158,10 @@ export class MediaLibraryService {
       this.db.exec('BEGIN IMMEDIATE');
       transactionStarted = true;
       const existingRow = this.db.prepare('SELECT * FROM media_items WHERE job_id = ?').get(jobId);
-      const existing = existingRow ? mapMediaItem(existingRow as Record<string, unknown>) : null;
+      const existing = existingRow ? this.mapRows([existingRow as Record<string, unknown>])[0] ?? null : null;
       const jobRow = this.db
-        .prepare('SELECT status, active_run_id, output_relative_path FROM download_jobs WHERE id = ?')
-        .get(jobId) as { active_run_id?: unknown; output_relative_path?: unknown; status?: unknown } | undefined;
+        .prepare('SELECT status, active_run_id, output_relative_path, labels_json FROM download_jobs WHERE id = ?')
+        .get(jobId) as { active_run_id?: unknown; labels_json?: unknown; output_relative_path?: unknown; status?: unknown } | undefined;
       if (!jobRow) {
         throw new Error('Job not found');
       }
@@ -140,7 +178,7 @@ export class MediaLibraryService {
       if (String(jobRow.output_relative_path ?? '') !== relativePath) {
         throw new JobStateConflictError(`Job ${jobId} does not own output path ${relativePath}`);
       }
-      const media = existing ?? this.insert(input, jobId);
+      const media = existing ?? this.insert({ ...input, labels: parseMediaLabelsJson(jobRow.labels_json) }, jobId);
       const now = nowIso();
       const result = this.db
         .prepare(
@@ -215,6 +253,24 @@ export class MediaLibraryService {
     this.db.prepare('DELETE FROM media_items WHERE id = ?').run(id);
   }
 
+  setLabels(id: string, labels: string[]): MediaItem {
+    const item = this.requireItem(id);
+    this.labels.replace(id, item.categoryId, labels);
+    return this.requireItem(id);
+  }
+
+  categoryLabelSummary(categoryId: string): CategoryLabelSummary {
+    return this.labels.summary(categoryId);
+  }
+
+  renameCategoryLabel(categoryId: string, from: string, to: string): CategoryLabelSummary {
+    return this.labels.renameInCategory(categoryId, from, to);
+  }
+
+  removeCategoryLabel(categoryId: string, label: string): CategoryLabelSummary {
+    return this.labels.removeFromCategory(categoryId, label);
+  }
+
   private insert(input: CreateMediaInput, jobId: string | null): MediaItem {
     const id = uuidv4();
     const now = nowIso();
@@ -248,7 +304,14 @@ export class MediaLibraryService {
         now,
         now
       );
+    this.labels.insert(id, normalizeMediaLabels(input.labels));
     return this.requireItem(id);
+  }
+
+  private mapRows(rows: Record<string, unknown>[]): MediaItem[] {
+    const items = rows.map((row) => mapMediaItem(row));
+    const labelsByMediaId = this.labels.namesByMediaId(items.map((item) => item.id));
+    return items.map((item) => ({ ...item, labels: labelsByMediaId.get(item.id) ?? [] }));
   }
 
   private requireItem(id: string): MediaItem {
@@ -268,13 +331,14 @@ function decodeMediaCursor(value: string): MediaPageCursor {
   try {
     const parsed = JSON.parse(Buffer.from(value, 'base64url').toString('utf8')) as Partial<MediaPageCursor> | null;
     if (
-      parsed?.version !== 1
+      parsed?.version !== 2
       || typeof parsed.categoryId !== 'string'
       || !parsed.categoryId
       || typeof parsed.createdAt !== 'string'
       || !parsed.createdAt
       || typeof parsed.id !== 'string'
       || !parsed.id
+      || (parsed.labelKey !== null && typeof parsed.labelKey !== 'string')
     ) {
       throw new InvalidMediaCursorError();
     }

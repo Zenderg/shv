@@ -117,6 +117,7 @@ function mediaItem(): MediaItem {
     filename: 'video.mp4',
     height: null,
     id: 'media-id',
+    labels: [],
     relativePath: 'video.mp4',
     sizeBytes: 100,
     sourceUrl: 'https://example.test/video.mp4',

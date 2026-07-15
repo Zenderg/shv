@@ -47,7 +47,10 @@ and `jobArtifacts` owns job-scoped cleanup. Keep protocol-specific transfer deta
 The React UI is category-first. It contains:
 
 - category navigation;
+- category-derived label chips with a single active server-side filter;
 - add-video dialog with existing-category selection or get-or-create category entry;
+- reusable free-form label entry in add-video and media-edit dialogs;
+- category-scoped bulk label rename/removal dialog;
 - media library cards;
 - queue panel for pending, current, failed, canceled, and manual-selection jobs;
 - browser-extension-assisted manual candidate selection;
@@ -61,9 +64,11 @@ and queue state, including queue polling and targeted invalidation. Radix primit
 keyboard/focus behavior while project CSS remains the visual source of truth.
 
 The media library uses TanStack Query infinite queries and row virtualization. The server returns keyset-paginated
-`MediaPage` values ordered by `(created_at DESC, id DESC)`; cursors are opaque and bound to the category that produced
-them. The client appends pages only as the last virtual row approaches the viewport, while the virtualizer mounts only
-the rows around the shared workspace scroll container. Category changes reset both scroll position and accumulated pages.
+`MediaPage` values ordered by `(created_at DESC, id DESC)`; cursors are opaque and bound to both the category and optional
+normalized label filter that produced them. The client appends pages only as the last virtual row approaches the viewport,
+while the virtualizer mounts only the rows around the shared workspace scroll container. Category or label changes reset
+both scroll position and accumulated pages. Filter-aware TanStack Query keys isolate paginated variants, while media and
+label mutations invalidate every affected category variant and its derived label summary.
 
 Desktop keeps persistent category navigation. At tablet/mobile widths the same actions move into a focus-trapped drawer
 so category volume cannot push the current library or queue below a long navigation block.
@@ -92,13 +97,27 @@ Media item dimensions are stored from the final `ffprobe` run on the normalized 
 
 Thumbnails are owned under the app data root. Media category folders should contain user-visible saved videos, not app metadata.
 
+Labels use Unicode NFKC normalization, trimmed and collapsed whitespace, and a case-insensitive normalized key while
+preserving a stable display spelling. API input is bounded to 20 labels per video or job and 60 characters per label.
+`download_jobs.labels_json` stores optional labels while work is incomplete. `media_item_labels` stores normalized
+saved-video assignments with a `(media_item_id, label_key)` primary key; it intentionally has no category column or
+standalone label catalog. Joining assignments through `media_items.category_id` produces category summaries and makes
+move/delete behavior automatic.
+
+Job completion copies the latest durable job labels into `media_item_labels` inside the same transaction that creates the
+media row and marks the job completed. Editing replaces one video's assignment set transactionally. Category-scoped
+rename inserts the target assignment and removes the source assignment, so renaming to an existing key merges safely;
+removal deletes only matching assignments in that category. Both operations also rewrite labels on non-completed jobs in
+the category to prevent stale labels from returning later.
+
 ## Storage Model
 
 SQLite uses explicit migrations under `src/server/storage/migrations.ts`. Core tables are:
 
 - `categories`: display name, stable folder name, and creation time.
 - `media_items`: category, title, filename, relative media path, thumbnail path, final media metadata, source URL, and timestamps.
-- `download_jobs`: source URL, category, status, selected candidate, title hint, error details, progress, and lifecycle timestamps.
+- `media_item_labels`: normalized, video-owned free-form label assignments.
+- `download_jobs`: source URL, category, optional labels, status, selected candidate, title hint, error details, progress, and lifecycle timestamps.
 - `media_candidates`: job-owned candidate URL, kind, content type, manifest type, resolution, bitrate, duration, size, confidence, captured headers, subtitle tracks, and discovery time.
 - `settings`: key/value app settings.
 

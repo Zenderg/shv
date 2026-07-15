@@ -55,7 +55,11 @@ describe('applyMigrations', () => {
     expect(mediaColumns).toContain('job_id');
     expect(migrationIds).toContain(5);
     expect(migrationIds).toContain(6);
+    expect(migrationIds).toContain(7);
     const mediaIndexes = db.prepare('PRAGMA index_list(media_items)').all().map((row) => String((row as { name: unknown }).name));
     expect(mediaIndexes).toContain('media_items_category_created_at_id_idx');
+    expect(jobColumns).toContain('labels_json');
+    const labelColumns = db.prepare('PRAGMA table_info(media_item_labels)').all().map((row) => String((row as { name: unknown }).name));
+    expect(labelColumns).toEqual(expect.arrayContaining(['media_item_id', 'name', 'label_key']));
   });
 });

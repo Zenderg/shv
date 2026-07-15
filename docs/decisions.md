@@ -128,6 +128,32 @@ The filesystem remains the source of media bytes; SQLite owns categories, media 
 
 Category display names may change, but folder names stay stable so existing media paths do not churn.
 
+## Derived Video Labels, Not Subcategories
+
+**Decision:** Optional free-form labels belong to videos. Categories derive their visible label filters and counts from
+their current saved videos instead of owning a separately maintained label catalog.
+
+**Why:**
+
+- Labels provide overlapping, lightweight slices such as source, series, topic, or status without introducing folder
+  nesting or forcing each video into one subcategory.
+- Moving a video preserves its descriptive metadata while the source and destination category filters update
+  automatically.
+- Creating labels only through video assignment keeps the normal add/edit flow compact and prevents empty organizational
+  objects.
+- A category-scoped management dialog covers the uncommon bulk rename/remove workflow without adding a permanent global
+  administration surface.
+
+**Rejected alternatives:**
+
+- Nested category folders.
+- A manually maintained category-label catalog with empty labels.
+- A standalone global label-management page.
+- Persistently rendering every label on every library card.
+
+Filtering is single-select and server-side so pagination totals and cursors remain truthful. Renaming to an existing label
+merges assignments within the current category; other categories are not changed.
+
 ## Queue First, No Metadata Preview Gate
 
 **Decision:** Adding a link creates a visible queue job immediately. The system starts work and asks for manual input only when needed.

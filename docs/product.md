@@ -81,6 +81,20 @@ Detailed extension behavior lives in [docs/browser-extension.md](browser-extensi
 
 Categories are flat and map to folders directly under `/data/library`. A video belongs to one category. Category creation is idempotent by sanitized display name. Category rename changes the display name and keeps the existing folder stable so saved media paths do not move.
 
+Videos may have zero or more free-form labels. Labels describe videos rather than folders: moving a video to another
+category preserves its labels, while each category derives its available label chips and exact counts from the saved
+videos currently inside it. A label appears in a category when at least one saved video has it and disappears when the
+last such assignment is removed. There is no empty-label catalog or separate label-creation flow.
+
+The category label bar is a contextual, single-select server-side filter. `All` clears the filter; selecting a label
+shows only matching videos and reports the filtered count against the full category total. Labels stay out of persistent
+card metadata so the main browsing grid remains quiet. If an active label disappears, browsing returns to `All`.
+
+Labels can be entered optionally while adding a link and can be replaced with any set while editing a saved video. The
+category-scoped management dialog renames a label across that category or removes it from every video in that category.
+Renaming to an existing label merges the assignments without duplicates. These batch operations do not change videos in
+other categories and never delete video files. There is intentionally no standalone global label-management page.
+
 Saved video files stay in human-readable category folders. If a filename collision occurs, append a stable suffix such as `-2`, `-3`, or a short job id rather than overwriting or deduplicating content.
 
 Thumbnails and application metadata stay under `/data/app`, not mixed into category folders.
@@ -117,6 +131,11 @@ candidate has supported subtitle tracks. Continuing from that state either marks
 marks all tracks unselected.
 
 On server startup, interrupted active jobs are reset to `pending` so a Docker restart cannot leave work permanently stuck. Canceling or deleting a running job must abort the active browser analysis, direct download, ffmpeg process, thumbnail generation, and owned scratch files through the queue runner rather than only changing database state.
+
+Optional labels chosen when a link is queued remain attached to that job across retries and restarts. They transfer
+atomically to the saved video only when the job completes, so unfinished jobs do not create label chips in the library.
+Category-scoped rename and removal also update visible jobs in that category so an old label cannot reappear when queued
+work completes.
 
 Completed jobs may remain in SQLite for referential/debug purposes, but the media library is the primary completed state.
 When a completed job leaves the visible queue, the UI confirms where it was saved and offers to open that category.

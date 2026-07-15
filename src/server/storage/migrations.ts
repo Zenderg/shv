@@ -125,6 +125,23 @@ export const migrations: Migration[] = [
       CREATE INDEX media_items_category_created_at_id_idx
         ON media_items(category_id, created_at DESC, id DESC);
     `
+  },
+  {
+    id: 7,
+    name: 'derived_media_labels',
+    sql: `
+      ALTER TABLE download_jobs ADD COLUMN labels_json TEXT NOT NULL DEFAULT '[]';
+
+      CREATE TABLE media_item_labels (
+        media_item_id TEXT NOT NULL REFERENCES media_items(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        label_key TEXT NOT NULL,
+        PRIMARY KEY (media_item_id, label_key)
+      );
+
+      CREATE INDEX media_item_labels_key_media_idx
+        ON media_item_labels(label_key, media_item_id);
+    `
   }
 ];
 

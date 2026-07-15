@@ -26,7 +26,7 @@ export function MediaActionsMenu({
       <DropdownMenu.Portal>
         <DropdownMenu.Content align="end" className="actionsMenu" sideOffset={4}>
           <DropdownMenu.Item className="actionsMenuItem" onSelect={() => onEdit(item)}>
-            Rename or move
+            Edit video
           </DropdownMenu.Item>
           <DropdownMenu.Item className="actionsMenuItem dangerMenuItem" onSelect={() => onDelete(item)}>
             Delete

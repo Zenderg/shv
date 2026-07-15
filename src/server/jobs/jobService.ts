@@ -4,6 +4,7 @@ import type { DownloadJob, JobStatus, MediaCandidate, QueueSnapshot, SubtitleTra
 import { type CandidateDraft } from '../candidate-detection/candidateDetection.js';
 import { nowIso, type Db } from '../storage/database.js';
 import { mapDownloadJob, mapMediaCandidate } from '../storage/rowMappers.js';
+import { canonicalCategoryLabels } from '../utils/mediaLabels.js';
 
 const ACTIVE_JOB_STATUSES: readonly JobStatus[] = ['analyzing', 'downloading', 'processing', 'adding_subtitles'];
 
@@ -31,16 +32,17 @@ export class JobService extends EventEmitter {
     super();
   }
 
-  create(sourceUrl: string, categoryId: string): DownloadJob {
+  create(sourceUrl: string, categoryId: string, labels: string[] = []): DownloadJob {
     const id = uuidv4();
     const now = nowIso();
+    const normalizedLabels = canonicalCategoryLabels(this.db, categoryId, labels).map((label) => label.name);
     this.db
       .prepare(
         `INSERT INTO download_jobs (
-          id, source_url, category_id, status, progress, created_at, updated_at
-        ) VALUES (?, ?, ?, 'pending', 0, ?, ?)`
+          id, source_url, category_id, status, progress, labels_json, created_at, updated_at
+        ) VALUES (?, ?, ?, 'pending', 0, ?, ?, ?)`
       )
-      .run(id, sourceUrl, categoryId, now, now);
+      .run(id, sourceUrl, categoryId, JSON.stringify(normalizedLabels), now, now);
     const job = this.requireJob(id);
     this.emitRunnable();
     return job;

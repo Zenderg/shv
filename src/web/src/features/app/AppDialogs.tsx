@@ -4,8 +4,9 @@ import { CategoryNameDialog } from '../dialogs/CategoryNameDialog';
 import { ConfirmDialog } from '../dialogs/ConfirmDialog';
 import { EditDialog } from '../dialogs/EditDialog';
 import { ExtensionInstallDialog } from '../dialogs/ExtensionInstallDialog';
+import { ManageLabelsDialog } from '../dialogs/ManageLabelsDialog';
 import { PlayerDialog } from '../dialogs/PlayerDialog';
-import type { Category, DownloadJob, MediaItem } from '../../lib/api';
+import type { Category, CategoryLabelSummary, DownloadJob, MediaItem } from '../../lib/api';
 import type { ExtensionStatus } from '../../lib/extensionBridge';
 
 export type DialogState =
@@ -14,6 +15,7 @@ export type DialogState =
   | { kind: 'createCategory' }
   | { kind: 'play'; item: MediaItem }
   | { kind: 'edit'; item: MediaItem }
+  | { category: Category; kind: 'manageLabels' }
   | { category: Category; kind: 'deleteCategory' }
   | { category: Category; kind: 'renameCategory' }
   | { item: MediaItem; kind: 'deleteMedia' };
@@ -25,6 +27,7 @@ export type ExtensionDialogState =
 export function AppDialogs({
   busy,
   categories,
+  categoryLabelSummary,
   currentCategoryId,
   dialog,
   error,
@@ -36,13 +39,16 @@ export function AppDialogs({
   onCreateCategory,
   onDeleteCategory,
   onDeleteMedia,
+  onRemoveCategoryLabel,
   onRenameCategory,
   onSubmitJob,
   onUpdateMedia,
+  onRenameCategoryLabel,
   sourceExtensionProfile
 }: {
   busy: boolean;
   categories: Category[];
+  categoryLabelSummary: CategoryLabelSummary;
   currentCategoryId: string;
   dialog: DialogState;
   error: string | null;
@@ -54,9 +60,11 @@ export function AppDialogs({
   onCreateCategory: (name: string) => void;
   onDeleteCategory: (category: Category) => Promise<void>;
   onDeleteMedia: (item: MediaItem) => Promise<void>;
+  onRemoveCategoryLabel: (label: string) => Promise<boolean>;
   onRenameCategory: (category: Category, name: string) => void;
-  onSubmitJob: (input: { sourceUrl: string; categoryId: string; newCategoryName: string }) => void;
-  onUpdateMedia: (item: MediaItem, body: { title?: string; categoryId?: string }) => Promise<void>;
+  onSubmitJob: (input: { sourceUrl: string; categoryId: string; labels: string[]; newCategoryName: string }) => void;
+  onUpdateMedia: (item: MediaItem, body: { title?: string; categoryId?: string; labels?: string[] }) => Promise<void>;
+  onRenameCategoryLabel: (from: string, to: string) => Promise<boolean>;
   sourceExtensionProfile: SourceExtensionKind;
 }) {
   return (
@@ -91,6 +99,17 @@ export function AppDialogs({
           item={dialog.item}
           onClose={onClose}
           onSave={(body) => onUpdateMedia(dialog.item, body)}
+        />
+      ) : null}
+      {dialog.kind === 'manageLabels' ? (
+        <ManageLabelsDialog
+          busy={busy}
+          categoryName={dialog.category.name}
+          error={error}
+          onClose={onClose}
+          onRemove={onRemoveCategoryLabel}
+          onRename={onRenameCategoryLabel}
+          summary={categoryLabelSummary}
         />
       ) : null}
       {dialog.kind === 'renameCategory' ? (

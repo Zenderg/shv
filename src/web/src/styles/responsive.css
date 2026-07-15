@@ -66,4 +66,42 @@
   .dialogBackdrop {
     padding: 12px;
   }
+
+  .categoryLabelBar {
+    align-items: center;
+    margin-bottom: 18px;
+  }
+
+  .categoryLabelScroller {
+    flex-wrap: nowrap;
+    margin-inline: -18px 0;
+    overflow-x: auto;
+    padding: 2px 0 6px 18px;
+    scrollbar-width: thin;
+  }
+
+  .filterChip,
+  .manageLabelsButton {
+    flex: 0 0 auto;
+    min-height: 44px;
+  }
+
+  .manageLabelsButton {
+    padding-inline: 12px;
+  }
+
+  .manageLabelRow {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .manageLabelActions {
+    justify-content: stretch;
+  }
+
+  .manageLabelActions button {
+    flex: 1 1 auto;
+    justify-content: center;
+    min-height: 44px;
+  }
 }

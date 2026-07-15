@@ -59,6 +59,7 @@ export function seedDevLibrary(options: DevLibrarySeedOptions = {}): DevLibraryS
         durationSeconds: index % 7 === 0 ? null : 15 + index * 9,
         finalFilePath,
         height: [240, 360, 720, 1080, 2160][index % 5],
+        labels: devLabels(index),
         sizeBytes: Math.max(fs.statSync(finalFilePath).size, 1024 + index * 4096),
         sourceUrl: `${DEV_SOURCE_PREFIX}media/${Date.now()}-${index}`,
         thumbnailPath,
@@ -193,6 +194,16 @@ function videoTitle(index: number): string {
     'Repeatable list item'
   ];
   return `[dev] ${titles[index % titles.length]} ${String(index + 1).padStart(3, '0')}`;
+}
+
+function devLabels(index: number): string[] {
+  if (index % 5 === 0) {
+    return [];
+  }
+  const labels = ['Reference', 'Review', 'Series A', 'Series B', 'Пример', 'Long label for responsive overflow'];
+  return index % 4 === 0
+    ? [labels[index % labels.length], labels[(index + 2) % labels.length]]
+    : [labels[index % labels.length]];
 }
 
 function writeThumbnail(config: AppConfig, index: number): string {

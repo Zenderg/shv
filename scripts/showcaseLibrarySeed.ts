@@ -13,7 +13,7 @@ const SHOWCASE_MEDIA_PREFIX = 'showcase-seed://media/';
 const SHOWCASE_JOB_PREFIX = 'https://showcase.shv.local/';
 const PLACEHOLDER_VIDEO = Buffer.from('shv showcase placeholder video\n', 'utf8');
 
-const SHOWCASE_CATEGORIES = [
+export const SHOWCASE_CATEGORIES = [
   'Cinematic Travel',
   'Color Studies',
   'Creative Briefs',
@@ -40,6 +40,7 @@ interface ShowcaseVideo {
   container: string;
   durationSeconds: number | null;
   height: number;
+  labels: string[];
   sizeBytes: number;
   title: string;
   videoCodec: string | null;
@@ -47,11 +48,11 @@ interface ShowcaseVideo {
 }
 
 const SHOWCASE_VIDEOS: ShowcaseVideo[] = [
-  video('Cinematic Travel', 'Tokyo Night Market Walkthrough', 965, 3840, 2160, 1_240_000_000, 'mp4', 'h264', 'aac'),
-  video('Cinematic Travel', 'Lisbon Tram Ride, Golden Hour', 742, 1920, 1080, 612_000_000, 'mp4', 'h264', 'aac'),
-  video('Cinematic Travel', 'Iceland Ring Road Drone Notes', 1204, 3840, 2160, 1_860_000_000, 'mov', 'h264', 'aac'),
-  video('Cinematic Travel', 'Kyoto Alley Ambient Capture', 521, 1920, 1080, 438_000_000, 'mp4', 'h264', 'aac'),
-  video('Cinematic Travel', 'Coastal Train Window Study', 688, 2560, 1440, 710_000_000, 'webm', 'vp9', 'opus'),
+  video('Cinematic Travel', 'Tokyo Night Market Walkthrough', 965, 3840, 2160, 1_240_000_000, 'mp4', 'h264', 'aac', ['Japan', 'Night']),
+  video('Cinematic Travel', 'Lisbon Tram Ride, Golden Hour', 742, 1920, 1080, 612_000_000, 'mp4', 'h264', 'aac', ['Europe', 'Golden hour']),
+  video('Cinematic Travel', 'Iceland Ring Road Drone Notes', 1204, 3840, 2160, 1_860_000_000, 'mov', 'h264', 'aac', ['Europe', 'Drone']),
+  video('Cinematic Travel', 'Kyoto Alley Ambient Capture', 521, 1920, 1080, 438_000_000, 'mp4', 'h264', 'aac', ['Japan', 'Ambient']),
+  video('Cinematic Travel', 'Coastal Train Window Study', 688, 2560, 1440, 710_000_000, 'webm', 'vp9', 'opus', ['Ambient', 'Rail']),
   video('Color Studies', 'Warm Grade Comparison Reel', 214, 1920, 1080, 186_000_000, 'mp4', 'h264', 'aac'),
   video('Color Studies', 'Low Light Palette Tests', 278, 1920, 1080, 226_000_000, 'mp4', 'h264', 'aac'),
   video('Creative Briefs', 'Launch Concept Moodboard', 246, 1920, 1080, 205_000_000, 'mp4', 'h264', 'aac'),
@@ -130,6 +131,7 @@ export function seedShowcaseLibrary(root = process.cwd()): ShowcaseSeedResult {
         durationSeconds: item.durationSeconds,
         finalFilePath,
         height: item.height,
+        labels: item.labels,
         sizeBytes: item.sizeBytes,
         sourceUrl: `${SHOWCASE_MEDIA_PREFIX}${slug(item.categoryName)}/${slug(item.title)}`,
         thumbnailPath,
@@ -300,6 +302,7 @@ function seedShowcaseJobs(db: Db, categories: Map<string, Category>): DownloadJo
       errorCode: job.errorCode,
       errorMessage: job.errorMessage,
       id,
+      labels: [],
       stageProgress: null,
       progressLabel: null,
       selectedCandidateId: null,
@@ -337,9 +340,10 @@ function video(
   sizeBytes: number,
   container: string,
   videoCodec: string | null,
-  audioCodec: string | null
+  audioCodec: string | null,
+  labels: string[] = []
 ): ShowcaseVideo {
-  return { audioCodec, categoryName, container, durationSeconds, height, sizeBytes, title, videoCodec, width };
+  return { audioCodec, categoryName, container, durationSeconds, height, labels, sizeBytes, title, videoCodec, width };
 }
 
 function writeThumbnail(config: AppConfig, item: ShowcaseVideo, index: number): string {

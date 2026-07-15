@@ -96,7 +96,12 @@ The command appends data under the local Docker Compose mounts in `./data`. It c
 
 The `.mp4` files are intentionally not playable videos; they exist to exercise library UI, file paths, card metadata, rename, move, and delete behavior without running the downloader or ffmpeg pipeline.
 
-The generated data should keep UI edge cases available: long category names, long titles, unicode text, missing thumbnails, mixed durations, mixed dimensions, mixed containers/codecs, and uneven category sizes.
+The generated data should keep UI edge cases available: long category names, long titles, unicode text, missing thumbnails, mixed durations, mixed dimensions, mixed containers/codecs, uneven category sizes, unlabeled videos, multi-label videos, Unicode labels, and long label chips.
+
+When changing the library label flow, verify on desktop and a phone-width viewport that chips filter without disappearing
+during loading, the filtered/full totals stay distinct, horizontal chip overflow remains usable, label entry accepts both
+suggestions and new values, rename-to-existing explains the merge, removal confirms that videos remain, and moving a
+labeled video updates both category summaries.
 
 Remove only generated dev seed data with:
 

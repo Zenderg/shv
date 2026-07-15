@@ -32,6 +32,7 @@ export interface MediaItem {
   videoCodec: string | null;
   audioCodec: string | null;
   sourceUrl: string;
+  labels: string[];
   createdAt: string;
   updatedAt: string;
 }
@@ -39,6 +40,16 @@ export interface MediaItem {
 export interface MediaPage {
   items: MediaItem[];
   nextCursor: string | null;
+  total: number;
+}
+
+export interface CategoryLabel {
+  name: string;
+  count: number;
+}
+
+export interface CategoryLabelSummary {
+  items: CategoryLabel[];
   total: number;
 }
 
@@ -53,6 +64,7 @@ export interface DownloadJob {
   errorMessage: string | null;
   stageProgress: number | null;
   progressLabel: string | null;
+  labels: string[];
   createdAt: string;
   updatedAt: string;
   startedAt: string | null;
