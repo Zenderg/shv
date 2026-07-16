@@ -259,7 +259,7 @@ function VideoCard({
                 title={`Show videos labeled ${label}`}
                 type="button"
               >
-                {label}
+                <span>{label}</span>
               </button>
             ))}
           </div>
